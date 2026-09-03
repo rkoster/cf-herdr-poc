@@ -424,6 +424,55 @@ func TestCollieAndPackProxyRouting(t *testing.T) {
 	}
 }
 
+func TestProxyStripsGatewayCredentialsWithoutRemovingPackAuthorization(t *testing.T) {
+	received := make(chan http.Header, 2)
+	collie := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- r.Header.Clone()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer collie.Close()
+	h := newTestHandler(t, &memoryStore{items: map[string]model.Sandbox{}}, &fakeReconciler{make(chan string, 1), make(chan string, 1)}, collie)
+
+	browser := httptest.NewRequest(http.MethodGet, "/collie/assets/app.js", nil)
+	browser.Host = "public.example"
+	browser.Header.Set("Authorization", "Bearer test-token")
+	browser.Header.Set("Cookie", "manager_session=secret; preference=compact")
+	browser.Header.Set("Proxy-Authorization", "Basic proxy-secret")
+	browser.Header.Set("X-Manager-Authorization", "manager-secret")
+	browser.Header.Set("X-Safe-Preference", "compact")
+	h.ServeHTTP(httptest.NewRecorder(), browser)
+	browserHeaders := <-received
+	for _, name := range []string{"Authorization", "Cookie", "Proxy-Authorization", "X-Manager-Authorization"} {
+		if got := browserHeaders.Get(name); got != "" {
+			t.Errorf("Collie received %s = %q", name, got)
+		}
+	}
+	if got := browserHeaders.Get("X-Safe-Preference"); got != "compact" {
+		t.Errorf("safe browser header = %q", got)
+	}
+
+	pack := httptest.NewRequest(http.MethodPost, "/pack/v1/enroll", nil)
+	pack.Host = "pack.identity.example"
+	pack.Header.Set("Authorization", "Pack signature-value")
+	pack.Header.Set("Cookie", "manager_session=secret")
+	pack.Header.Set("Proxy-Authorization", "Basic proxy-secret")
+	pack.Header.Set("X-Manager-Authorization", "manager-secret")
+	pack.Header.Set("X-Pack-Protocol", "v1")
+	h.ServeHTTP(httptest.NewRecorder(), pack)
+	packHeaders := <-received
+	if got := packHeaders.Get("Authorization"); got != "Pack signature-value" {
+		t.Errorf("Pack authorization = %q", got)
+	}
+	for _, name := range []string{"Cookie", "Proxy-Authorization", "X-Manager-Authorization"} {
+		if got := packHeaders.Get(name); got != "" {
+			t.Errorf("Pack received %s = %q", name, got)
+		}
+	}
+	if got := packHeaders.Get("X-Pack-Protocol"); got != "v1" {
+		t.Errorf("Pack protocol header = %q", got)
+	}
+}
+
 func TestBearerAuthorizer(t *testing.T) {
 	authorize := BearerAuthorizer("secret")
 	for _, header := range []string{"", "Basic secret", "Bearer wrong", "bearer secret"} {

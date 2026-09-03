@@ -58,6 +58,7 @@ type Config struct {
 type Handler struct {
 	config       Config
 	collie       *httputil.ReverseProxy
+	pack         *httputil.ReverseProxy
 	sessionValue string
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -80,7 +81,27 @@ func New(config Config) (*Handler, error) {
 		config.Now = time.Now
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Handler{config: config, collie: httputil.NewSingleHostReverseProxy(config.CollieURL), sessionValue: deriveSession(config.ManagerToken), ctx: ctx, cancel: cancel}, nil
+	return &Handler{config: config, collie: newCollieProxy(config.CollieURL, true), pack: newCollieProxy(config.CollieURL, false), sessionValue: deriveSession(config.ManagerToken), ctx: ctx, cancel: cancel}, nil
+}
+
+func newCollieProxy(target *url.URL, stripAuthorization bool) *httputil.ReverseProxy {
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	direct := proxy.Director
+	proxy.Director = func(request *http.Request) {
+		direct(request)
+		request.Header.Del("Cookie")
+		request.Header.Del("Proxy-Authorization")
+		if stripAuthorization {
+			request.Header.Del("Authorization")
+		}
+		for name := range request.Header {
+			lower := strings.ToLower(name)
+			if strings.HasPrefix(lower, "x-manager-") && (strings.Contains(lower, "auth") || strings.Contains(lower, "token") || strings.Contains(lower, "session") || strings.Contains(lower, "cookie") || strings.Contains(lower, "credential")) {
+				request.Header.Del(name)
+			}
+		}
+	}
+	return proxy
 }
 
 func BearerAuthorizer(token string) func(*http.Request) bool {
@@ -105,7 +126,7 @@ func (s *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.EqualFold(host, s.config.ManagerPackHost) {
 		if strings.HasPrefix(r.URL.Path, "/pack/v1/") {
-			s.collie.ServeHTTP(w, r)
+			s.pack.ServeHTTP(w, r)
 			return
 		}
 		http.NotFound(w, r)
