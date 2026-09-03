@@ -352,10 +352,21 @@ func (r *Reconciler) reconcileCreate(ctx context.Context, sandbox model.Sandbox)
 		case model.PhaseTriggeringEnrollment:
 			err = r.persistPhase(sandbox.Name, model.PhaseTriggeringEnrollment, nil)
 			if err == nil {
-				op, e := r.effectTriggerEnrollment(ctx, sandbox.InternalHost)
-				err = r.appendOperation(sandbox.Name, op)
-				if err == nil {
-					err = e
+				var present bool
+				present, err = r.pack.MemberPresent(ctx, sandbox.Name)
+				if err == nil && !present {
+					err = r.persistPhase(sandbox.Name, model.PhaseTriggeringEnrollment, nil)
+					if err != nil {
+						break
+					}
+					op, e := r.effectTriggerEnrollment(ctx, sandbox.InternalHost)
+					err = r.appendOperation(sandbox.Name, op)
+					if err == nil && e != nil {
+						present, err = r.pack.MemberPresent(ctx, sandbox.Name)
+						if err == nil && !present {
+							err = e
+						}
+					}
 				}
 			}
 			if err == nil {

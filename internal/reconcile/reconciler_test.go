@@ -230,9 +230,11 @@ func (f *fakeCF) DeleteApp(context.Context, string) (model.Operation, error) {
 }
 
 type fakeProbe struct {
-	calls       *[]string
-	reachable   bool
-	failTrigger bool
+	calls        *[]string
+	reachable    bool
+	failTrigger  bool
+	afterTrigger func()
+	member       *fakePack
 }
 
 func (p *fakeProbe) Reachable(context.Context, string) (bool, error) {
@@ -241,6 +243,11 @@ func (p *fakeProbe) Reachable(context.Context, string) (bool, error) {
 }
 func (p *fakeProbe) TriggerEnrollment(context.Context, string) (model.Operation, error) {
 	*p.calls = append(*p.calls, "trigger-enrollment")
+	if p.afterTrigger != nil {
+		p.afterTrigger()
+	} else if p.member != nil && !p.failTrigger {
+		p.member.present = true
+	}
 	op := operation("trigger-enrollment", !p.failTrigger)
 	if p.failTrigger {
 		return op, errors.New("token=probe-secret failed")
@@ -266,8 +273,8 @@ func fixture(phase model.Phase) (*Reconciler, *memoryStore, *fakeRuntime, *fakeC
 	s := &memoryStore{items: map[string]model.Sandbox{"demo": {Name: "demo", Repository: "https://git.example/demo", Buildpack: "ruby_buildpack", Desired: model.DesiredPresent, Phase: phase, CreatedAt: now}}, calls: &calls}
 	rt := &fakeRuntime{calls: &calls}
 	cloud := &fakeCF{calls: &calls, app: cf.App{GUID: sandboxGUID, Running: true, Ready: true}}
-	pack := &fakePack{calls: &calls, present: true, expiry: now.Add(time.Hour)}
-	probe := &fakeProbe{calls: &calls, reachable: true}
+	pack := &fakePack{calls: &calls, present: false, expiry: now.Add(time.Hour)}
+	probe := &fakeProbe{calls: &calls, reachable: true, member: pack}
 	clock := &fakeClock{now: now}
 	r := New(Config{WorkRoot: "/work", IdentityDomain: "identity.example", ManagerRouteHost: "manager", ManagerPackHost: "manager.identity.example", ManagerAppGUID: managerGUID, PollAttempts: 2, PollInterval: time.Millisecond, ScanInterval: time.Hour}, s, rt, cloud, pack, probe, clock)
 	return r, s, rt, cloud, pack, probe, clock, &calls
@@ -278,7 +285,7 @@ func TestCreationPersistsBeforeEveryEffectInExactOrder(t *testing.T) {
 	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
 	}
-	wantEffects := []string{"prepare-bits", "prepare-invite", "install-invite", "stage", "discover-guid", "secure-route", "secure-manager-route", "configure-enrollment", "start-app", "inspect-app", "probe-route", "trigger-enrollment", "observe-member", "cleanup-invite", "cleanup-bits"}
+	wantEffects := []string{"prepare-bits", "prepare-invite", "install-invite", "stage", "discover-guid", "secure-route", "secure-manager-route", "configure-enrollment", "start-app", "inspect-app", "probe-route", "observe-member", "trigger-enrollment", "observe-member", "cleanup-invite", "cleanup-bits"}
 	var effects []string
 	for _, call := range *calls {
 		if !strings.HasPrefix(call, "persist:") {
@@ -311,7 +318,8 @@ func TestEveryPersistedPhaseResumesWithoutRepeatingPriorEffects(t *testing.T) {
 	}{{model.PhasePreparingInvite, "prepare-bits"}, {model.PhaseStaging, "prepare-bits"}, {model.PhaseWaitingForApp, "start-app"}, {model.PhaseWaitingForRoute, "start-app"}, {model.PhaseTriggeringEnrollment, "probe-route"}, {model.PhaseJoiningPack, "trigger-enrollment"}, {model.PhaseReady, "observe-member"}}
 	for _, tt := range tests {
 		t.Run(string(tt.phase), func(t *testing.T) {
-			r, s, _, cloud, _, _, _, calls := fixture(tt.phase)
+			r, s, _, cloud, pack, _, _, calls := fixture(tt.phase)
+			pack.present = true
 			current, _ := s.Get("demo")
 			current.Revision = "abc"
 			current.AppGUID = sandboxGUID
@@ -440,7 +448,8 @@ func TestExpiredPostStageInviteIsRegeneratedAndRestaged(t *testing.T) {
 }
 
 func TestInviteCleanupFailureRemainsRetryable(t *testing.T) {
-	r, s, _, _, _, _, _, calls := fixture(model.PhaseJoiningPack)
+	r, s, _, _, pack, _, _, calls := fixture(model.PhaseJoiningPack)
+	pack.present = true
 	r.enrollments["demo"] = &fakeEnrollment{calls: calls, path: "invite", failCleanup: true}
 	if err := r.ReconcileOne(context.Background(), "demo"); err == nil {
 		t.Fatal("succeeded")
@@ -512,6 +521,55 @@ func TestEnrollmentTriggerFailureIsSanitizedAndRetryable(t *testing.T) {
 	probe.failTrigger = false
 	if err := r.Retry(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTriggerPhaseSkipsPOSTWhenMemberAlreadyExists(t *testing.T) {
+	r, s, _, _, pack, _, _, calls := fixture(model.PhaseTriggeringEnrollment)
+	pack.present = true
+	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if count(*calls, "trigger-enrollment") != 0 {
+		t.Fatalf("calls=%#v", *calls)
+	}
+	got, _ := s.Get("demo")
+	if got.Phase != model.PhaseReady {
+		t.Fatalf("phase=%s", got.Phase)
+	}
+}
+
+func TestTriggerResponseLossAdvancesWhenMemberAppeared(t *testing.T) {
+	r, s, _, _, pack, probe, _, calls := fixture(model.PhaseTriggeringEnrollment)
+	pack.present = false
+	probe.failTrigger = true
+	probe.afterTrigger = func() { pack.present = true }
+	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if count(*calls, "trigger-enrollment") != 1 || count(*calls, "observe-member") < 2 {
+		t.Fatalf("calls=%#v", *calls)
+	}
+	got, _ := s.Get("demo")
+	if got.Phase != model.PhaseReady {
+		t.Fatalf("sandbox=%#v", got)
+	}
+}
+
+func TestTriggerSuccessPersistenceFailureRecoversFromMembership(t *testing.T) {
+	r, s, _, _, pack, probe, _, calls := fixture(model.PhaseTriggeringEnrollment)
+	pack.present = false
+	probe.afterTrigger = func() { pack.present = true }
+	s.failOnUpdate = 3
+	if err := r.ReconcileOne(context.Background(), "demo"); err == nil {
+		t.Fatal("succeeded")
+	}
+	fresh := New(r.config, s, r.runtime, r.cf, r.pack, r.probe, r.clock)
+	if err := fresh.Retry(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if count(*calls, "trigger-enrollment") != 1 {
+		t.Fatalf("trigger repeated: %#v", *calls)
 	}
 }
 
@@ -617,6 +675,7 @@ func TestDeletionOrderRetainsFailuresForRetry(t *testing.T) {
 	for _, failure := range failures {
 		t.Run(failure, func(t *testing.T) {
 			r, s, rt, cloud, pack, _, _, calls := fixture(model.PhaseReady)
+			pack.present = true
 			current, _ := s.Get("demo")
 			current.Desired = model.DesiredDeleted
 			current.AppGUID = sandboxGUID

@@ -49,7 +49,7 @@ func TestLauncherContract(t *testing.T) {
 	if strings.Contains(script, `pack join`) {
 		t.Fatal("launcher performs enrollment before route trigger")
 	}
-	for _, required := range []string{`bootstrap_pid=""`, `SANDBOX_BOOTSTRAP_READY_FILE`, `kill "$bootstrap_pid"`, `wait "$bootstrap_pid" || true`, `if [[ ! -f "$trust_store" ]]`} {
+	for _, required := range []string{`bootstrap_pid=""`, `SANDBOX_BOOTSTRAP_READY_FILE`, `export COLLIE_PACK_TRUST_STORE="$COLLIE_STATE_DIR/pack-trust.json"`, `trust_store="$COLLIE_PACK_TRUST_STORE"`, `kill "$bootstrap_pid"`, `wait "$bootstrap_pid" || true`, `if [[ ! -f "$trust_store" ]]`} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("launcher missing %q", required)
 		}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -17,7 +18,7 @@ import (
 var memberPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 var secretPattern = regexp.MustCompile(`(?i)(authorization\s*:\s*(?:bearer\s+)?|\b(?:token|secret|password)\s*[=:]\s*)\S+`)
 
-type Config struct{ Executable, TokenPath, ReadyPath, LeadAddress, MemberID string }
+type Config struct{ Executable, TokenPath, ReadyPath, TrustStorePath, LeadAddress, MemberID string }
 type Joiner interface {
 	Join(context.Context, []string, io.Reader) error
 }
@@ -32,7 +33,7 @@ type Server struct {
 // route and manager-source policy are the authorization boundary.
 
 func New(config Config, joiner Joiner, log io.Writer) (*Server, error) {
-	if config.Executable == "" || config.TokenPath == "" || config.ReadyPath == "" || joiner == nil {
+	if config.Executable == "" || config.TokenPath == "" || config.ReadyPath == "" || config.TrustStorePath == "" || joiner == nil {
 		return nil, errors.New("bootstrap paths, executable, and joiner are required")
 	}
 	parsed, err := url.Parse(config.LeadAddress)
@@ -77,6 +78,18 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	if complete, err := regularFile(s.config.TrustStorePath); err != nil {
+		s.fail(w, err)
+		return
+	} else if complete {
+		if err = writeMarker(s.config.ReadyPath); err != nil {
+			s.fail(w, err)
+			return
+		}
+		_ = os.Remove(s.config.TokenPath)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "joined"})
+		return
+	}
 	token, err := os.Open(s.config.TokenPath)
 	if err != nil {
 		s.fail(w, err)
@@ -88,14 +101,49 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if err = os.Remove(s.config.TokenPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintln(s.log, sanitize(err.Error()))
-	}
-	if err = os.WriteFile(s.config.ReadyPath, []byte("ready\n"), 0o600); err != nil {
+	if err = writeMarker(s.config.ReadyPath); err != nil {
 		s.fail(w, err)
 		return
 	}
+	if err = os.Remove(s.config.TokenPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(s.log, sanitize(err.Error()))
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "joined"})
+}
+func regularFile(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return false, errors.New("Pack trust store must be a regular file")
+	}
+	return true, nil
+}
+func writeMarker(path string) error {
+	file, err := os.CreateTemp(filepath.Dir(path), ".bootstrap-ready-*")
+	if err != nil {
+		return err
+	}
+	name := file.Name()
+	defer os.Remove(name)
+	if err = file.Chmod(0o600); err == nil {
+		_, err = file.WriteString("ready\n")
+	}
+	if err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }
 func (s *Server) fail(w http.ResponseWriter, err error) {
 	message := sanitize(err.Error())

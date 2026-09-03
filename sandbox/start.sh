@@ -69,7 +69,8 @@ while [[ ! -S "$HERDR_SOCKET_PATH" ]]; do
   sleep 0.1
 done
 
-trust_store="$COLLIE_STATE_DIR/pack-trust.json"
+export COLLIE_PACK_TRUST_STORE="$COLLIE_STATE_DIR/pack-trust.json"
+trust_store="$COLLIE_PACK_TRUST_STORE"
 if [[ ! -f "$trust_store" ]]; then
   export SANDBOX_BOOTSTRAP_READY_FILE="${SANDBOX_BOOTSTRAP_READY_FILE:-$SANDBOX_STATE_DIR/bootstrap-ready}"
   rm -f -- "$SANDBOX_BOOTSTRAP_READY_FILE"

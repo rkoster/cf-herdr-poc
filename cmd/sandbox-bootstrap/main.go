@@ -34,7 +34,7 @@ func main() {
 	if executable == "" {
 		executable = "./bin/collie"
 	}
-	config := bootstrap.Config{Executable: executable, TokenPath: os.Getenv("COLLIE_JOIN_TOKEN_FILE"), ReadyPath: os.Getenv("SANDBOX_BOOTSTRAP_READY_FILE"), LeadAddress: os.Getenv("COLLIE_PACK_LEAD_ADDRESS"), MemberID: os.Getenv("SANDBOX_MEMBER_ID")}
+	config := bootstrap.Config{Executable: executable, TokenPath: os.Getenv("COLLIE_JOIN_TOKEN_FILE"), ReadyPath: os.Getenv("SANDBOX_BOOTSTRAP_READY_FILE"), TrustStorePath: os.Getenv("COLLIE_PACK_TRUST_STORE"), LeadAddress: os.Getenv("COLLIE_PACK_LEAD_ADDRESS"), MemberID: os.Getenv("SANDBOX_MEMBER_ID")}
 	server, err := bootstrap.New(config, commandJoiner{executable}, os.Stderr)
 	if err != nil {
 		log.Fatal(err)
