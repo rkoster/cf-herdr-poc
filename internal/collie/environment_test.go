@@ -12,10 +12,10 @@ func TestEnvironmentOverridesAmbientRuntimePaths(t *testing.T) {
 		"PATH=/bin", "HERDR_PLUGIN_CONFIG_DIR=/ambient/config", "HERDR_PLUGIN_STATE_DIR=/ambient/state",
 		"COLLIE_STATE_DIR=/ambient/collie", "HERDR_SOCKET_PATH=/ambient/socket", "COLLIE_HOST=0.0.0.0", "COLLIE_PORT=9999",
 	}
-	env := Environment(Runtime{ConfigDir: "/manager/config", StateDir: "/manager/state", SocketPath: "/manager/herdr.sock", Port: 8787}, base)
+	env := Environment(Runtime{ConfigDir: "/manager/config", StateDir: "/manager/state", SocketPath: "/manager/herdr.sock", Host: "127.0.0.2", Port: 8787}, base)
 	want := map[string]string{
 		"PATH": "/bin", "HERDR_PLUGIN_CONFIG_DIR": "/manager/config", "HERDR_PLUGIN_STATE_DIR": "/manager/state",
-		"COLLIE_STATE_DIR": "/manager/state", "HERDR_SOCKET_PATH": "/manager/herdr.sock", "COLLIE_HOST": "127.0.0.1", "COLLIE_PORT": "8787",
+		"COLLIE_STATE_DIR": "/manager/state", "HERDR_SOCKET_PATH": "/manager/herdr.sock", "COLLIE_HOST": "127.0.0.2", "COLLIE_PORT": "8787",
 	}
 	if got := envMap(env); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Environment() = %#v, want %#v", got, want)

@@ -9,6 +9,7 @@ type Runtime struct {
 	ConfigDir  string
 	StateDir   string
 	SocketPath string
+	Host       string
 	Port       int
 }
 
@@ -17,7 +18,7 @@ func Environment(runtime Runtime, base []string) []string {
 		"HERDR_PLUGIN_CONFIG_DIR": runtime.ConfigDir,
 		"HERDR_PLUGIN_STATE_DIR":  runtime.StateDir,
 		"COLLIE_STATE_DIR":        runtime.StateDir,
-		"COLLIE_HOST":             "127.0.0.1",
+		"COLLIE_HOST":             runtime.Host,
 		"COLLIE_PORT":             strconv.Itoa(runtime.Port),
 	}
 	if runtime.SocketPath != "" {

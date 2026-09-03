@@ -85,6 +85,19 @@ func TestPrepareEnrollmentCreatesPrivateTokenFileAndRestarts(t *testing.T) {
 	}
 }
 
+func TestPackCLIUsesConfiguredLoopbackHost(t *testing.T) {
+	r := &fakeRunner{output: []byte(invite + "\n")}
+	m := New(r, &fakeSupervisor{}, Config{TempDir: t.TempDir(), Host: "127.0.0.2", Port: 8787})
+	handle, err := m.PrepareEnrollment(context.Background(), "pack.example", "sandbox-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Cleanup()
+	if got := environmentMap(r.calls[0].env)["COLLIE_HOST"]; got != "127.0.0.2" {
+		t.Fatalf("COLLIE_HOST = %q", got)
+	}
+}
+
 func TestPrepareEnrollmentRedactsTokenFromErrorsAndCleansUp(t *testing.T) {
 	r := &fakeRunner{output: []byte(invite + "\n"), err: errors.New("failed: " + invite)}
 	m := New(r, &fakeSupervisor{}, Config{TempDir: t.TempDir()})
@@ -115,6 +128,55 @@ func TestEnrollmentFileHasBoundedLifetime(t *testing.T) {
 			t.Fatal("token file outlived configured lifetime")
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestEnrollmentCleanupRetriesAfterRemoveFailure(t *testing.T) {
+	attempts := 0
+	handle := newEnrollment("token-file", time.Hour, func(string) error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("temporary remove failure")
+		}
+		return nil
+	})
+	if err := handle.Cleanup(); err == nil {
+		t.Fatal("first cleanup succeeded")
+	}
+	if err := handle.Cleanup(); err != nil {
+		t.Fatalf("retry cleanup: %v", err)
+	}
+	if err := handle.Cleanup(); err != nil {
+		t.Fatalf("idempotent cleanup: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("remove attempts = %d", attempts)
+	}
+}
+
+func TestEnrollmentExpiryRetriesAfterRemoveFailure(t *testing.T) {
+	attempts := make(chan int, 2)
+	count := 0
+	handle := newEnrollment("token-file", 5*time.Millisecond, func(string) error {
+		count++
+		attempts <- count
+		if count == 1 {
+			return errors.New("temporary remove failure")
+		}
+		return nil
+	})
+	for want := 1; want <= 2; want++ {
+		select {
+		case got := <-attempts:
+			if got != want {
+				t.Fatalf("attempt = %d, want %d", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for remove attempt %d", want)
+		}
+	}
+	if err := handle.Cleanup(); err != nil {
+		t.Fatalf("cleanup after expiry: %v", err)
 	}
 }
 

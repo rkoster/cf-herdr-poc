@@ -36,6 +36,7 @@ type Config struct {
 	ConfigDir     string
 	StateDir      string
 	SocketPath    string
+	Host          string
 	Port          int
 	TokenLifetime time.Duration
 }
@@ -47,18 +48,50 @@ type Runner interface {
 type Enrollment struct {
 	Path      string
 	ExpiresAt time.Time
-	once      sync.Once
-	err       error
+	mu        sync.Mutex
+	cleaned   bool
+	remove    func(string) error
+	timer     *time.Timer
+	done      chan struct{}
 }
 
 func (e *Enrollment) Cleanup() error {
-	e.once.Do(func() {
-		e.err = os.Remove(e.Path)
-		if errors.Is(e.err, os.ErrNotExist) {
-			e.err = nil
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.cleaned {
+		return nil
+	}
+	err := e.remove(e.Path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	e.cleaned = true
+	e.timer.Stop()
+	close(e.done)
+	return nil
+}
+
+func newEnrollment(path string, lifetime time.Duration, remove func(string) error) *Enrollment {
+	handle := &Enrollment{Path: path, remove: remove, timer: time.NewTimer(lifetime), done: make(chan struct{})}
+	go func() {
+		for {
+			select {
+			case <-handle.timer.C:
+				if err := handle.Cleanup(); err != nil {
+					handle.mu.Lock()
+					if !handle.cleaned {
+						handle.timer.Reset(lifetime)
+					}
+					handle.mu.Unlock()
+					continue
+				}
+				return
+			case <-handle.done:
+				return
+			}
 		}
-	})
-	return e.err
+	}()
+	return handle
 }
 
 type Manager struct {
@@ -76,6 +109,9 @@ func New(commandRunner Runner, supervisor Supervisor, config Config) *Manager {
 	}
 	if config.Port == 0 {
 		config.Port = 8787
+	}
+	if config.Host == "" {
+		config.Host = "127.0.0.1"
 	}
 	return &Manager{runner: commandRunner, supervisor: supervisor, config: config}
 }
@@ -118,8 +154,8 @@ func (m *Manager) PrepareEnrollment(ctx context.Context, managerPackHost, sandbo
 		os.Remove(path)
 		return nil, fmt.Errorf("restart Collie after invite: %w", err)
 	}
-	handle := &Enrollment{Path: path, ExpiresAt: expiresAt}
-	time.AfterFunc(m.config.TokenLifetime, func() { _ = handle.Cleanup() })
+	handle := newEnrollment(path, m.config.TokenLifetime, os.Remove)
+	handle.ExpiresAt = expiresAt
 	return handle, nil
 }
 
@@ -158,7 +194,7 @@ func (m *Manager) run(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (m *Manager) environment() []string {
-	return collieruntime.Environment(collieruntime.Runtime{ConfigDir: m.config.ConfigDir, StateDir: m.config.StateDir, SocketPath: m.config.SocketPath, Port: m.config.Port}, os.Environ())
+	return collieruntime.Environment(collieruntime.Runtime{ConfigDir: m.config.ConfigDir, StateDir: m.config.StateDir, SocketPath: m.config.SocketPath, Host: m.config.Host, Port: m.config.Port}, os.Environ())
 }
 
 func validateMemberID(id string) error {

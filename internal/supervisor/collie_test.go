@@ -14,10 +14,11 @@ import (
 )
 
 type fakeProcess struct {
-	mu      sync.Mutex
-	events  *[]string
-	wait    chan error
-	stopped bool
+	mu        sync.Mutex
+	events    *[]string
+	wait      chan error
+	stopped   bool
+	stopCalls int
 }
 
 func newFakeProcess(events *[]string) *fakeProcess {
@@ -36,12 +37,93 @@ func (p *fakeProcess) Wait() error { return <-p.wait }
 func (p *fakeProcess) Stop(time.Duration) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.stopCalls++
 	if !p.stopped {
 		p.stopped = true
 		*p.events = append(*p.events, "stop")
 		p.wait <- nil
 	}
 	return nil
+}
+
+func (p *fakeProcess) stops() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.stopCalls
+}
+
+func TestUnsolicitedExitIsClearedWithoutSignalingStaleProcess(t *testing.T) {
+	events := []string{}
+	old := newFakeProcess(&events)
+	s := New(Config{}, func(ProcessConfig) Process { return old }, func(context.Context, string) error { return nil })
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	generation := s.generation
+	old.wait <- errors.New("exited")
+	waitForClosed(t, generation.done)
+	if err := s.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if old.stops() != 0 {
+		t.Fatalf("stale process signaled %d times", old.stops())
+	}
+}
+
+func TestRestartAfterUnsolicitedExitStartsNewWithoutSignalingOldProcess(t *testing.T) {
+	events := []string{}
+	old, replacement := newFakeProcess(&events), newFakeProcess(&events)
+	processes := []Process{old, replacement}
+	s := New(Config{}, func(ProcessConfig) Process { process := processes[0]; processes = processes[1:]; return process }, func(context.Context, string) error { return nil })
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	generation := s.generation
+	old.wait <- errors.New("exited")
+	waitForClosed(t, generation.done)
+	if err := s.Restart(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if old.stops() != 0 {
+		t.Fatalf("stale process signaled %d times", old.stops())
+	}
+	if err := s.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if replacement.stops() != 1 {
+		t.Fatalf("replacement stop calls = %d", replacement.stops())
+	}
+}
+
+func TestNondefaultLoopbackHostIsSharedByChildAndReadiness(t *testing.T) {
+	events := []string{}
+	var processConfig ProcessConfig
+	var probeURL string
+	s := New(Config{Host: "127.0.0.2", Port: 9898}, func(config ProcessConfig) Process { processConfig = config; return newFakeProcess(&events) }, func(_ context.Context, url string) error { probeURL = url; return nil })
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop(context.Background())
+	if err := s.Ready(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := environmentMap(processConfig.Env)["COLLIE_HOST"]; got != "127.0.0.2" {
+		t.Fatalf("COLLIE_HOST = %q", got)
+	}
+	if probeURL != "http://127.0.0.2:9898/api/snapshot" {
+		t.Fatalf("probe URL = %q", probeURL)
+	}
+}
+
+func TestStartRejectsNonLoopbackHost(t *testing.T) {
+	called := false
+	s := New(Config{Host: "0.0.0.0"}, func(ProcessConfig) Process { called = true; return nil }, nil)
+	if err := s.Start(context.Background()); err == nil {
+		t.Fatal("non-loopback host accepted")
+	}
+	if called {
+		t.Fatal("factory called for invalid host")
+	}
 }
 
 func TestStartConfiguresManagedLoopbackProcess(t *testing.T) {
@@ -217,6 +299,15 @@ func waitForLines(t *testing.T, path string, count int) {
 			t.Fatalf("timed out waiting for %d lines in %s", count, path)
 		}
 		runtime.Gosched()
+	}
+}
+
+func waitForClosed(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for child exit")
 	}
 }
 

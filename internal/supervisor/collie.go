@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -134,16 +135,30 @@ func (s *Supervisor) startLocked(ctx context.Context) error {
 		return err
 	}
 	if s.process != nil {
-		return errors.New("collie is already running")
+		if s.generation.isDone() {
+			s.process, s.generation = nil, nil
+		} else {
+			return errors.New("collie is already running")
+		}
 	}
-	env := collieruntime.Environment(collieruntime.Runtime{ConfigDir: s.config.ConfigDir, StateDir: s.config.StateDir, SocketPath: s.config.SocketPath, Port: s.config.Port}, os.Environ())
+	if !isLoopback(s.config.Host) {
+		return fmt.Errorf("Collie host %q must be loopback", s.config.Host)
+	}
+	env := collieruntime.Environment(collieruntime.Runtime{ConfigDir: s.config.ConfigDir, StateDir: s.config.StateDir, SocketPath: s.config.SocketPath, Host: s.config.Host, Port: s.config.Port}, os.Environ())
 	process := s.factory(ProcessConfig{Name: s.config.Executable, Args: append([]string(nil), s.config.Args...), Dir: s.config.Dir, Env: env, Stdout: s.config.Stdout, Stderr: s.config.Stderr})
 	if err := process.Start(); err != nil {
 		return fmt.Errorf("start collie: %w", err)
 	}
 	generation := &processGeneration{done: make(chan struct{})}
 	s.process, s.generation = process, generation
-	go func() { generation.finish(process.Wait()) }()
+	go func() {
+		generation.finish(process.Wait())
+		s.mu.Lock()
+		if s.generation == generation {
+			s.process, s.generation = nil, nil
+		}
+		s.mu.Unlock()
+	}()
 	return nil
 }
 
@@ -209,6 +224,10 @@ func (s *Supervisor) stopLocked(ctx context.Context) error {
 		return err
 	}
 	process, generation := s.process, s.generation
+	if generation.isDone() {
+		s.process, s.generation = nil, nil
+		return nil
+	}
 	if err := process.Stop(s.config.StopTimeout); err != nil {
 		return fmt.Errorf("stop collie: %w", err)
 	}
@@ -221,6 +240,23 @@ func (s *Supervisor) stopLocked(ctx context.Context) error {
 	case <-time.After(s.config.StopTimeout):
 		return errors.New("timed out reaping collie")
 	}
+}
+
+func (g *processGeneration) isDone() bool {
+	select {
+	case <-g.done:
+		return true
+	default:
+		return false
+	}
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func httpProbe(ctx context.Context, url string) error {
