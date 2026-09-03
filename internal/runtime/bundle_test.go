@@ -209,6 +209,95 @@ func TestPrepareRejectsDestinationThroughSymlinkedAncestor(t *testing.T) {
 	}
 }
 
+func TestPrepareRemovesCreatedDestinationAfterOverlayFailureAndCanRetry(t *testing.T) {
+	workRoot := t.TempDir()
+	destination := filepath.Join(workRoot, "demo")
+	badRuntime := t.TempDir()
+	if err := os.Symlink("missing", filepath.Join(badRuntime, "link")); err != nil {
+		t.Fatal(err)
+	}
+	goodRuntime := t.TempDir()
+	writeFile(t, filepath.Join(goodRuntime, "start.sh"), 0o755, "runtime\n")
+	recorder := cloneRunner(destination, nil)
+
+	_, err := (Builder{Run: recorder, RuntimeDir: badRuntime, WorkRoot: workRoot}).Prepare(
+		context.Background(), "https://git.example/demo.git", destination,
+	)
+	if err == nil {
+		t.Fatal("Prepare succeeded with invalid runtime")
+	}
+	if _, statErr := os.Lstat(destination); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("destination remains after overlay failure: %v", statErr)
+	}
+	if _, err := (Builder{Run: recorder, RuntimeDir: goodRuntime, WorkRoot: workRoot}).Prepare(
+		context.Background(), "https://git.example/demo.git", destination,
+	); err != nil {
+		t.Fatalf("retry Prepare failed: %v", err)
+	}
+}
+
+func TestPrepareRemovesCreatedDestinationAfterRevisionFailureAndCanRetry(t *testing.T) {
+	workRoot := t.TempDir()
+	destination := filepath.Join(workRoot, "demo")
+	runtimeDir := t.TempDir()
+	writeFile(t, filepath.Join(runtimeDir, "start.sh"), 0o755, "runtime\n")
+	failRevision := true
+	recorder := cloneRunner(destination, func() ([]byte, error) {
+		if failRevision {
+			failRevision = false
+			return nil, errors.New("revision failed")
+		}
+		return []byte("abc123\n"), nil
+	})
+
+	_, err := (Builder{Run: recorder, RuntimeDir: runtimeDir, WorkRoot: workRoot}).Prepare(
+		context.Background(), "https://git.example/demo.git", destination,
+	)
+	if err == nil {
+		t.Fatal("Prepare succeeded with revision failure")
+	}
+	if _, statErr := os.Lstat(destination); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("destination remains after revision failure: %v", statErr)
+	}
+	if _, err := (Builder{Run: recorder, RuntimeDir: runtimeDir, WorkRoot: workRoot}).Prepare(
+		context.Background(), "https://git.example/demo.git", destination,
+	); err != nil {
+		t.Fatalf("retry Prepare failed: %v", err)
+	}
+}
+
+func TestPrepareNeverRemovesPreExistingDestination(t *testing.T) {
+	workRoot := t.TempDir()
+	destination := filepath.Join(workRoot, "demo")
+	writeFile(t, filepath.Join(destination, "keep.txt"), 0o644, "keep\n")
+	recorder := &recordingRunner{run: func(_ string, _ []string) ([]byte, error) {
+		return nil, errors.New("clone failed")
+	}}
+
+	_, err := (Builder{Run: recorder, RuntimeDir: t.TempDir(), WorkRoot: workRoot}).Prepare(
+		context.Background(), "https://git.example/demo.git", destination,
+	)
+	if err == nil {
+		t.Fatal("Prepare succeeded, want clone failure")
+	}
+	contents, readErr := os.ReadFile(filepath.Join(destination, "keep.txt"))
+	if readErr != nil || string(contents) != "keep\n" {
+		t.Fatalf("pre-existing destination changed: contents %q, error %v", contents, readErr)
+	}
+}
+
+func cloneRunner(destination string, revision func() ([]byte, error)) *recordingRunner {
+	return &recordingRunner{run: func(_ string, args []string) ([]byte, error) {
+		if args[0] == "clone" {
+			return nil, os.MkdirAll(destination, 0o755)
+		}
+		if revision != nil {
+			return revision()
+		}
+		return []byte("abc123\n"), nil
+	}}
+}
+
 func writeFile(t *testing.T, path string, mode os.FileMode, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

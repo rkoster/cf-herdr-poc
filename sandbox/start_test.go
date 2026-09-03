@@ -54,6 +54,29 @@ func TestLauncherContract(t *testing.T) {
 			t.Errorf("launcher does not contain %q", required)
 		}
 	}
+	for _, required := range []string{
+		`collie_pid=""`,
+		`kill "$collie_pid"`,
+		`wait "$collie_pid"`,
+		`trap 'terminate 143' TERM`,
+		`trap 'terminate 130' INT`,
+		"trap cleanup EXIT",
+		"status=$?",
+		`exit "$status"`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("launcher does not contain child cleanup contract %q", required)
+		}
+	}
+	terminateStart := strings.Index(script, "terminate() {")
+	terminateEnd := strings.Index(script, "trap 'terminate 143' TERM")
+	if terminateStart < 0 || terminateEnd < 0 || terminateEnd <= terminateStart {
+		t.Fatal("launcher does not define terminate handler before signal traps")
+	}
+	terminate := script[terminateStart:terminateEnd]
+	if strings.Index(terminate, `kill "$collie_pid"`) < 0 || strings.Index(terminate, `wait "$collie_pid"`) < 0 {
+		t.Fatal("signal handler does not terminate and wait for Collie")
+	}
 	if trapDisabled := strings.Index(script, "trap - EXIT"); trapDisabled >= 0 && strings.Index(script, `wait "$collie_pid"`) > trapDisabled {
 		t.Fatal("launcher disables cleanup trap before Collie exits")
 	}

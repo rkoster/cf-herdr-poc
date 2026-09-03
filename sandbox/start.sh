@@ -18,13 +18,29 @@ export COLLIE_MUX="${COLLIE_MUX:-herdr}"
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$COLLIE_STATE_DIR" "$HERDR_PLUGIN_CONFIG_DIR" "$(dirname -- "$HERDR_SOCKET_PATH")"
 
 herdr_pid=""
+collie_pid=""
 cleanup() {
-  if [[ -n "$herdr_pid" ]] && kill -0 "$herdr_pid" 2>/dev/null; then
-    kill "$herdr_pid" 2>/dev/null || true
-    wait "$herdr_pid" 2>/dev/null || true
-  fi
+	if [[ -n "$collie_pid" ]] && kill -0 "$collie_pid" 2>/dev/null; then
+		kill "$collie_pid" 2>/dev/null || true
+		wait "$collie_pid" 2>/dev/null || true
+	fi
+	if [[ -n "$herdr_pid" ]] && kill -0 "$herdr_pid" 2>/dev/null; then
+		kill "$herdr_pid" 2>/dev/null || true
+		wait "$herdr_pid" 2>/dev/null || true
+	fi
 }
-trap cleanup EXIT INT TERM
+terminate() {
+	local status=$1
+	if [[ -n "$collie_pid" ]] && kill -0 "$collie_pid" 2>/dev/null; then
+		kill "$collie_pid" 2>/dev/null || true
+		wait "$collie_pid" 2>/dev/null || true
+		collie_pid=""
+	fi
+	exit "$status"
+}
+trap 'terminate 143' TERM
+trap 'terminate 130' INT
+trap cleanup EXIT
 
 "$BIN_DIR/herdr" server &
 herdr_pid=$!
@@ -50,4 +66,9 @@ fi
 
 (exec "$BIN_DIR/bun" run "$COLLIE_DIR/bridge/index.ts") &
 collie_pid=$!
+set +e
 wait "$collie_pid"
+status=$?
+set -e
+collie_pid=""
+exit "$status"

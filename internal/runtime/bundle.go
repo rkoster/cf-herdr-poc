@@ -23,7 +23,7 @@ type Builder struct {
 	WorkRoot   string
 }
 
-func (b Builder) Prepare(ctx context.Context, repoURL, destination string) (Result, error) {
+func (b Builder) Prepare(ctx context.Context, repoURL, destination string) (result Result, resultErr error) {
 	if repoURL == "" || strings.HasPrefix(repoURL, "-") {
 		return Result{}, fmt.Errorf("invalid repository URL")
 	}
@@ -32,6 +32,20 @@ func (b Builder) Prepare(ctx context.Context, repoURL, destination string) (Resu
 	}
 	if err := withinWorkRoot(b.WorkRoot, destination); err != nil {
 		return Result{}, err
+	}
+	_, err := os.Lstat(destination)
+	destinationAbsent := errors.Is(err, os.ErrNotExist)
+	if err != nil && !destinationAbsent {
+		return Result{}, fmt.Errorf("inspect destination: %w", err)
+	}
+	if destinationAbsent {
+		defer func() {
+			if resultErr != nil {
+				if err := os.RemoveAll(destination); err != nil {
+					resultErr = errors.Join(resultErr, fmt.Errorf("remove failed destination: %w", err))
+				}
+			}
+		}()
 	}
 	if output, err := b.Run.Run(ctx, "git", "clone", "--depth", "1", "--", repoURL, destination); err != nil {
 		return Result{}, fmt.Errorf("clone repository: %w: %s", err, strings.TrimSpace(string(output)))
