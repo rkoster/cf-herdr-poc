@@ -30,16 +30,17 @@ cleanup() {
 	fi
 }
 terminate() {
-	local status=$1
+	local signal=$1
+	local status=$2
 	if [[ -n "$collie_pid" ]] && kill -0 "$collie_pid" 2>/dev/null; then
-		kill "$collie_pid" 2>/dev/null || true
+		kill -"$signal" "$collie_pid" 2>/dev/null || true
 		wait "$collie_pid" 2>/dev/null || true
 		collie_pid=""
 	fi
 	exit "$status"
 }
-trap 'terminate 143' TERM
-trap 'terminate 130' INT
+trap 'terminate TERM 143' TERM
+trap 'terminate INT 130' INT
 trap cleanup EXIT
 
 "$BIN_DIR/herdr" server &
