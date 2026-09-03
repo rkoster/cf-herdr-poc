@@ -71,18 +71,29 @@ done
 
 export COLLIE_PACK_TRUST_STORE="$COLLIE_STATE_DIR/pack-trust.json"
 trust_store="$COLLIE_PACK_TRUST_STORE"
+if [[ -L "$trust_store" ]]; then
+  printf 'Pack trust store must not be a symlink: %s\n' "$trust_store" >&2
+  exit 1
+fi
 if [[ ! -f "$trust_store" ]]; then
   export SANDBOX_BOOTSTRAP_READY_FILE="${SANDBOX_BOOTSTRAP_READY_FILE:-$SANDBOX_STATE_DIR/bootstrap-ready}"
   rm -f -- "$SANDBOX_BOOTSTRAP_READY_FILE"
   "$BIN_DIR/sandbox-bootstrap" &
   bootstrap_pid=$!
-  while [[ ! -f "$SANDBOX_BOOTSTRAP_READY_FILE" ]]; do
+  while [[ ! -f "$SANDBOX_BOOTSTRAP_READY_FILE" && ! -f "$trust_store" ]]; do
+    if [[ -L "$trust_store" ]]; then
+      printf 'Pack trust store must not be a symlink: %s\n' "$trust_store" >&2
+      exit 1
+    fi
     if ! kill -0 "$bootstrap_pid" 2>/dev/null; then
       wait "$bootstrap_pid"
       exit 1
     fi
     sleep 0.1
   done
+  if [[ -f "$trust_store" && ! -L "$trust_store" ]]; then
+    rm -f -- "${COLLIE_JOIN_TOKEN_FILE:-}"
+  fi
   kill "$bootstrap_pid" 2>/dev/null || true
   wait "$bootstrap_pid" || true
   bootstrap_pid=""

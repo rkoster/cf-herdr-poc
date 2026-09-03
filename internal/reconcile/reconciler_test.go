@@ -587,7 +587,7 @@ func TestAllowsActionsDeniesDesiredDeletedImmediately(t *testing.T) {
 }
 
 func TestPersistenceFailurePreventsNextEffect(t *testing.T) {
-	for _, phase := range []model.Phase{model.PhaseCreating, model.PhasePreparingInvite, model.PhaseStaging, model.PhaseDiscoveringApp, model.PhaseSecuringRoute, model.PhaseSecuringManagerRoute, model.PhaseConfiguringEnrollment, model.PhaseStarting, model.PhaseWaitingForApp, model.PhaseWaitingForRoute, model.PhaseJoiningPack} {
+	for _, phase := range []model.Phase{model.PhaseCreating, model.PhasePreparingInvite, model.PhaseStaging, model.PhaseDiscoveringApp, model.PhaseSecuringRoute, model.PhaseSecuringManagerRoute, model.PhaseConfiguringEnrollment, model.PhaseStarting, model.PhaseWaitingForApp, model.PhaseWaitingForRoute, model.PhaseTriggeringEnrollment, model.PhaseJoiningPack} {
 		t.Run(string(phase), func(t *testing.T) {
 			r, s, _, _, _, _, _, calls := fixture(phase)
 			current, _ := s.Get("demo")
@@ -603,6 +603,15 @@ func TestPersistenceFailurePreventsNextEffect(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTriggerPhasePersistenceFailurePreventsObservationAndPOST(t *testing.T) {
+	r, s, _, _, _, _, _, calls := fixture(model.PhaseTriggeringEnrollment)
+	s.failUpdate = 1
+	_ = r.ReconcileOne(context.Background(), "demo")
+	if count(*calls, "observe-member") != 0 || count(*calls, "trigger-enrollment") != 0 {
+		t.Fatalf("calls=%#v", *calls)
 	}
 }
 

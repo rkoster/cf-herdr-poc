@@ -150,6 +150,55 @@ func TestLauncherForwardsSignalsAndReapsChildren(t *testing.T) {
 	}
 }
 
+func TestLauncherUsesRegularTrustStoreWhenMarkerIsMissing(t *testing.T) {
+	if os.Getenv("SANDBOX_LAUNCHER_HELPER") != "" {
+		return
+	}
+	root := prepareLauncher(t)
+	state := filepath.Join(root, "state")
+	logPath := filepath.Join(root, "signals.log")
+	token := filepath.Join(root, "token")
+	if err := os.WriteFile(token, []byte("token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("bash", filepath.Join(root, "start.sh"))
+	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_BOOTSTRAP_TRUST_ONLY=1", "SANDBOX_STATE_DIR="+state, "SIGNAL_LOG="+logPath, "COLLIE_JOIN_TOKEN_FILE="+token)
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitForLog(t, logPath, "bun started")
+	if _, err := os.Stat(token); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale token remains: %v", err)
+	}
+	_ = command.Process.Signal(syscall.SIGTERM)
+	_ = command.Wait()
+}
+
+func TestLauncherRejectsSymlinkTrustStore(t *testing.T) {
+	if os.Getenv("SANDBOX_LAUNCHER_HELPER") != "" {
+		return
+	}
+	root := prepareLauncher(t)
+	state := filepath.Join(root, "state")
+	trustDir := filepath.Join(state, "state", "collie")
+	if err := os.MkdirAll(trustDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "target")
+	if err := os.WriteFile(target, []byte("opaque"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(trustDir, "pack-trust.json")); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("bash", filepath.Join(root, "start.sh"))
+	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+state, "SIGNAL_LOG="+filepath.Join(root, "signals.log"))
+	err := command.Run()
+	if err == nil {
+		t.Fatal("launcher accepted symlink trust store")
+	}
+}
+
 func prepareLauncher(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -189,6 +238,15 @@ func readLauncher(t *testing.T) string {
 func runLauncherHelper() {
 	role := os.Getenv("SANDBOX_HELPER_ROLE")
 	if role == "sandbox-bootstrap" {
+		if os.Getenv("SANDBOX_BOOTSTRAP_TRUST_ONLY") != "" {
+			path := os.Getenv("COLLIE_PACK_TRUST_STORE")
+			_ = os.MkdirAll(filepath.Dir(path), 0o700)
+			_ = os.WriteFile(path, []byte("opaque\n"), 0o600)
+			signals := make(chan os.Signal, 1)
+			signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+			<-signals
+			os.Exit(0)
+		}
 		ready := os.Getenv("SANDBOX_BOOTSTRAP_READY_FILE")
 		if ready == "" {
 			os.Exit(1)
