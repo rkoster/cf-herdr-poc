@@ -3,17 +3,23 @@ package pack
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"cf-herdr-poc/internal/runner"
+	"cf-herdr-poc/internal/supervisor"
 )
 
 type call struct {
 	name string
 	args []string
+	env  []string
 }
 type fakeRunner struct {
 	output []byte
@@ -21,8 +27,8 @@ type fakeRunner struct {
 	calls  []call
 }
 
-func (r *fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
-	r.calls = append(r.calls, call{name, append([]string(nil), args...)})
+func (r *fakeRunner) RunEnv(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, call{name: name, args: append([]string(nil), args...), env: append([]string(nil), env...)})
 	return append([]byte(nil), r.output...), r.err
 }
 
@@ -42,13 +48,17 @@ func TestPrepareEnrollmentCreatesPrivateTokenFileAndRestarts(t *testing.T) {
 	temp := t.TempDir()
 	r := &fakeRunner{output: []byte(invite + "\n\n  single-use · expires 2026-09-03T18:00:00.000Z (10 minutes)\n")}
 	s := &fakeSupervisor{}
-	m := New(r, s, Config{Executable: "collie", TempDir: temp})
+	m := New(r, s, Config{Executable: "collie", TempDir: temp, ConfigDir: "/manager/config", StateDir: "/manager/state", SocketPath: "/manager/herdr.sock", Port: 8787})
 	handle, err := m.PrepareEnrollment(context.Background(), "pack.apps.example", "sandbox-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(r.calls, []call{{"collie", []string{"pack", "invite", "--address", "https://pack.apps.example"}}}) {
+	if r.calls[0].name != "collie" || !reflect.DeepEqual(r.calls[0].args, []string{"pack", "invite", "--address", "https://pack.apps.example"}) {
 		t.Fatalf("calls = %#v", r.calls)
+	}
+	env := environmentMap(r.calls[0].env)
+	if env["HERDR_PLUGIN_CONFIG_DIR"] != "/manager/config" || env["HERDR_PLUGIN_STATE_DIR"] != "/manager/state" || env["COLLIE_STATE_DIR"] != "/manager/state" || env["HERDR_SOCKET_PATH"] != "/manager/herdr.sock" || env["COLLIE_HOST"] != "127.0.0.1" || env["COLLIE_PORT"] != "8787" {
+		t.Fatalf("CLI environment = %#v", env)
 	}
 	if s.restarts != 1 {
 		t.Fatalf("restarts = %d", s.restarts)
@@ -138,6 +148,128 @@ func TestRemoveMemberValidatesIDAndRestarts(t *testing.T) {
 	}
 	if s.restarts != 1 {
 		t.Fatalf("restarts = %d", s.restarts)
+	}
+}
+
+func TestMemberIDMatchesCollieContract(t *testing.T) {
+	valid := []string{"a", "0", strings.Repeat("a", 63), "sandbox-1"}
+	invalid := []string{"A", "a.b", "a_b", strings.Repeat("a", 64), "-a", "a-" + strings.Repeat("b", 62)}
+	for _, id := range valid {
+		if err := validateMemberID(id); err != nil {
+			t.Errorf("valid %q rejected: %v", id, err)
+		}
+	}
+	for _, id := range invalid {
+		if err := validateMemberID(id); err == nil {
+			t.Errorf("invalid %q accepted", id)
+		}
+	}
+}
+
+func TestFixturesMatchNestedCollieOutputContract(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("repository path fixture")
+	}
+	source, err := os.ReadFile("../../collie/cli/pack.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, contract := range []string{
+		"deps.io.out(`${minted.token}.${leadFp}`)",
+		"deps.io.out(`  single-use · expires ${new Date(minted.expiresAt).toISOString()} (10 minutes)`)",
+		"emit(`  ${m.memberId}  (${m.role})  ${m.address}`, \"plain\")",
+	} {
+		if !strings.Contains(string(source), contract) {
+			t.Fatalf("nested Collie output contract drifted: %q", contract)
+		}
+	}
+}
+
+func TestBridgeAndCLIUseIdenticalManagedRuntimeEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix executable fixture")
+	}
+	temp := t.TempDir()
+	configDir, stateDir := filepath.Join(temp, "config"), filepath.Join(temp, "state")
+	for _, dir := range []string{configDir, stateDir} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := filepath.Join(temp, "fake-collie")
+	bridgeEnv, cliEnv := filepath.Join(temp, "bridge.env"), filepath.Join(temp, "cli.env")
+	scriptBody := `#!/bin/sh
+set -eu
+case "${1:-}" in
+  bridge) record='` + bridgeEnv + `' ;;
+  pack) record='` + cliEnv + `' ;;
+  *) exit 64 ;;
+esac
+{
+  printf 'HERDR_PLUGIN_CONFIG_DIR=%s\n' "$HERDR_PLUGIN_CONFIG_DIR"
+  printf 'HERDR_PLUGIN_STATE_DIR=%s\n' "$HERDR_PLUGIN_STATE_DIR"
+  printf 'COLLIE_STATE_DIR=%s\n' "$COLLIE_STATE_DIR"
+  printf 'HERDR_SOCKET_PATH=%s\n' "$HERDR_SOCKET_PATH"
+  printf 'COLLIE_HOST=%s\n' "$COLLIE_HOST"
+  printf 'COLLIE_PORT=%s\n' "$COLLIE_PORT"
+  printf 'TRUST_PATH=%s\n' "$HERDR_PLUGIN_STATE_DIR/pack-trust.json"
+} > "$record"
+if [ "${1:-}" = bridge ]; then
+  trap 'exit 0' TERM
+  while :; do sleep 1; done
+fi
+[ "$*" = 'pack invite --address https://pack.example' ] || exit 65
+printf '%s\n\n  single-use · expires 2026-09-03T18:00:00.000Z (10 minutes)\n' '` + invite + `'
+`
+	if err := os.WriteFile(script, []byte(scriptBody), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := supervisor.New(supervisor.Config{Executable: script, Args: []string{"bridge"}, ConfigDir: configDir, StateDir: stateDir, SocketPath: filepath.Join(temp, "herdr.sock"), Port: 8787, StopTimeout: time.Second, Stdout: io.Discard, Stderr: io.Discard}, nil, func(context.Context, string) error { return nil })
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop(context.Background())
+	waitForPath(t, bridgeEnv)
+	m := New(runner.Exec{}, s, Config{Executable: script, TempDir: temp, ConfigDir: configDir, StateDir: stateDir, SocketPath: filepath.Join(temp, "herdr.sock"), Port: 8787})
+	handle, err := m.PrepareEnrollment(context.Background(), "pack.example", "sandbox-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Cleanup()
+	waitForPath(t, cliEnv)
+	bridgeValues, err := os.ReadFile(bridgeEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cliValues, err := os.ReadFile(cliEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(bridgeValues) != string(cliValues) {
+		t.Fatalf("bridge environment:\n%s\nCLI environment:\n%s", bridgeValues, cliValues)
+	}
+}
+
+func environmentMap(env []string) map[string]string {
+	result := map[string]string{}
+	for _, entry := range env {
+		key, value, _ := strings.Cut(entry, "=")
+		result[key] = value
+	}
+	return result
+}
+
+func waitForPath(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", path)
+		}
+		runtime.Gosched()
 	}
 }
 

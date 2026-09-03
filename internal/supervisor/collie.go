@@ -8,10 +8,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
+
+	collieruntime "cf-herdr-poc/internal/collie"
 )
 
 var ErrChildExited = errors.New("collie child exited")
@@ -29,6 +30,7 @@ type Config struct {
 	Dir           string
 	ConfigDir     string
 	StateDir      string
+	SocketPath    string
 	Host          string
 	Port          int
 	Stdout        io.Writer
@@ -42,7 +44,7 @@ type ProcessConfig struct {
 	Name   string
 	Args   []string
 	Dir    string
-	Env    map[string]string
+	Env    []string
 	Stdout io.Writer
 	Stderr io.Writer
 }
@@ -57,12 +59,31 @@ type ProcessFactory func(ProcessConfig) Process
 type Probe func(context.Context, string) error
 
 type Supervisor struct {
-	config  Config
-	factory ProcessFactory
-	probe   Probe
-	mu      sync.Mutex
-	process Process
-	exited  chan error
+	config     Config
+	factory    ProcessFactory
+	probe      Probe
+	mu         sync.Mutex
+	process    Process
+	generation *processGeneration
+}
+
+type processGeneration struct {
+	done chan struct{}
+	mu   sync.Mutex
+	err  error
+}
+
+func (g *processGeneration) finish(err error) {
+	g.mu.Lock()
+	g.err = err
+	g.mu.Unlock()
+	close(g.done)
+}
+
+func (g *processGeneration) exitError() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.err
 }
 
 func New(config Config, factory ProcessFactory, probe Probe) *Supervisor {
@@ -79,10 +100,10 @@ func New(config Config, factory ProcessFactory, probe Probe) *Supervisor {
 		config.Port = 8787
 	}
 	if config.Stdout == nil {
-		config.Stdout = io.Discard
+		config.Stdout = os.Stdout
 	}
 	if config.Stderr == nil {
-		config.Stderr = io.Discard
+		config.Stderr = os.Stderr
 	}
 	if config.ReadyTimeout <= 0 {
 		config.ReadyTimeout = 10 * time.Second
@@ -115,18 +136,14 @@ func (s *Supervisor) startLocked(ctx context.Context) error {
 	if s.process != nil {
 		return errors.New("collie is already running")
 	}
-	env := map[string]string{
-		"HOME": s.config.ConfigDir, "XDG_CONFIG_HOME": s.config.ConfigDir,
-		"COLLIE_STATE_DIR": s.config.StateDir, "COLLIE_HOST": s.config.Host,
-		"COLLIE_PORT": strconv.Itoa(s.config.Port),
-	}
+	env := collieruntime.Environment(collieruntime.Runtime{ConfigDir: s.config.ConfigDir, StateDir: s.config.StateDir, SocketPath: s.config.SocketPath, Port: s.config.Port}, os.Environ())
 	process := s.factory(ProcessConfig{Name: s.config.Executable, Args: append([]string(nil), s.config.Args...), Dir: s.config.Dir, Env: env, Stdout: s.config.Stdout, Stderr: s.config.Stderr})
 	if err := process.Start(); err != nil {
 		return fmt.Errorf("start collie: %w", err)
 	}
-	exited := make(chan error, 1)
-	s.process, s.exited = process, exited
-	go func() { exited <- process.Wait(); close(exited) }()
+	generation := &processGeneration{done: make(chan struct{})}
+	s.process, s.generation = process, generation
+	go func() { generation.finish(process.Wait()) }()
 	return nil
 }
 
@@ -141,9 +158,9 @@ func (s *Supervisor) Restart(ctx context.Context) error {
 
 func (s *Supervisor) Ready(ctx context.Context) error {
 	s.mu.Lock()
-	exited := s.exited
+	generation := s.generation
 	s.mu.Unlock()
-	if exited == nil {
+	if generation == nil {
 		return errors.New("collie is not running")
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.config.ReadyTimeout)
@@ -153,7 +170,8 @@ func (s *Supervisor) Ready(ctx context.Context) error {
 	defer ticker.Stop()
 	for {
 		select {
-		case err := <-exited:
+		case <-generation.done:
+			err := generation.exitError()
 			if err == nil {
 				err = errors.New("unexpected clean exit")
 			}
@@ -164,7 +182,8 @@ func (s *Supervisor) Ready(ctx context.Context) error {
 			return nil
 		}
 		select {
-		case err := <-exited:
+		case <-generation.done:
+			err := generation.exitError()
 			if err == nil {
 				err = errors.New("unexpected clean exit")
 			}
@@ -189,13 +208,13 @@ func (s *Supervisor) stopLocked(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	process, exited := s.process, s.exited
+	process, generation := s.process, s.generation
 	if err := process.Stop(s.config.StopTimeout); err != nil {
 		return fmt.Errorf("stop collie: %w", err)
 	}
 	select {
-	case <-exited:
-		s.process, s.exited = nil, nil
+	case <-generation.done:
+		s.process, s.generation = nil, nil
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -228,10 +247,7 @@ type execProcess struct {
 func newExecProcess(config ProcessConfig) *execProcess {
 	command := exec.Command(config.Name, config.Args...)
 	command.Dir, command.Stdout, command.Stderr = config.Dir, config.Stdout, config.Stderr
-	command.Env = os.Environ()
-	for key, value := range config.Env {
-		command.Env = append(command.Env, key+"="+value)
-	}
+	command.Env = append([]string(nil), config.Env...)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return &execProcess{command: command, wait: make(chan error, 1)}
 }

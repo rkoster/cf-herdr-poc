@@ -14,7 +14,14 @@ const outputTruncatedMarker = "[older command output truncated]\n"
 type Exec struct{}
 
 func (Exec) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return (Exec{}).RunEnv(ctx, nil, name, args...)
+}
+
+func (Exec) RunEnv(ctx context.Context, environment []string, name string, args ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, name, args...)
+	if environment != nil {
+		command.Env = environment
+	}
 	command.WaitDelay = waitDelay
 	configureCancellation(command)
 	output := newCappedBuffer(MaxOutputBytes)

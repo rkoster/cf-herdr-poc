@@ -11,16 +11,16 @@ import (
 	"sync"
 	"time"
 
-	"cf-herdr-poc/internal/runner"
+	collieruntime "cf-herdr-poc/internal/collie"
 )
 
 const defaultTokenLifetime = 10 * time.Minute
 
 var (
-	memberIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	memberIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 	invitePattern   = regexp.MustCompile(`^[A-Za-z0-9_-]+\.[0-9a-fA-F]{64}$`)
 	expiryPattern   = regexp.MustCompile(`expires ([0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+)`)
-	rosterPattern   = regexp.MustCompile(`^  ([A-Za-z0-9][A-Za-z0-9._-]{0,127})  \((?:lead|peer)\)  `)
+	rosterPattern   = regexp.MustCompile(`^  ([a-z0-9][a-z0-9-]{0,62})  \((?:lead|peer)\)  `)
 )
 
 type Supervisor interface {
@@ -33,7 +33,15 @@ type Supervisor interface {
 type Config struct {
 	Executable    string
 	TempDir       string
+	ConfigDir     string
+	StateDir      string
+	SocketPath    string
+	Port          int
 	TokenLifetime time.Duration
+}
+
+type Runner interface {
+	RunEnv(context.Context, []string, string, ...string) ([]byte, error)
 }
 
 type Enrollment struct {
@@ -54,17 +62,20 @@ func (e *Enrollment) Cleanup() error {
 }
 
 type Manager struct {
-	runner     runner.Runner
+	runner     Runner
 	supervisor Supervisor
 	config     Config
 }
 
-func New(commandRunner runner.Runner, supervisor Supervisor, config Config) *Manager {
+func New(commandRunner Runner, supervisor Supervisor, config Config) *Manager {
 	if config.Executable == "" {
 		config.Executable = "collie"
 	}
 	if config.TokenLifetime <= 0 {
 		config.TokenLifetime = defaultTokenLifetime
+	}
+	if config.Port == 0 {
+		config.Port = 8787
 	}
 	return &Manager{runner: commandRunner, supervisor: supervisor, config: config}
 }
@@ -77,7 +88,7 @@ func (m *Manager) PrepareEnrollment(ctx context.Context, managerPackHost, sandbo
 	if err != nil {
 		return nil, err
 	}
-	output, runErr := m.runner.Run(ctx, m.config.Executable, "pack", "invite", "--address", address)
+	output, runErr := m.run(ctx, "pack", "invite", "--address", address)
 	invite, expiresAt := parseInvite(output)
 	if runErr != nil {
 		return nil, errors.New("create Collie Pack invite: command failed")
@@ -116,7 +127,7 @@ func (m *Manager) MemberPresent(ctx context.Context, id string) (bool, error) {
 	if err := validateMemberID(id); err != nil {
 		return false, err
 	}
-	output, err := m.runner.Run(ctx, m.config.Executable, "pack", "status", "--no-probe")
+	output, err := m.run(ctx, "pack", "status", "--no-probe")
 	if err != nil {
 		return false, errors.New("read Collie Pack status: command failed")
 	}
@@ -133,13 +144,21 @@ func (m *Manager) RemoveMember(ctx context.Context, id string) error {
 	if err := validateMemberID(id); err != nil {
 		return err
 	}
-	if _, err := m.runner.Run(ctx, m.config.Executable, "pack", "remove", id); err != nil {
+	if _, err := m.run(ctx, "pack", "remove", id); err != nil {
 		return errors.New("remove Collie Pack member: command failed")
 	}
 	if err := m.supervisor.Restart(ctx); err != nil {
 		return fmt.Errorf("restart Collie after removal: %w", err)
 	}
 	return nil
+}
+
+func (m *Manager) run(ctx context.Context, args ...string) ([]byte, error) {
+	return m.runner.RunEnv(ctx, m.environment(), m.config.Executable, args...)
+}
+
+func (m *Manager) environment() []string {
+	return collieruntime.Environment(collieruntime.Runtime{ConfigDir: m.config.ConfigDir, StateDir: m.config.StateDir, SocketPath: m.config.SocketPath, Port: m.config.Port}, os.Environ())
 }
 
 func validateMemberID(id string) error {
