@@ -6,17 +6,54 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 func TestExecCapsCombinedOutput(t *testing.T) {
-	output, err := (Exec{}).Run(context.Background(), "sh", "-c", "yes x | head -c 100000")
+	output, err := (Exec{}).Run(context.Background(), "sh", "-c", "yes x | head -c 80000; printf FINAL_DIAGNOSTIC")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(output) > MaxOutputBytes {
 		t.Fatalf("output length = %d, want <= %d", len(output), MaxOutputBytes)
+	}
+	if !strings.HasPrefix(string(output), outputTruncatedMarker) || !strings.Contains(string(output), "FINAL_DIAGNOSTIC") {
+		t.Fatalf("output does not retain diagnostic tail: %q", output)
+	}
+}
+
+func TestExecLeavesNormalOutputUnchanged(t *testing.T) {
+	output, err := (Exec{}).Run(context.Background(), "sh", "-c", "printf 'normal output'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(output) != "normal output" {
+		t.Fatalf("output = %q, want normal output", output)
+	}
+}
+
+func TestBoundedWriterHandlesConcurrentWrites(t *testing.T) {
+	buffer := newCappedBuffer(MaxOutputBytes)
+	const writes = 100
+	var wait sync.WaitGroup
+	for stream, value := range map[string]string{"stdout": "O", "stderr": "E"} {
+		stream, value := stream, value
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			for i := 0; i < writes; i++ {
+				if _, err := buffer.Write([]byte(stream + value + "\n")); err != nil {
+					t.Errorf("Write() error = %v", err)
+				}
+			}
+		}()
+	}
+	wait.Wait()
+	output := string(buffer.Bytes())
+	if strings.Count(output, "stdoutO\n") != writes || strings.Count(output, "stderrE\n") != writes {
+		t.Fatalf("concurrent output lost writes")
 	}
 }
 
