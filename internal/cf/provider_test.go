@@ -73,6 +73,56 @@ func TestPushUsesExactArgvAndDiscoversGUID(t *testing.T) {
 	}
 }
 
+func TestPushRetainsPushAndGUIDDiagnosticsInOrder(t *testing.T) {
+	bitsPath := t.TempDir()
+	run := &recordingRunner{outputs: [][]byte{
+		[]byte("push diagnostic"),
+		[]byte(appGUID + "\n"),
+	}}
+	_, operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Push(
+		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushIndex := strings.Index(operation.Summary, "push diagnostic")
+	guidIndex := strings.Index(operation.Summary, appGUID)
+	if pushIndex < 0 || guidIndex <= pushIndex {
+		t.Fatalf("Summary = %q, want push then GUID diagnostics", operation.Summary)
+	}
+	if len(operation.Summary) > maxOperationSummaryBytes {
+		t.Fatalf("Summary length = %d, want <= %d", len(operation.Summary), maxOperationSummaryBytes)
+	}
+}
+
+func TestPushRetainsSanitizedGUIDFailureDiagnostic(t *testing.T) {
+	bitsPath := t.TempDir()
+	run := &recordingRunner{
+		outputs: [][]byte{
+			[]byte("push diagnostic"),
+			[]byte("GUID lookup failed\nAuthorization: Bearer secret-value"),
+		},
+		errors: []error{nil, errors.New("exit status 1")},
+	}
+	_, operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Push(
+		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath},
+	)
+	if err == nil {
+		t.Fatal("Push succeeded, want GUID lookup failure")
+	}
+	pushIndex := strings.Index(operation.Summary, "push diagnostic")
+	guidIndex := strings.Index(operation.Summary, "GUID lookup failed")
+	if pushIndex < 0 || guidIndex <= pushIndex {
+		t.Fatalf("Summary = %q, want push then GUID failure diagnostics", operation.Summary)
+	}
+	if strings.Contains(operation.Summary, "secret-value") || !strings.Contains(operation.Summary, "[REDACTED]") {
+		t.Fatalf("Summary does not preserve redaction: %q", operation.Summary)
+	}
+	if len(operation.Summary) > maxOperationSummaryBytes {
+		t.Fatalf("Summary length = %d, want <= %d", len(operation.Summary), maxOperationSummaryBytes)
+	}
+}
+
 func TestRouteOperationsUseExactArgv(t *testing.T) {
 	run := &recordingRunner{}
 	provider := Provider{Run: run}

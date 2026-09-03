@@ -108,6 +108,7 @@ func (p Provider) Push(ctx context.Context, request PushRequest) (App, model.Ope
 	guid, guidOperation, err := p.AppGUID(ctx, request.Name)
 	operation.Duration += guidOperation.Duration
 	operation.Command = bounded(operation.Command + " ; " + guidOperation.Command)
+	operation.Summary = appendSummary(operation.Summary, guidOperation.Summary)
 	if err != nil {
 		operation.Success = false
 		operation.Error = guidOperation.Error
