@@ -82,6 +82,19 @@ type Config struct {
 	ScanInterval     time.Duration
 }
 
+type lifecycleState uint8
+
+const (
+	lifecycleStopped lifecycleState = iota
+	lifecycleRunning
+	lifecycleStopping
+)
+
+type workerGeneration struct {
+	stop chan struct{}
+	done chan struct{}
+}
+
 type Reconciler struct {
 	config  Config
 	store   Store
@@ -91,19 +104,18 @@ type Reconciler struct {
 	probe   Probe
 	clock   Clock
 
-	worker        sync.Mutex
-	stateMu       sync.Mutex
-	inFlight      map[string]bool
-	enrollments   map[string]Enrollment
-	prepared      map[string]Prepared
-	recoveryPhase map[string]model.Phase
-	stop          chan struct{}
-	done          chan struct{}
-	started       bool
-	stopping      bool
-	active        int
-	maxActive     int
-	beforeEffect  func(string)
+	worker              sync.Mutex
+	stateMu             sync.Mutex
+	inFlight            map[string]bool
+	enrollments         map[string]Enrollment
+	prepared            map[string]Prepared
+	recoveryPhase       map[string]model.Phase
+	lifecycle           lifecycleState
+	generation          *workerGeneration
+	active              int
+	maxActive           int
+	beforeEffect        func(string)
+	beforeLifecycleDone func()
 }
 
 func New(config Config, store Store, runtime Runtime, cloud CFProvider, packManager PackManager, probe Probe, clock Clock) *Reconciler {
@@ -706,33 +718,51 @@ func sanitize(value string) string {
 }
 
 func (r *Reconciler) Start(ctx context.Context) {
-	r.stateMu.Lock()
-	if r.started {
+	for {
+		r.stateMu.Lock()
+		if r.lifecycle == lifecycleRunning {
+			r.stateMu.Unlock()
+			return
+		}
+		if r.lifecycle == lifecycleStopping {
+			done := r.generation.done
+			r.stateMu.Unlock()
+			<-done
+			continue
+		}
+		generation := &workerGeneration{stop: make(chan struct{}), done: make(chan struct{})}
+		r.lifecycle = lifecycleRunning
+		r.generation = generation
 		r.stateMu.Unlock()
+		go func(generation *workerGeneration) {
+			defer func() {
+				r.stateMu.Lock()
+				if r.beforeLifecycleDone != nil {
+					r.beforeLifecycleDone()
+				}
+				if r.generation == generation {
+					r.lifecycle = lifecycleStopped
+					r.generation = nil
+				}
+				close(generation.done)
+				r.stateMu.Unlock()
+			}()
+			r.scan(ctx)
+			ticker := time.NewTicker(r.config.ScanInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-generation.stop:
+					return
+				case <-ticker.C:
+					r.scan(ctx)
+				}
+			}
+		}(generation)
 		return
 	}
-	r.started = true
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	r.stop = stop
-	r.done = done
-	r.stateMu.Unlock()
-	go func(stop <-chan struct{}, done chan<- struct{}) {
-		defer close(done)
-		r.scan(ctx)
-		ticker := time.NewTicker(r.config.ScanInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-stop:
-				return
-			case <-ticker.C:
-				r.scan(ctx)
-			}
-		}
-	}(stop, done)
 }
 func (r *Reconciler) scan(ctx context.Context) {
 	for _, sandbox := range r.store.List() {
@@ -741,28 +771,17 @@ func (r *Reconciler) scan(ctx context.Context) {
 }
 func (r *Reconciler) Stop() {
 	r.stateMu.Lock()
-	if !r.started {
+	if r.lifecycle == lifecycleStopped {
 		r.stateMu.Unlock()
 		return
 	}
-	stop, done := r.stop, r.done
-	if r.stopping {
-		r.stateMu.Unlock()
-		<-done
-		return
-	}
-	r.stopping = true
-	close(stop)
-	r.stateMu.Unlock()
-	<-done
-	r.stateMu.Lock()
-	if r.done == done {
-		r.started = false
-		r.stopping = false
-		r.stop = nil
-		r.done = nil
+	generation := r.generation
+	if r.lifecycle == lifecycleRunning {
+		r.lifecycle = lifecycleStopping
+		close(generation.stop)
 	}
 	r.stateMu.Unlock()
+	<-generation.done
 }
 func (r *Reconciler) MaxConcurrent() int {
 	r.stateMu.Lock()

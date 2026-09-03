@@ -864,6 +864,50 @@ func TestConcurrentStartStopGenerationsDoNotCrossClose(t *testing.T) {
 	r.Stop()
 }
 
+func TestStartWaitsUntilStoppingGenerationIsFullyStopped(t *testing.T) {
+	r, _, _, _, _, _, _, _ := fixture(model.PhaseReady)
+	workerReset := make(chan struct{})
+	releaseDone := make(chan struct{})
+	var once sync.Once
+	r.beforeLifecycleDone = func() { once.Do(func() { close(workerReset); <-releaseDone }) }
+	r.Start(context.Background())
+	firstStopReturned := make(chan struct{})
+	go func() { r.Stop(); close(firstStopReturned) }()
+	<-workerReset
+	secondStopReturned := make(chan struct{})
+	go func() { r.Stop(); close(secondStopReturned) }()
+	startReturned := make(chan struct{})
+	go func() { r.Start(context.Background()); close(startReturned) }()
+	select {
+	case <-secondStopReturned:
+		t.Fatal("secondary Stop returned before generation completion")
+	default:
+	}
+	select {
+	case <-startReturned:
+		t.Fatal("Start returned before stopping generation completed")
+	default:
+	}
+	close(releaseDone)
+	select {
+	case <-firstStopReturned:
+	case <-time.After(time.Second):
+		t.Fatal("primary Stop blocked")
+	}
+	select {
+	case <-secondStopReturned:
+	case <-time.After(time.Second):
+		t.Fatal("secondary Stop blocked")
+	}
+	select {
+	case <-startReturned:
+	case <-time.After(time.Second):
+		t.Fatal("Start blocked")
+	}
+	r.beforeLifecycleDone = nil
+	r.Stop()
+}
+
 func count(values []string, want string) int {
 	n := 0
 	for _, v := range values {
