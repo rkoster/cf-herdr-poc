@@ -63,6 +63,7 @@ type PackManager interface {
 
 type Probe interface {
 	Reachable(context.Context, string) (bool, error)
+	TriggerEnrollment(context.Context, string) (model.Operation, error)
 }
 
 type Clock interface {
@@ -90,17 +91,18 @@ type Reconciler struct {
 	probe   Probe
 	clock   Clock
 
-	worker       sync.Mutex
-	stateMu      sync.Mutex
-	inFlight     map[string]bool
-	enrollments  map[string]Enrollment
-	prepared     map[string]Prepared
-	stop         chan struct{}
-	done         chan struct{}
-	started      bool
-	active       int
-	maxActive    int
-	beforeEffect func(string)
+	worker        sync.Mutex
+	stateMu       sync.Mutex
+	inFlight      map[string]bool
+	enrollments   map[string]Enrollment
+	prepared      map[string]Prepared
+	recoveryPhase map[string]model.Phase
+	stop          chan struct{}
+	done          chan struct{}
+	started       bool
+	active        int
+	maxActive     int
+	beforeEffect  func(string)
 }
 
 func New(config Config, store Store, runtime Runtime, cloud CFProvider, packManager PackManager, probe Probe, clock Clock) *Reconciler {
@@ -110,7 +112,7 @@ func New(config Config, store Store, runtime Runtime, cloud CFProvider, packMana
 	if config.ScanInterval <= 0 {
 		config.ScanInterval = 2 * time.Second
 	}
-	return &Reconciler{config: config, store: store, runtime: runtime, cf: cloud, pack: packManager, probe: probe, clock: clock, inFlight: map[string]bool{}, enrollments: map[string]Enrollment{}, prepared: map[string]Prepared{}}
+	return &Reconciler{config: config, store: store, runtime: runtime, cf: cloud, pack: packManager, probe: probe, clock: clock, inFlight: map[string]bool{}, enrollments: map[string]Enrollment{}, prepared: map[string]Prepared{}, recoveryPhase: map[string]model.Phase{}}
 }
 
 func (r *Reconciler) ReconcileOne(ctx context.Context, name string) error {
@@ -188,6 +190,7 @@ func (r *Reconciler) reconcileCreate(ctx context.Context, sandbox model.Sandbox)
 					}
 					delete(r.enrollments, sandbox.Name)
 				}
+				r.recoveryPhase[sandbox.Name] = sandbox.Phase
 				if err := r.persistPhase(sandbox.Name, model.PhasePreparingInvite, nil); err != nil {
 					return err
 				}
@@ -259,9 +262,14 @@ func (r *Reconciler) reconcileCreate(ctx context.Context, sandbox model.Sandbox)
 				err = persistErr
 			}
 			if err == nil {
+				next := model.PhaseSecuringRoute
+				if recovery, ok := r.recoveryPhase[sandbox.Name]; ok {
+					next = recovery
+					delete(r.recoveryPhase, sandbox.Name)
+				}
 				err = r.store.Update(sandbox.Name, func(s *model.Sandbox) error {
 					s.AppGUID = guid
-					s.Phase = model.PhaseSecuringRoute
+					s.Phase = next
 					s.UpdatedAt = r.clock.Now()
 					return nil
 				})
@@ -338,6 +346,18 @@ func (r *Reconciler) reconcileCreate(ctx context.Context, sandbox model.Sandbox)
 				break
 			}
 			err = r.poll(ctx, "probe-route", func() (bool, error) { return r.probe.Reachable(ctx, sandbox.InternalHost) })
+			if err == nil {
+				err = r.persistPhase(sandbox.Name, model.PhaseTriggeringEnrollment, nil)
+			}
+		case model.PhaseTriggeringEnrollment:
+			err = r.persistPhase(sandbox.Name, model.PhaseTriggeringEnrollment, nil)
+			if err == nil {
+				op, e := r.effectTriggerEnrollment(ctx, sandbox.InternalHost)
+				err = r.appendOperation(sandbox.Name, op)
+				if err == nil {
+					err = e
+				}
+			}
 			if err == nil {
 				err = r.persistPhase(sandbox.Name, model.PhaseJoiningPack, nil)
 			}
@@ -448,7 +468,10 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sandbox model.Sandbox)
 		return r.fail(sandbox.Name, model.PhaseDeleting, err)
 	}
 	delete(r.prepared, sandbox.Name)
-	return r.store.Delete(sandbox.Name)
+	if err := r.store.Delete(sandbox.Name); err != nil {
+		return r.fail(sandbox.Name, model.PhaseDeleting, err)
+	}
+	return nil
 }
 
 func (r *Reconciler) ensurePrepared(ctx context.Context, s model.Sandbox) error {
@@ -584,6 +607,10 @@ func (r *Reconciler) effectConfigureEnrollment(ctx context.Context, name string)
 func (r *Reconciler) effectStartApp(ctx context.Context, name string) (model.Operation, error) {
 	r.effect("start-app")
 	return r.cf.StartApp(ctx, name)
+}
+func (r *Reconciler) effectTriggerEnrollment(ctx context.Context, host string) (model.Operation, error) {
+	r.effect("trigger-enrollment")
+	return r.probe.TriggerEnrollment(ctx, host)
 }
 func (r *Reconciler) effectGUID(ctx context.Context, name string) (string, model.Operation, error) {
 	r.effect("discover-guid")

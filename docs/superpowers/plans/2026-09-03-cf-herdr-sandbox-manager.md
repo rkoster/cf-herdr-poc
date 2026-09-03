@@ -24,6 +24,8 @@ The repository root remains the POC product. The existing `collie/` clone is a v
 - `internal/runtime/bundle.go`: clone repository and overlay prebuilt sandbox runtime files.
 - `internal/pack/manager.go`: lead invite, Collie restart, and enrollment observation.
 - `internal/reconcile/reconciler.go`: creation/deletion state machine.
+- `internal/bootstrap/server.go`: sandbox bootstrap health and one-time Pack enrollment endpoint; it relies on the CF identity-aware route policy rather than browser authentication.
+- `cmd/sandbox-bootstrap/main.go`: temporary sandbox bootstrap process used before peer Collie starts.
 - `internal/httpapi/server.go`: manager API, static files, and reverse proxy routes.
 - `internal/httpapi/sanitize.go`: browser response projection that omits internal routes and secrets.
 - `internal/identity/client.go`: outbound HTTPS client using `CF_INSTANCE_CERT` and `CF_INSTANCE_KEY`.

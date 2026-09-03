@@ -46,6 +46,15 @@ func TestBuildRuntimeScriptChecksLinuxDependencies(t *testing.T) {
 	}
 }
 
+func TestBuildRuntimeBuildsStaticSandboxBootstrap(t *testing.T) {
+	script := readBuildScript(t)
+	for _, required := range []string{"CGO_ENABLED=0", "go build", "./cmd/sandbox-bootstrap", "$RUNTIME_DIR/bin/sandbox-bootstrap", "test -x"} {
+		if !strings.Contains(script, required) {
+			t.Errorf("build-runtime.sh missing %q", required)
+		}
+	}
+}
+
 func runBuild(t *testing.T, env []string) (string, error) {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)

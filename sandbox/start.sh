@@ -18,11 +18,21 @@ export COLLIE_MUX="${COLLIE_MUX:-herdr}"
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$COLLIE_STATE_DIR" "$HERDR_PLUGIN_CONFIG_DIR" "$(dirname -- "$HERDR_SOCKET_PATH")"
 
 herdr_pid=""
+bootstrap_pid=""
 collie_pid=""
 cleanup() {
+	if [[ -n "$bootstrap_pid" ]] && kill -0 "$bootstrap_pid" 2>/dev/null; then
+		kill "$bootstrap_pid" 2>/dev/null || true
+		wait "$bootstrap_pid" 2>/dev/null || true
+	fi
 	if [[ -n "$collie_pid" ]] && kill -0 "$collie_pid" 2>/dev/null; then
 		kill "$collie_pid" 2>/dev/null || true
 		wait "$collie_pid" 2>/dev/null || true
+	fi
+	if [[ -n "$bootstrap_pid" ]] && kill -0 "$bootstrap_pid" 2>/dev/null; then
+		kill -"$signal" "$bootstrap_pid" 2>/dev/null || true
+		wait "$bootstrap_pid" 2>/dev/null || true
+		bootstrap_pid=""
 	fi
 	if [[ -n "$herdr_pid" ]] && kill -0 "$herdr_pid" 2>/dev/null; then
 		kill "$herdr_pid" 2>/dev/null || true
@@ -60,10 +70,21 @@ while [[ ! -S "$HERDR_SOCKET_PATH" ]]; do
 done
 
 trust_store="$COLLIE_STATE_DIR/pack-trust.json"
-if [[ ! -f "$trust_store" && -n "${COLLIE_JOIN_TOKEN_FILE:-}" && -f "$COLLIE_JOIN_TOKEN_FILE" ]]; then
-  : "${COLLIE_PACK_LEAD_ADDRESS:?COLLIE_PACK_LEAD_ADDRESS is required to join a pack}"
-  "$BIN_DIR/collie" pack join "$COLLIE_PACK_LEAD_ADDRESS" - < "$COLLIE_JOIN_TOKEN_FILE"
-  rm -f -- "$COLLIE_JOIN_TOKEN_FILE"
+if [[ ! -f "$trust_store" ]]; then
+  export SANDBOX_BOOTSTRAP_READY_FILE="${SANDBOX_BOOTSTRAP_READY_FILE:-$SANDBOX_STATE_DIR/bootstrap-ready}"
+  rm -f -- "$SANDBOX_BOOTSTRAP_READY_FILE"
+  "$BIN_DIR/sandbox-bootstrap" &
+  bootstrap_pid=$!
+  while [[ ! -f "$SANDBOX_BOOTSTRAP_READY_FILE" ]]; do
+    if ! kill -0 "$bootstrap_pid" 2>/dev/null; then
+      wait "$bootstrap_pid"
+      exit 1
+    fi
+    sleep 0.1
+  done
+  kill "$bootstrap_pid" 2>/dev/null || true
+  wait "$bootstrap_pid" || true
+  bootstrap_pid=""
 fi
 
 (exec "$BIN_DIR/bun" run "$COLLIE_DIR/bridge/index.ts") &

@@ -29,7 +29,8 @@ func TestLauncherContract(t *testing.T) {
 	lines := executableLines(string(contents))
 	ordered := []*regexp.Regexp{
 		regexp.MustCompile(`^"\$BIN_DIR/herdr" server &$`),
-		regexp.MustCompile(`^"\$BIN_DIR/collie" pack join "\$COLLIE_PACK_LEAD_ADDRESS" - < "\$COLLIE_JOIN_TOKEN_FILE"$`),
+		regexp.MustCompile(`^"\$BIN_DIR/sandbox-bootstrap" &$`),
+		regexp.MustCompile(`^wait "\$bootstrap_pid" \|\| true$`),
 		regexp.MustCompile(`^\(exec "\$BIN_DIR/bun" run "\$COLLIE_DIR/bridge/index\.ts"\) &$`),
 	}
 	position := -1
@@ -45,17 +46,13 @@ func TestLauncherContract(t *testing.T) {
 	}
 	script := strings.Join(lines, "\n")
 
-	if !strings.Contains(script, `"$COLLIE_JOIN_TOKEN_FILE"`) {
-		t.Fatal("launcher does not quote COLLIE_JOIN_TOKEN_FILE")
+	if strings.Contains(script, `pack join`) {
+		t.Fatal("launcher performs enrollment before route trigger")
 	}
-	if !strings.Contains(script, `< "$COLLIE_JOIN_TOKEN_FILE"`) {
-		t.Fatal("launcher does not read token from the file on stdin")
-	}
-	if strings.Contains(script, `$(cat "$COLLIE_JOIN_TOKEN_FILE")`) {
-		t.Fatal("launcher expands token into argv")
-	}
-	if !strings.Contains(script, `rm -f -- "$COLLIE_JOIN_TOKEN_FILE"`) {
-		t.Fatal("launcher does not remove one-time invite after joining")
+	for _, required := range []string{`bootstrap_pid=""`, `SANDBOX_BOOTSTRAP_READY_FILE`, `kill "$bootstrap_pid"`, `wait "$bootstrap_pid" || true`, `if [[ ! -f "$trust_store" ]]`} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("launcher missing %q", required)
+		}
 	}
 	if strings.Contains(script, "echo $COLLIE_JOIN_TOKEN") || strings.Contains(script, "set -x") {
 		t.Fatal("launcher may print the token")
@@ -124,7 +121,13 @@ func TestLauncherForwardsSignalsAndReapsChildren(t *testing.T) {
 				"SANDBOX_LAUNCHER_HELPER=1",
 				"SANDBOX_STATE_DIR="+state,
 				"SIGNAL_LOG="+logPath,
+				"SANDBOX_MEMBER_ID=demo",
+				"COLLIE_PACK_LEAD_ADDRESS=https://manager.identity.example",
+				"COLLIE_JOIN_TOKEN_FILE="+filepath.Join(root, "token"),
 			)
+			if err := os.WriteFile(filepath.Join(root, "token"), []byte("token\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 			if err := command.Start(); err != nil {
 				t.Fatal(err)
 			}
@@ -161,7 +164,7 @@ func prepareLauncher(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, role := range []string{"herdr", "bun", "collie"} {
+	for _, role := range []string{"herdr", "bun", "collie", "sandbox-bootstrap"} {
 		wrapper := fmt.Sprintf("#!/usr/bin/env bash\nSANDBOX_HELPER_ROLE=%q exec %q -test.run=TestLauncherForwardsSignalsAndReapsChildren -- \"$@\"\n", role, testBinary)
 		if err := os.WriteFile(filepath.Join(root, "bin", role), []byte(wrapper), 0o755); err != nil {
 			t.Fatal(err)
@@ -185,6 +188,17 @@ func readLauncher(t *testing.T) string {
 
 func runLauncherHelper() {
 	role := os.Getenv("SANDBOX_HELPER_ROLE")
+	if role == "sandbox-bootstrap" {
+		ready := os.Getenv("SANDBOX_BOOTSTRAP_READY_FILE")
+		if ready == "" {
+			os.Exit(1)
+		}
+		_ = os.WriteFile(ready, []byte("ready\n"), 0o600)
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+		<-signals
+		os.Exit(0)
+	}
 	if role != "herdr" && role != "bun" {
 		os.Exit(0)
 	}

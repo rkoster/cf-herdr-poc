@@ -15,6 +15,7 @@ const (
 	PhaseConfiguringEnrollment Phase = "configuring-enrollment"
 	PhaseWaitingForApp         Phase = "waiting-for-app"
 	PhaseWaitingForRoute       Phase = "waiting-for-route"
+	PhaseTriggeringEnrollment  Phase = "triggering-enrollment"
 	PhaseJoiningPack           Phase = "joining-pack"
 	PhaseReady                 Phase = "ready"
 	PhaseDeleting              Phase = "deleting"

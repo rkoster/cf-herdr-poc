@@ -25,6 +25,7 @@ type memoryStore struct {
 	failUpdate   int
 	updateCount  int
 	failOnUpdate int
+	failDelete   bool
 }
 
 func (s *memoryStore) Get(name string) (model.Sandbox, bool) {
@@ -69,6 +70,9 @@ func (s *memoryStore) Update(name string, fn func(*model.Sandbox) error) error {
 func (s *memoryStore) Delete(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failDelete {
+		return errors.New("delete record failed")
+	}
 	delete(s.items, name)
 	if s.calls != nil {
 		*s.calls = append(*s.calls, "delete-record")
@@ -226,13 +230,22 @@ func (f *fakeCF) DeleteApp(context.Context, string) (model.Operation, error) {
 }
 
 type fakeProbe struct {
-	calls     *[]string
-	reachable bool
+	calls       *[]string
+	reachable   bool
+	failTrigger bool
 }
 
 func (p *fakeProbe) Reachable(context.Context, string) (bool, error) {
 	*p.calls = append(*p.calls, "probe-route")
 	return p.reachable, nil
+}
+func (p *fakeProbe) TriggerEnrollment(context.Context, string) (model.Operation, error) {
+	*p.calls = append(*p.calls, "trigger-enrollment")
+	op := operation("trigger-enrollment", !p.failTrigger)
+	if p.failTrigger {
+		return op, errors.New("token=probe-secret failed")
+	}
+	return op, nil
 }
 
 type fakeClock struct {
@@ -265,7 +278,7 @@ func TestCreationPersistsBeforeEveryEffectInExactOrder(t *testing.T) {
 	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
 	}
-	wantEffects := []string{"prepare-bits", "prepare-invite", "install-invite", "stage", "discover-guid", "secure-route", "secure-manager-route", "configure-enrollment", "start-app", "inspect-app", "probe-route", "observe-member", "cleanup-invite", "cleanup-bits"}
+	wantEffects := []string{"prepare-bits", "prepare-invite", "install-invite", "stage", "discover-guid", "secure-route", "secure-manager-route", "configure-enrollment", "start-app", "inspect-app", "probe-route", "trigger-enrollment", "observe-member", "cleanup-invite", "cleanup-bits"}
 	var effects []string
 	for _, call := range *calls {
 		if !strings.HasPrefix(call, "persist:") {
@@ -286,7 +299,7 @@ func TestCreationPersistsBeforeEveryEffectInExactOrder(t *testing.T) {
 	if got.Phase != model.PhaseReady || got.Revision != "abc123" || got.AppGUID != sandboxGUID || got.InternalHost != "demo.identity.example" || got.PackMemberID != "demo" {
 		t.Fatalf("sandbox = %#v", got)
 	}
-	if len(got.Operations) != 6 {
+	if len(got.Operations) != 7 {
 		t.Fatalf("operations = %#v, want CF operations", got.Operations)
 	}
 }
@@ -295,7 +308,7 @@ func TestEveryPersistedPhaseResumesWithoutRepeatingPriorEffects(t *testing.T) {
 	tests := []struct {
 		phase     model.Phase
 		forbidden string
-	}{{model.PhasePreparingInvite, "prepare-bits"}, {model.PhaseStaging, "prepare-bits"}, {model.PhaseWaitingForApp, "start-app"}, {model.PhaseWaitingForRoute, "start-app"}, {model.PhaseJoiningPack, "probe-route"}, {model.PhaseReady, "observe-member"}}
+	}{{model.PhasePreparingInvite, "prepare-bits"}, {model.PhaseStaging, "prepare-bits"}, {model.PhaseWaitingForApp, "start-app"}, {model.PhaseWaitingForRoute, "start-app"}, {model.PhaseTriggeringEnrollment, "probe-route"}, {model.PhaseJoiningPack, "trigger-enrollment"}, {model.PhaseReady, "observe-member"}}
 	for _, tt := range tests {
 		t.Run(string(tt.phase), func(t *testing.T) {
 			r, s, _, cloud, _, _, _, calls := fixture(tt.phase)
@@ -384,6 +397,35 @@ func TestFreshReconcilerRegeneratesInviteAndRestagesBeforePostStageWork(t *testi
 	assertSubsequence(t, *calls, []string{"prepare-invite", "install-invite", "stage", "discover-guid", "secure-route", "secure-manager-route", "configure-enrollment", "start-app"})
 }
 
+func TestFreshReconcilerRestagesButDoesNotRepeatCompletedPolicies(t *testing.T) {
+	tests := []struct {
+		phase     model.Phase
+		forbidden []string
+	}{{model.PhaseSecuringManagerRoute, []string{"secure-route"}}, {model.PhaseConfiguringEnrollment, []string{"secure-route", "secure-manager-route"}}, {model.PhaseStarting, []string{"secure-route", "secure-manager-route", "configure-enrollment"}}}
+	for _, tt := range tests {
+		t.Run(string(tt.phase), func(t *testing.T) {
+			r, s, rt, cloud, pack, probe, clock, calls := fixture(tt.phase)
+			current, _ := s.Get("demo")
+			current.Revision = "abc"
+			current.AppGUID = sandboxGUID
+			current.InternalHost = "demo.identity.example"
+			s.items["demo"] = current
+			fresh := New(r.config, s, rt, cloud, pack, probe, clock)
+			if err := fresh.ReconcileOne(context.Background(), "demo"); err != nil {
+				t.Fatal(err)
+			}
+			if count(*calls, "stage") != 1 || count(*calls, "discover-guid") != 1 {
+				t.Fatalf("recovery calls=%#v", *calls)
+			}
+			for _, forbidden := range tt.forbidden {
+				if count(*calls, forbidden) > 0 {
+					t.Fatalf("repeated %q: %#v", forbidden, *calls)
+				}
+			}
+		})
+	}
+}
+
 func TestExpiredPostStageInviteIsRegeneratedAndRestaged(t *testing.T) {
 	r, s, _, _, _, _, clock, calls := fixture(model.PhaseSecuringRoute)
 	current, _ := s.Get("demo")
@@ -454,6 +496,22 @@ func TestPackMembershipIsConditionPolled(t *testing.T) {
 	got, _ := s.Get("demo")
 	if got.Phase != model.PhaseReady {
 		t.Fatalf("phase=%s", got.Phase)
+	}
+}
+
+func TestEnrollmentTriggerFailureIsSanitizedAndRetryable(t *testing.T) {
+	r, s, _, _, _, probe, _, _ := fixture(model.PhaseTriggeringEnrollment)
+	probe.failTrigger = true
+	if err := r.ReconcileOne(context.Background(), "demo"); err == nil {
+		t.Fatal("succeeded")
+	}
+	got, _ := s.Get("demo")
+	if got.ResumePhase != model.PhaseTriggeringEnrollment || containsSecret(got.LastError) {
+		t.Fatalf("sandbox=%#v", got)
+	}
+	probe.failTrigger = false
+	if err := r.Retry(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -555,7 +613,7 @@ func TestPollingFailuresAreBoundedAndRetryable(t *testing.T) {
 }
 
 func TestDeletionOrderRetainsFailuresForRetry(t *testing.T) {
-	failures := []string{"remove-member", "remove-manager-policy", "remove-route", "delete-app"}
+	failures := []string{"remove-member", "remove-manager-policy", "remove-route", "delete-app", "invite-cleanup", "runtime-cleanup", "store-delete"}
 	for _, failure := range failures {
 		t.Run(failure, func(t *testing.T) {
 			r, s, rt, cloud, pack, _, _, calls := fixture(model.PhaseReady)
@@ -567,15 +625,32 @@ func TestDeletionOrderRetainsFailuresForRetry(t *testing.T) {
 			s.items["demo"] = current
 			cloud.failAt = failure
 			pack.failAt = failure
+			if failure == "invite-cleanup" {
+				r.enrollments["demo"] = &fakeEnrollment{calls: calls, path: "invite", failCleanup: true}
+			}
+			if failure == "runtime-cleanup" {
+				rt.fail = errors.New("runtime cleanup failed")
+			}
+			if failure == "store-delete" {
+				s.failDelete = true
+			}
 			if err := r.ReconcileOne(context.Background(), "demo"); err == nil {
 				t.Fatal("succeeded")
 			}
 			if _, ok := s.Get("demo"); !ok {
 				t.Fatal("record deleted after failure")
 			}
+			failed, _ := s.Get("demo")
+			if failed.Phase != model.PhaseFailed || failed.ResumePhase != model.PhaseDeleting {
+				t.Fatalf("failed state=%#v", failed)
+			}
 			cloud.failAt = ""
 			pack.failAt = ""
 			rt.fail = nil
+			s.failDelete = false
+			if enrollment, ok := r.enrollments["demo"].(*fakeEnrollment); ok {
+				enrollment.failCleanup = false
+			}
 			if err := r.Retry(context.Background(), "demo"); err != nil {
 				t.Fatal(err)
 			}
