@@ -9,18 +9,24 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"syscall"
 
 	"cf-herdr-poc/internal/model"
 )
 
 type File struct {
-	mu        sync.Mutex
-	path      string
-	sandboxes map[string]model.Sandbox
+	mu            sync.Mutex
+	path          string
+	sandboxes     map[string]model.Sandbox
+	syncDirectory func(string) error
 }
 
 func NewFile(path string) *File {
-	return &File{path: path, sandboxes: make(map[string]model.Sandbox)}
+	return &File{
+		path:          path,
+		sandboxes:     make(map[string]model.Sandbox),
+		syncDirectory: syncDirectory,
+	}
 }
 
 func (f *File) Load() error {
@@ -110,7 +116,7 @@ func (f *File) Update(name string, update func(*model.Sandbox) error) error {
 	if sandbox.Name != name {
 		return errors.New("sandbox update cannot change name")
 	}
-	next[name] = sandbox
+	next[name] = cloneSandbox(sandbox)
 	return f.commit(next)
 }
 
@@ -137,21 +143,29 @@ func (f *File) commit(next map[string]model.Sandbox) error {
 		}
 		return sandboxes[i].CreatedAt.Before(sandboxes[j].CreatedAt)
 	})
-	if err := writeAtomic(f.path, sandboxes); err != nil {
+	renamed, err := writeAtomic(f.path, sandboxes, f.syncDirectory)
+	if renamed {
+		// Rename made this snapshot authoritative even if directory durability
+		// could not be confirmed.
+		f.sandboxes = next
+	}
+	if err != nil {
 		return err
 	}
-	f.sandboxes = next
+	if !renamed {
+		return errors.New("sandbox state was not replaced")
+	}
 	return nil
 }
 
-func writeAtomic(path string, sandboxes []model.Sandbox) (err error) {
+func writeAtomic(path string, sandboxes []model.Sandbox, syncDir func(string) error) (renamed bool, err error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create sandbox state directory: %w", err)
+		return false, fmt.Errorf("create sandbox state directory: %w", err)
 	}
 	temp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
 	if err != nil {
-		return fmt.Errorf("create temporary sandbox state: %w", err)
+		return false, fmt.Errorf("create temporary sandbox state: %w", err)
 	}
 	tempName := temp.Name()
 	defer func() {
@@ -162,30 +176,40 @@ func writeAtomic(path string, sandboxes []model.Sandbox) (err error) {
 	}()
 
 	if err := temp.Chmod(0o600); err != nil {
-		return fmt.Errorf("set temporary sandbox state permissions: %w", err)
+		return false, fmt.Errorf("set temporary sandbox state permissions: %w", err)
 	}
 	encoder := json.NewEncoder(temp)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(sandboxes); err != nil {
-		return fmt.Errorf("encode sandbox state: %w", err)
+		return false, fmt.Errorf("encode sandbox state: %w", err)
 	}
 	if err := temp.Sync(); err != nil {
-		return fmt.Errorf("sync temporary sandbox state: %w", err)
+		return false, fmt.Errorf("sync temporary sandbox state: %w", err)
 	}
 	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close temporary sandbox state: %w", err)
+		return false, fmt.Errorf("close temporary sandbox state: %w", err)
 	}
 	temp = nil
 	if err := os.Rename(tempName, path); err != nil {
-		return fmt.Errorf("replace sandbox state: %w", err)
+		return false, fmt.Errorf("replace sandbox state: %w", err)
 	}
+	if err := syncDir(dir); err != nil {
+		return true, fmt.Errorf("sync sandbox state directory: %w", err)
+	}
+	return true, nil
+}
 
-	// Directory sync is best-effort because some supported filesystems reject it.
-	if directory, openErr := os.Open(dir); openErr == nil {
-		_ = directory.Sync()
-		_ = directory.Close()
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
 	}
-	return nil
+	syncErr := directory.Sync()
+	if errors.Is(syncErr, syscall.EINVAL) || errors.Is(syncErr, syscall.ENOTSUP) || errors.Is(syncErr, syscall.EBADF) {
+		// Some platforms and filesystems do not support syncing directories.
+		syncErr = nil
+	}
+	return errors.Join(syncErr, directory.Close())
 }
 
 func ensureEOF(decoder *json.Decoder) error {

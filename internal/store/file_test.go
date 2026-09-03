@@ -143,6 +143,43 @@ func TestUpdateCallbackErrorDoesNotMutateOrPersist(t *testing.T) {
 	}
 }
 
+func TestUpdateDoesNotRetainCallbackAliases(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sandboxes.json")
+	store := NewFile(path)
+	if err := store.Create(sandbox("demo", time.Now().UTC())); err != nil {
+		t.Fatal(err)
+	}
+
+	external := []model.Operation{{Name: "updated"}}
+	var retained *model.Sandbox
+	if err := store.Update("demo", func(s *model.Sandbox) error {
+		s.Operations = external
+		retained = s
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	external[0].Name = "external mutation"
+	retained.Operations[0].Name = "retained mutation"
+	got, _ := store.Get("demo")
+	if got.Operations[0].Name != "updated" {
+		t.Fatalf("Get(demo).Operations[0].Name = %q, want updated", got.Operations[0].Name)
+	}
+	listed := store.List()
+	if listed[0].Operations[0].Name != "updated" {
+		t.Fatalf("List()[0].Operations[0].Name = %q, want updated", listed[0].Operations[0].Name)
+	}
+	reloaded := NewFile(path)
+	if err := reloaded.Load(); err != nil {
+		t.Fatal(err)
+	}
+	persisted, _ := reloaded.Get("demo")
+	if persisted.Operations[0].Name != "updated" {
+		t.Fatalf("persisted operation name = %q, want updated", persisted.Operations[0].Name)
+	}
+}
+
 func TestFailedWriteDoesNotMutateMemory(t *testing.T) {
 	root := t.TempDir()
 	parent := filepath.Join(root, "state")
@@ -157,6 +194,31 @@ func TestFailedWriteDoesNotMutateMemory(t *testing.T) {
 	}
 	if _, ok := store.Get("demo"); ok {
 		t.Fatal("failed Create mutated in-memory state")
+	}
+}
+
+func TestDirectorySyncFailureReturnsErrorAndCommitsRenamedState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sandboxes.json")
+	store := NewFile(path)
+	want := sandbox("demo", time.Now().UTC())
+	syncErr := errors.New("directory I/O failure")
+	store.syncDirectory = func(string) error { return syncErr }
+
+	err := store.Create(want)
+	if !errors.Is(err, syncErr) {
+		t.Fatalf("Create() error = %v, want %v", err, syncErr)
+	}
+	got, ok := store.Get("demo")
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("Get(demo) = (%#v, %v), want committed sandbox", got, ok)
+	}
+	reloaded := NewFile(path)
+	if err := reloaded.Load(); err != nil {
+		t.Fatal(err)
+	}
+	persisted, ok := reloaded.Get("demo")
+	if !ok || !reflect.DeepEqual(persisted, want) {
+		t.Fatalf("persisted sandbox = (%#v, %v), want committed sandbox", persisted, ok)
 	}
 }
 
