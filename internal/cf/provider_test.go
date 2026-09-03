@@ -243,46 +243,48 @@ func TestPushRejectsMissingBitsUnderEscapingSymlinkAncestor(t *testing.T) {
 	}
 }
 
-func TestInspectAppUsesTypedV3JSON(t *testing.T) {
+func TestInspectAppUsesCAPIStatsEnvelopeAndExplicitReadiness(t *testing.T) {
 	processGUID := "123e4567-e89b-12d3-a456-426614174002"
-	run := &recordingRunner{outputs: [][]byte{
-		[]byte(`{"resources":[{"guid":"` + processGUID + `","type":"web","state":"STARTED"}]}`),
-		[]byte(`[{"type":"web","index":0,"state":"RUNNING"}]`),
-	}}
-
-	app, err := (Provider{Run: run}).InspectApp(context.Background(), appGUID)
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name        string
+		stats       string
+		wantRunning bool
+		wantReady   bool
+	}{
+		{name: "running and routable", stats: `{"resources":[{"type":"web","index":0,"state":"RUNNING","routable":true}]}`, wantRunning: true, wantReady: true},
+		{name: "running but not routable", stats: `{"resources":[{"type":"web","index":0,"state":"RUNNING","routable":false}]}`, wantRunning: true, wantReady: false},
+		{name: "starting", stats: `{"resources":[{"type":"web","index":0,"state":"STARTING","routable":false}]}`},
+		{name: "empty resources", stats: `{"resources":[]}`},
 	}
-	want := []command{
-		{name: "cf", args: []string{"curl", "/v3/apps/" + appGUID + "/processes"}},
-		{name: "cf", args: []string{"curl", "/v3/processes/" + processGUID + "/stats"}},
-	}
-	if !reflect.DeepEqual(run.commands, want) || !app.Running || !app.Ready {
-		t.Fatalf("InspectApp = (%#v, %#v), commands %#v", app, err, run.commands)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			run := &recordingRunner{outputs: [][]byte{
+				[]byte(`{"resources":[{"guid":"` + processGUID + `","type":"web","state":"STARTED"}]}`),
+				[]byte(test.stats),
+			}}
+			app, err := (Provider{Run: run}).InspectApp(context.Background(), appGUID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if app.Running != test.wantRunning || app.Ready != test.wantReady {
+				t.Fatalf("InspectApp = %#v, want Running=%v Ready=%v", app, test.wantRunning, test.wantReady)
+			}
+			want := []command{
+				{name: "cf", args: []string{"curl", "/v3/apps/" + appGUID + "/processes"}},
+				{name: "cf", args: []string{"curl", "/v3/processes/" + processGUID + "/stats"}},
+			}
+			if !reflect.DeepEqual(run.commands, want) {
+				t.Fatalf("commands = %#v, want %#v", run.commands, want)
+			}
+		})
 	}
 }
 
-func TestInspectAppEmptyStatsIsNotReady(t *testing.T) {
+func TestInspectAppRejectsMalformedStatsEnvelope(t *testing.T) {
 	processGUID := "123e4567-e89b-12d3-a456-426614174002"
 	run := &recordingRunner{outputs: [][]byte{
 		[]byte(`{"resources":[{"guid":"` + processGUID + `","type":"web","state":"STARTED"}]}`),
-		[]byte(`[]`),
-	}}
-	app, err := (Provider{Run: run}).InspectApp(context.Background(), appGUID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if app.Running || app.Ready {
-		t.Fatalf("InspectApp = %#v, want empty stats to mean not running and not ready", app)
-	}
-}
-
-func TestInspectAppRejectsMalformedStatsArray(t *testing.T) {
-	processGUID := "123e4567-e89b-12d3-a456-426614174002"
-	run := &recordingRunner{outputs: [][]byte{
-		[]byte(`{"resources":[{"guid":"` + processGUID + `","type":"web","state":"STARTED"}]}`),
-		[]byte(`[{"state":`),
+		[]byte(`{"resources":[{"state":`),
 	}}
 	_, err := (Provider{Run: run}).InspectApp(context.Background(), appGUID)
 	if err == nil || !strings.Contains(err.Error(), "process stats JSON") {

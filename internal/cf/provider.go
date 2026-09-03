@@ -206,20 +206,26 @@ func (p Provider) InspectApp(ctx context.Context, guid string) (App, error) {
 		if err != nil {
 			return App{}, err
 		}
-		var stats []struct {
-			Type  string `json:"type"`
-			Index int    `json:"index"`
-			State string `json:"state"`
+		// CAPI GET /v3/processes/:guid/stats wraps instance stats in resources.
+		var stats struct {
+			Resources []struct {
+				Type     string `json:"type"`
+				Index    int    `json:"index"`
+				State    string `json:"state"`
+				Routable bool   `json:"routable"`
+			} `json:"resources"`
 		}
 		if err := decodeJSON(statsOutput, &stats); err != nil {
 			return App{}, fmt.Errorf("decode process stats JSON: %w", err)
 		}
-		if len(stats) == 0 {
+		if len(stats.Resources) == 0 {
 			app.Running, app.Ready = false, false
 		}
-		for _, instance := range stats {
+		for _, instance := range stats.Resources {
 			if instance.State != "RUNNING" {
 				app.Running, app.Ready = false, false
+			} else if !instance.Routable {
+				app.Ready = false
 			}
 		}
 	}
