@@ -160,6 +160,7 @@ type fakeCF struct {
 	app       cf.App
 	failAt    string
 	operation model.Operation
+	guidErr   error
 }
 
 func (f *fakeCF) Stage(_ context.Context, _ cf.PushRequest) (model.Operation, error) {
@@ -172,6 +173,9 @@ func (f *fakeCF) Stage(_ context.Context, _ cf.PushRequest) (model.Operation, er
 }
 func (f *fakeCF) AppGUID(context.Context, string) (string, model.Operation, error) {
 	*f.calls = append(*f.calls, "discover-guid")
+	if f.guidErr != nil {
+		return "", operation("app-guid", false), f.guidErr
+	}
 	return sandboxGUID, operation("app-guid", true), nil
 }
 func (f *fakeCF) InspectApp(context.Context, string) (cf.App, error) {
@@ -731,6 +735,58 @@ func TestDeletionOrderRetainsFailuresForRetry(t *testing.T) {
 	}
 }
 
+func TestDeletionDiscoversAndCleansResourcesMissingFromPersistedState(t *testing.T) {
+	r, s, _, _, pack, _, _, calls := fixture(model.PhaseCreating)
+	current, _ := s.Get("demo")
+	current.Desired = model.DesiredDeleted
+	current.AppGUID = ""
+	current.InternalHost = ""
+	current.PackMemberID = ""
+	s.items["demo"] = current
+	pack.present = true
+	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.Get("demo"); ok {
+		t.Fatal("record retained")
+	}
+	assertSubsequence(t, *calls, []string{"observe-member", "remove-member", "discover-guid", "remove-manager-policy", "remove-route", "delete-app", "cleanup-bits", "delete-record"})
+}
+
+func TestDeletionWithConfirmedMissingAppStillCleansStablePackAndRoute(t *testing.T) {
+	r, s, _, cloud, pack, _, _, calls := fixture(model.PhaseCreating)
+	current, _ := s.Get("demo")
+	current.Desired = model.DesiredDeleted
+	s.items["demo"] = current
+	pack.present = true
+	cloud.guidErr = &cf.Error{Kind: "not_found"}
+	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if count(*calls, "remove-member") != 1 || count(*calls, "remove-route") != 1 || count(*calls, "remove-manager-policy") != 0 || count(*calls, "delete-app") != 0 {
+		t.Fatalf("calls=%#v", *calls)
+	}
+}
+
+func TestAmbiguousCreationPersistenceThenDeletionCleansAllExternalState(t *testing.T) {
+	for _, phase := range []model.Phase{model.PhaseJoiningPack, model.PhaseSecuringManagerRoute, model.PhaseSecuringRoute, model.PhaseDiscoveringApp} {
+		t.Run(string(phase), func(t *testing.T) {
+			r, s, _, _, pack, _, _, calls := fixture(phase)
+			current, _ := s.Get("demo")
+			current.Desired = model.DesiredDeleted
+			current.AppGUID = ""
+			current.InternalHost = ""
+			current.PackMemberID = ""
+			s.items["demo"] = current
+			pack.present = true
+			if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
+				t.Fatal(err)
+			}
+			assertSubsequence(t, *calls, []string{"remove-member", "discover-guid", "remove-manager-policy", "remove-route", "delete-app", "delete-record"})
+		})
+	}
+}
+
 func TestConcurrentCallsAreKeyedAndGloballySerialized(t *testing.T) {
 	r, _, _, cloud, _, _, _, _ := fixture(model.PhaseWaitingForApp)
 	entered := make(chan struct{})
@@ -780,6 +836,31 @@ func TestStartScansImmediatelyAndStopIsLeakFree(t *testing.T) {
 		}
 	}
 	r.Stop()
+	r.Stop()
+}
+
+func TestConcurrentStartStopGenerationsDoNotCrossClose(t *testing.T) {
+	r, _, _, _, _, _, _, _ := fixture(model.PhaseReady)
+	r.config.ScanInterval = time.Millisecond
+	const workers = 8
+	const rounds = 100
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < rounds; j++ {
+				ctx, cancel := context.WithCancel(context.Background())
+				r.Start(ctx)
+				if j%2 == 0 {
+					cancel()
+				}
+				r.Stop()
+				cancel()
+			}
+		}()
+	}
+	wg.Wait()
 	r.Stop()
 }
 

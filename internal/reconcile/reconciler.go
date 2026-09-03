@@ -100,6 +100,7 @@ type Reconciler struct {
 	stop          chan struct{}
 	done          chan struct{}
 	started       bool
+	stopping      bool
 	active        int
 	maxActive     int
 	beforeEffect  func(string)
@@ -413,11 +414,12 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sandbox model.Sandbox)
 	if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
 		return err
 	}
-	if sandbox.PackMemberID != "" {
+	memberID := sandbox.Name
+	{
 		if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
 			return err
 		}
-		present, err := r.effectMemberPresent(ctx, sandbox.PackMemberID)
+		present, err := r.effectMemberPresent(ctx, memberID)
 		if err != nil {
 			return r.fail(sandbox.Name, model.PhaseDeleting, err)
 		}
@@ -425,16 +427,33 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sandbox model.Sandbox)
 			if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
 				return err
 			}
-			if err = r.effectRemoveMember(ctx, sandbox.PackMemberID); err != nil && !isAbsent(err) {
+			if err = r.effectRemoveMember(ctx, memberID); err != nil && !isAbsent(err) {
 				return r.fail(sandbox.Name, model.PhaseDeleting, err)
 			}
 		}
 	}
-	if sandbox.AppGUID != "" {
+	appGUID := sandbox.AppGUID
+	appExists := appGUID != ""
+	if appGUID == "" {
 		if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
 			return err
 		}
-		op, err := r.effectRemovePolicy(ctx, cf.RoutePolicyRequest{Domain: r.config.IdentityDomain, Host: r.config.ManagerRouteHost, SourceAppGUID: sandbox.AppGUID})
+		var op model.Operation
+		var err error
+		appGUID, op, err = r.effectGUID(ctx, sandbox.Name)
+		if save := r.appendOperation(sandbox.Name, op); save != nil {
+			return save
+		}
+		if err != nil && !isAbsent(err) {
+			return r.fail(sandbox.Name, model.PhaseDeleting, err)
+		}
+		appExists = err == nil
+	}
+	if appExists {
+		if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
+			return err
+		}
+		op, err := r.effectRemovePolicy(ctx, cf.RoutePolicyRequest{Domain: r.config.IdentityDomain, Host: r.config.ManagerRouteHost, SourceAppGUID: appGUID})
 		if save := r.appendOperation(sandbox.Name, op); save != nil {
 			return save
 		}
@@ -442,11 +461,11 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sandbox model.Sandbox)
 			return r.fail(sandbox.Name, model.PhaseDeleting, err)
 		}
 	}
-	if sandbox.InternalHost != "" {
+	{
 		if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
 			return err
 		}
-		op, err := r.effectRemoveRoute(ctx, cf.RouteRequest{AppName: sandbox.Name, AppGUID: sandbox.AppGUID, Domain: r.config.IdentityDomain, Host: sandbox.Name, SourceAppGUID: r.config.ManagerAppGUID})
+		op, err := r.effectRemoveRoute(ctx, cf.RouteRequest{AppName: sandbox.Name, AppGUID: appGUID, Domain: r.config.IdentityDomain, Host: sandbox.Name, SourceAppGUID: r.config.ManagerAppGUID})
 		if save := r.appendOperation(sandbox.Name, op); save != nil {
 			return save
 		}
@@ -454,7 +473,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sandbox model.Sandbox)
 			return r.fail(sandbox.Name, model.PhaseDeleting, err)
 		}
 	}
-	if sandbox.AppGUID != "" {
+	if appExists {
 		if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
 			return err
 		}
@@ -693,11 +712,13 @@ func (r *Reconciler) Start(ctx context.Context) {
 		return
 	}
 	r.started = true
-	r.stop = make(chan struct{})
-	r.done = make(chan struct{})
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	r.stop = stop
+	r.done = done
 	r.stateMu.Unlock()
-	go func() {
-		defer close(r.done)
+	go func(stop <-chan struct{}, done chan<- struct{}) {
+		defer close(done)
 		r.scan(ctx)
 		ticker := time.NewTicker(r.config.ScanInterval)
 		defer ticker.Stop()
@@ -705,13 +726,13 @@ func (r *Reconciler) Start(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-r.stop:
+			case <-stop:
 				return
 			case <-ticker.C:
 				r.scan(ctx)
 			}
 		}
-	}()
+	}(stop, done)
 }
 func (r *Reconciler) scan(ctx context.Context) {
 	for _, sandbox := range r.store.List() {
@@ -725,10 +746,23 @@ func (r *Reconciler) Stop() {
 		return
 	}
 	stop, done := r.stop, r.done
-	r.started = false
+	if r.stopping {
+		r.stateMu.Unlock()
+		<-done
+		return
+	}
+	r.stopping = true
 	close(stop)
 	r.stateMu.Unlock()
 	<-done
+	r.stateMu.Lock()
+	if r.done == done {
+		r.started = false
+		r.stopping = false
+		r.stop = nil
+		r.done = nil
+	}
+	r.stateMu.Unlock()
 }
 func (r *Reconciler) MaxConcurrent() int {
 	r.stateMu.Lock()
