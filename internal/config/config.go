@@ -19,6 +19,12 @@ type Config struct {
 	ManagerPackHost   string
 	Buildpacks        []string
 	ReconcileInterval time.Duration
+	APIToken          string
+	CollieAddress     string
+	WorkRoot          string
+	RuntimeDir        string
+	InstanceCert      string
+	InstanceKey       string
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -79,5 +85,20 @@ func Load(getenv func(string) string) (Config, error) {
 		ManagerPackHost:   value("MANAGER_PACK_HOST"),
 		Buildpacks:        buildpacks,
 		ReconcileInterval: reconcileInterval,
+		APIToken:          value("MANAGER_API_TOKEN"),
+		CollieAddress:     valueOrDefault("MANAGER_COLLIE_ADDRESS", "127.0.0.1:9191"),
+		WorkRoot:          valueOrDefault("MANAGER_WORK_ROOT", "./data/work"),
+		RuntimeDir:        valueOrDefault("MANAGER_RUNTIME_DIR", "./sandbox/runtime"),
+		InstanceCert:      valueOrDefault("CF_INSTANCE_CERT", "/etc/cf-instance-credentials/instance.crt"),
+		InstanceKey:       valueOrDefault("CF_INSTANCE_KEY", "/etc/cf-instance-credentials/instance.key"),
 	}, nil
+}
+
+func (c Config) ValidateProduction() error {
+	for key, value := range map[string]string{"MANAGER_APP_NAME": c.ManagerAppName, "MANAGER_APP_GUID": c.ManagerAppGUID, "MANAGER_PACK_HOST": c.ManagerPackHost, "MANAGER_API_TOKEN": c.APIToken} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s is required", key)
+		}
+	}
+	return nil
 }

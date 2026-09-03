@@ -33,6 +33,11 @@ func TestLoadDefaults(t *testing.T) {
 		IdentityDomain:    "apps.identity",
 		Buildpacks:        []string{"ruby_buildpack"},
 		ReconcileInterval: 2 * time.Second,
+		CollieAddress:     "127.0.0.1:9191",
+		WorkRoot:          "./data/work",
+		RuntimeDir:        "./sandbox/runtime",
+		InstanceCert:      "/etc/cf-instance-credentials/instance.crt",
+		InstanceKey:       "/etc/cf-instance-credentials/instance.key",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Load() = %#v, want %#v", got, want)
@@ -104,6 +109,12 @@ func TestLoadOverrides(t *testing.T) {
 		"MANAGER_APP_GUID":           " app-guid ",
 		"MANAGER_PACK_HOST":          " pack.apps.identity ",
 		"MANAGER_RECONCILE_INTERVAL": " 5s ",
+		"MANAGER_API_TOKEN":          " operator-secret ",
+		"MANAGER_COLLIE_ADDRESS":     " 127.0.0.1:9191 ",
+		"MANAGER_WORK_ROOT":          " /tmp/work ",
+		"MANAGER_RUNTIME_DIR":        " /tmp/runtime ",
+		"CF_INSTANCE_CERT":           " /tmp/cert ",
+		"CF_INSTANCE_KEY":            " /tmp/key ",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -111,8 +122,28 @@ func TestLoadOverrides(t *testing.T) {
 
 	if got.StatePath != "/tmp/state.json" || got.WebDir != "/tmp/web" || got.CollieDir != "/tmp/collie" ||
 		got.ManagerAppName != "manager" || got.ManagerAppGUID != "app-guid" || got.ManagerPackHost != "pack.apps.identity" ||
-		got.ReconcileInterval != 5*time.Second {
+		got.ReconcileInterval != 5*time.Second || got.APIToken != "operator-secret" || got.CollieAddress != "127.0.0.1:9191" ||
+		got.WorkRoot != "/tmp/work" || got.RuntimeDir != "/tmp/runtime" || got.InstanceCert != "/tmp/cert" || got.InstanceKey != "/tmp/key" {
 		t.Fatalf("Load() overrides = %#v", got)
+	}
+}
+
+func TestLoadRequiresProductionAssemblySettings(t *testing.T) {
+	base := Config{ManagerAppName: "manager", ManagerAppGUID: "guid", ManagerPackHost: "pack.apps.identity", APIToken: "secret"}
+	for _, tt := range []struct {
+		name  string
+		clear func(*Config)
+	}{
+		{"MANAGER_APP_NAME", func(c *Config) { c.ManagerAppName = "" }}, {"MANAGER_APP_GUID", func(c *Config) { c.ManagerAppGUID = "" }},
+		{"MANAGER_PACK_HOST", func(c *Config) { c.ManagerPackHost = "" }}, {"MANAGER_API_TOKEN", func(c *Config) { c.APIToken = "" }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			value := base
+			tt.clear(&value)
+			if err := value.ValidateProduction(); err == nil || !strings.Contains(err.Error(), tt.name) {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 
