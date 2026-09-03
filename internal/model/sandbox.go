@@ -24,6 +24,7 @@ const (
 
 type Operation struct {
 	Name      string        `json:"name"`
+	Command   string        `json:"command,omitempty"`
 	StartedAt time.Time     `json:"startedAt"`
 	Duration  time.Duration `json:"duration"`
 	Success   bool          `json:"success"`
