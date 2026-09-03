@@ -24,11 +24,13 @@ const (
 )
 
 var (
-	namePattern       = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
-	uuidPattern       = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
-	ansiPattern       = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
-	authorizationLine = regexp.MustCompile(`(?i)^(\s*authorization\s*[:=]\s*)(?:bearer\s+)?\S+.*$`)
-	secretLine        = regexp.MustCompile(`(?i)^(\s*(?:join[_-]?token|access[_-]?token|refresh[_-]?token|cf_instance_key|cf_instance_cert|private[_-]?key|client[_-]?secret|password)\s*[:=]\s*).*$`)
+	namePattern      = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
+	uuidPattern      = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	ansiPattern      = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+	bearerValue      = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)([^"'\s,}]+)`)
+	standaloneBearer = regexp.MustCompile(`(?i)(\bbearer\s+)([^"'\s,}]+)`)
+	secretAssignment = regexp.MustCompile(`(?i)((?:join[_-]?token|access[_-]?token|refresh[_-]?token|cf_instance_key|cf_instance_cert|private[_-]?key|client[_-]?secret|password)\s*["']?\s*[:=]\s*["']?)([^"'\s,}]+)`)
+	pemBlock         = regexp.MustCompile(`(?s)-----BEGIN [^-]+-----.*?-----END [^-]+-----`)
 )
 
 type PushRequest struct {
@@ -192,22 +194,23 @@ func (p Provider) InspectApp(ctx context.Context, guid string) (App, error) {
 	}
 	var processes struct {
 		Resources []struct {
-			GUID  string `json:"guid"`
-			Type  string `json:"type"`
-			State string `json:"state"`
+			GUID      string `json:"guid"`
+			Type      string `json:"type"`
+			Instances *int   `json:"instances"`
 		} `json:"resources"`
 	}
 	if err := decodeJSON(output, &processes); err != nil {
 		return App{}, fmt.Errorf("decode processes JSON: %w", err)
 	}
-	app := App{GUID: guid, Ready: len(processes.Resources) > 0, Running: len(processes.Resources) > 0}
+	app := App{GUID: guid, Running: true, Ready: true}
+	webProcesses := 0
 	for _, process := range processes.Resources {
+		if process.Type != "web" {
+			continue
+		}
+		webProcesses++
 		if err := validateGUID(process.GUID); err != nil {
 			return App{}, fmt.Errorf("decode processes JSON: invalid process GUID")
-		}
-		app.State = process.State
-		if process.State != "STARTED" {
-			app.Running, app.Ready = false, false
 		}
 		_, statsOutput, err := p.execute(ctx, "inspect-process-stats", "curl", fmt.Sprintf("/v3/processes/%s/stats", url.PathEscape(process.GUID)))
 		if err != nil {
@@ -228,6 +231,9 @@ func (p Provider) InspectApp(ctx context.Context, guid string) (App, error) {
 		if len(stats.Resources) == 0 {
 			app.Running, app.Ready = false, false
 		}
+		if process.Instances != nil && len(stats.Resources) < *process.Instances {
+			app.Ready = false
+		}
 		for _, instance := range stats.Resources {
 			if instance.State != "RUNNING" {
 				app.Running, app.Ready = false, false
@@ -235,6 +241,9 @@ func (p Provider) InspectApp(ctx context.Context, guid string) (App, error) {
 				app.Ready = false
 			}
 		}
+	}
+	if webProcesses == 0 {
+		app.Running, app.Ready = false, false
 	}
 	return app, nil
 }
@@ -299,7 +308,10 @@ func bounded(value string) string {
 }
 
 func sanitizeOutput(output []byte) string {
+	// This is known-pattern sanitization for CF command output, not permission
+	// to pass arbitrary environment dumps into operation records.
 	value := ansiPattern.ReplaceAllString(string(output), "")
+	value = pemBlock.ReplaceAllString(value, "[REDACTED]")
 	value = strings.Map(func(character rune) rune {
 		switch character {
 		case '\n', '\t':
@@ -312,31 +324,10 @@ func sanitizeOutput(output []byte) string {
 		}
 		return character
 	}, value)
-	lines := strings.Split(value, "\n")
-	inPEMBlock := false
-	for index, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "-----BEGIN ") && strings.HasSuffix(trimmed, "-----") {
-			inPEMBlock = true
-			lines[index] = "[REDACTED PEM BLOCK]"
-			continue
-		}
-		if inPEMBlock {
-			lines[index] = ""
-			if strings.HasPrefix(trimmed, "-----END ") && strings.HasSuffix(trimmed, "-----") {
-				inPEMBlock = false
-			}
-			continue
-		}
-		if matches := authorizationLine.FindStringSubmatch(line); matches != nil {
-			lines[index] = matches[1] + "[REDACTED]"
-			continue
-		}
-		if matches := secretLine.FindStringSubmatch(line); matches != nil {
-			lines[index] = matches[1] + "[REDACTED]"
-		}
-	}
-	value = strings.TrimSpace(strings.Join(lines, "\n"))
+	value = bearerValue.ReplaceAllString(value, "${1}[REDACTED]")
+	value = standaloneBearer.ReplaceAllString(value, "${1}[REDACTED]")
+	value = secretAssignment.ReplaceAllString(value, "${1}[REDACTED]")
+	value = strings.TrimSpace(value)
 	if len(value) > maxOperationSummaryBytes {
 		value = value[:maxOperationSummaryBytes]
 	}
@@ -346,7 +337,8 @@ func sanitizeOutput(output []byte) string {
 func appendSummary(existing, next string) string {
 	value := strings.TrimSpace(existing + "\n" + next)
 	if len(value) > maxOperationSummaryBytes {
-		value = value[:maxOperationSummaryBytes]
+		const marker = "[older output truncated]\n"
+		value = marker + value[len(value)-(maxOperationSummaryBytes-len(marker)):]
 	}
 	return value
 }
@@ -418,6 +410,8 @@ func validateBitsPath(workRoot, bitsPath string) error {
 			return fmt.Errorf("work root must be absolute")
 		}
 		cleanRoot := filepath.Clean(workRoot)
+		// This prevents accidental or user-supplied path escape. The manager owns
+		// this staging tree; malicious same-UID mutation is outside the POC boundary.
 		if err := requireChild(cleanRoot, cleanBits); err != nil {
 			return err
 		}

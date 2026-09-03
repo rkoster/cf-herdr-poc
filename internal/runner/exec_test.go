@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -29,5 +30,21 @@ func TestExecHonorsContextCancellation(t *testing.T) {
 	var exitErr *exec.ExitError
 	if !errors.Is(err, context.DeadlineExceeded) && !errors.As(err, &exitErr) && !strings.Contains(err.Error(), "killed") {
 		t.Fatalf("Run error = %v, want cancellation", err)
+	}
+}
+
+func TestExecCancellationDoesNotWaitForDescendantOutputPipe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell descendant process semantics are Unix-specific")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := (Exec{}).Run(ctx, "sh", "-c", "sleep 3 &")
+	if err == nil {
+		t.Fatal("Run succeeded after context cancellation")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Run returned after %v, want prompt cancellation", elapsed)
 	}
 }

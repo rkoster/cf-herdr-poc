@@ -301,15 +301,16 @@ func TestInspectAppUsesCAPIStatsEnvelopeAndExplicitReadiness(t *testing.T) {
 		wantRunning bool
 		wantReady   bool
 	}{
-		{name: "running and routable", stats: `{"resources":[{"type":"web","index":0,"state":"RUNNING","routable":true}]}`, wantRunning: true, wantReady: true},
-		{name: "running but not routable", stats: `{"resources":[{"type":"web","index":0,"state":"RUNNING","routable":false}]}`, wantRunning: true, wantReady: false},
+		{name: "all desired running and routable", stats: `{"resources":[{"type":"web","index":0,"state":"RUNNING","routable":true},{"type":"web","index":1,"state":"RUNNING","routable":true}]}`, wantRunning: true, wantReady: true},
+		{name: "missing desired instance", stats: `{"resources":[{"type":"web","index":0,"state":"RUNNING","routable":true}]}`, wantRunning: true, wantReady: false},
+		{name: "running but not routable", stats: `{"resources":[{"type":"web","index":0,"state":"RUNNING","routable":true},{"type":"web","index":1,"state":"RUNNING","routable":false}]}`, wantRunning: true, wantReady: false},
 		{name: "starting", stats: `{"resources":[{"type":"web","index":0,"state":"STARTING","routable":false}]}`},
 		{name: "empty resources", stats: `{"resources":[]}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			run := &recordingRunner{outputs: [][]byte{
-				[]byte(`{"resources":[{"guid":"` + processGUID + `","type":"web","state":"STARTED"}]}`),
+				[]byte(`{"resources":[{"guid":"` + processGUID + `","type":"web","instances":2}]}`),
 				[]byte(test.stats),
 			}}
 			app, err := (Provider{Run: run}).InspectApp(context.Background(), appGUID)
@@ -330,10 +331,29 @@ func TestInspectAppUsesCAPIStatsEnvelopeAndExplicitReadiness(t *testing.T) {
 	}
 }
 
+func TestInspectAppIgnoresFakeProcessStateAndNonWebProcesses(t *testing.T) {
+	webGUID := "123e4567-e89b-12d3-a456-426614174002"
+	workerGUID := "123e4567-e89b-12d3-a456-426614174003"
+	run := &recordingRunner{outputs: [][]byte{
+		[]byte(`{"resources":[{"guid":"` + webGUID + `","type":"web","instances":1,"state":"STOPPED"},{"guid":"` + workerGUID + `","type":"worker","instances":1,"state":"STARTED"}]}`),
+		[]byte(`{"resources":[{"type":"web","index":0,"state":"RUNNING","routable":true}]}`),
+	}}
+	app, err := (Provider{Run: run}).InspectApp(context.Background(), appGUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !app.Running || !app.Ready || app.State != "" {
+		t.Fatalf("InspectApp = %#v, want web stats only and no inferred process state", app)
+	}
+	if len(run.commands) != 2 {
+		t.Fatalf("commands = %#v, want no worker stats lookup", run.commands)
+	}
+}
+
 func TestInspectAppRejectsMalformedStatsEnvelope(t *testing.T) {
 	processGUID := "123e4567-e89b-12d3-a456-426614174002"
 	run := &recordingRunner{outputs: [][]byte{
-		[]byte(`{"resources":[{"guid":"` + processGUID + `","type":"web","state":"STARTED"}]}`),
+		[]byte(`{"resources":[{"guid":"` + processGUID + `","type":"web","instances":1}]}`),
 		[]byte(`{"resources":[{"state":`),
 	}}
 	_, err := (Provider{Run: run}).InspectApp(context.Background(), appGUID)
@@ -415,6 +435,56 @@ func TestMultiCommandOperationCombinesSanitizedOutput(t *testing.T) {
 	for _, evidence := range []string{"route created", "route mapped", "policy added"} {
 		if !strings.Contains(operation.Summary, evidence) {
 			t.Fatalf("Summary = %q, want %q", operation.Summary, evidence)
+		}
+	}
+}
+
+func TestOperationSummaryPrefersNewestFailureDiagnostic(t *testing.T) {
+	run := &recordingRunner{
+		outputs: [][]byte{
+			[]byte("old:" + strings.Repeat("x", maxOperationSummaryBytes)),
+			[]byte("final policy failure"),
+		},
+		errors: []error{nil, errors.New("exit status 1")},
+	}
+	operation, err := (Provider{Run: run}).SecureRoute(context.Background(), RouteRequest{
+		AppName: "demo", AppGUID: appGUID, Domain: "apps.identity", Host: "demo", SourceAppGUID: managerGUID,
+	})
+	if err == nil {
+		t.Fatal("SecureRoute succeeded, want mapping failure")
+	}
+	if !strings.Contains(operation.Summary, "[older output truncated]") || !strings.Contains(operation.Summary, "final policy failure") {
+		t.Fatalf("Summary = %q, want truncation marker and newest failure", operation.Summary)
+	}
+	if len(operation.Summary) > maxOperationSummaryBytes {
+		t.Fatalf("Summary length = %d, want <= %d", len(operation.Summary), maxOperationSummaryBytes)
+	}
+}
+
+func TestOutputRedactionHandlesStructuredAndEmbeddedKnownSecrets(t *testing.T) {
+	output := `useful status
+export JOIN_TOKEN=export-secret
+{"client_secret":"json-secret","status":"useful-json"}
+request Authorization: Bearer embedded-bearer sent
+token response Bearer standalone-bearer
+credentials: password=embedded-password user=demo
+CF_INSTANCE_CERT="-----BEGIN CERTIFICATE-----
+certificate-body
+-----END CERTIFICATE-----"
+useful tail`
+	run := &recordingRunner{outputs: [][]byte{[]byte(output)}}
+	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"export-secret", "json-secret", "embedded-bearer", "standalone-bearer", "embedded-password", "certificate-body"} {
+		if strings.Contains(operation.Summary, secret) {
+			t.Fatalf("Summary contains %q: %q", secret, operation.Summary)
+		}
+	}
+	for _, useful := range []string{"useful status", "useful-json", "user=demo", "useful tail"} {
+		if !strings.Contains(operation.Summary, useful) {
+			t.Fatalf("Summary dropped %q: %q", useful, operation.Summary)
 		}
 	}
 }

@@ -3,14 +3,18 @@ package runner
 import (
 	"context"
 	"os/exec"
+	"time"
 )
 
 const MaxOutputBytes = 64 * 1024
+const waitDelay = 200 * time.Millisecond
 
 type Exec struct{}
 
 func (Exec) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, name, args...)
+	command.WaitDelay = waitDelay
+	configureCancellation(command)
 	output := &cappedBuffer{remaining: MaxOutputBytes}
 	command.Stdout = output
 	command.Stderr = output
