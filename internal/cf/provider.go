@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -205,18 +206,18 @@ func (p Provider) InspectApp(ctx context.Context, guid string) (App, error) {
 		if err != nil {
 			return App{}, err
 		}
-		var stats struct {
-			Resources []struct {
-				State string `json:"state"`
-			} `json:"resources"`
+		var stats []struct {
+			Type  string `json:"type"`
+			Index int    `json:"index"`
+			State string `json:"state"`
 		}
 		if err := decodeJSON(statsOutput, &stats); err != nil {
 			return App{}, fmt.Errorf("decode process stats JSON: %w", err)
 		}
-		if len(stats.Resources) == 0 {
+		if len(stats) == 0 {
 			app.Running, app.Ready = false, false
 		}
-		for _, instance := range stats.Resources {
+		for _, instance := range stats {
 			if instance.State != "RUNNING" {
 				app.Running, app.Ready = false, false
 			}
@@ -343,24 +344,65 @@ func validateBitsPath(workRoot, bitsPath string) error {
 	if !filepath.IsAbs(bitsPath) {
 		return fmt.Errorf("bits path must be absolute")
 	}
-	if workRoot == "" {
-		return nil
-	}
-	if !filepath.IsAbs(workRoot) {
-		return fmt.Errorf("work root must be absolute")
-	}
-	cleanRoot, cleanBits := filepath.Clean(workRoot), filepath.Clean(bitsPath)
-	relative, err := filepath.Rel(cleanRoot, cleanBits)
-	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("bits path must be confined to work root")
-	}
-	resolvedRoot, rootErr := filepath.EvalSymlinks(cleanRoot)
-	resolvedBits, bitsErr := filepath.EvalSymlinks(cleanBits)
-	if rootErr == nil && bitsErr == nil {
-		relative, err = filepath.Rel(resolvedRoot, resolvedBits)
-		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("bits path must be physically confined to work root")
+	cleanBits := filepath.Clean(bitsPath)
+	if workRoot != "" {
+		if !filepath.IsAbs(workRoot) {
+			return fmt.Errorf("work root must be absolute")
 		}
+		cleanRoot := filepath.Clean(workRoot)
+		if err := requireChild(cleanRoot, cleanBits); err != nil {
+			return err
+		}
+		physicalRoot, err := filepath.EvalSymlinks(cleanRoot)
+		if err != nil {
+			return fmt.Errorf("resolve physical work root: %w", err)
+		}
+		ancestor, err := nearestExistingAncestor(cleanBits)
+		if err != nil {
+			return err
+		}
+		physicalAncestor, err := filepath.EvalSymlinks(ancestor)
+		if err != nil {
+			return fmt.Errorf("resolve physical bits ancestor: %w", err)
+		}
+		remainder, err := filepath.Rel(ancestor, cleanBits)
+		if err != nil {
+			return fmt.Errorf("resolve bits path remainder: %w", err)
+		}
+		if err := requireChild(physicalRoot, filepath.Join(physicalAncestor, remainder)); err != nil {
+			return err
+		}
+	}
+	info, err := os.Stat(cleanBits)
+	if err != nil {
+		return fmt.Errorf("inspect bits path: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("bits path must be a directory")
+	}
+	return nil
+}
+
+func nearestExistingAncestor(path string) (string, error) {
+	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
+		_, err := os.Lstat(current)
+		if err == nil {
+			return current, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("inspect bits path ancestor: %w", err)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("bits path has no existing ancestor")
+		}
+	}
+}
+
+func requireChild(root, path string) error {
+	relative, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return fmt.Errorf("bits path must be confined to work root")
 	}
 	return nil
 }

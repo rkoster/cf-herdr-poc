@@ -43,6 +43,15 @@ func (r *recordingRunner) Run(_ context.Context, name string, args ...string) ([
 }
 
 func TestPushUsesExactArgvAndDiscoversGUID(t *testing.T) {
+	_, statErr := os.Stat("/tmp/work/demo")
+	if errors.Is(statErr, os.ErrNotExist) {
+		if err := os.MkdirAll("/tmp/work/demo", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Remove("/tmp/work/demo"); _ = os.Remove("/tmp/work") })
+	} else if statErr != nil {
+		t.Fatal(statErr)
+	}
 	run := &recordingRunner{outputs: [][]byte{nil, []byte(appGUID + "\n")}}
 	provider := Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: "/tmp/work"}
 
@@ -183,11 +192,62 @@ func TestPushRejectsBitsPathEscapingThroughSymlink(t *testing.T) {
 	}
 }
 
+func TestPushRejectsMissingBitsDirectory(t *testing.T) {
+	workRoot := t.TempDir()
+	run := &recordingRunner{}
+	_, _, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Push(
+		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: filepath.Join(workRoot, "missing")},
+	)
+	if err == nil || !strings.Contains(err.Error(), "bits path") {
+		t.Fatalf("Push error = %v, want missing bits path error", err)
+	}
+	if len(run.commands) != 0 {
+		t.Fatalf("Push ran commands for missing bits: %#v", run.commands)
+	}
+}
+
+func TestPushRejectsBitsPathThatIsNotDirectory(t *testing.T) {
+	workRoot := t.TempDir()
+	bitsPath := filepath.Join(workRoot, "archive.zip")
+	if err := os.WriteFile(bitsPath, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := &recordingRunner{}
+	_, _, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Push(
+		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath},
+	)
+	if err == nil || !strings.Contains(err.Error(), "directory") {
+		t.Fatalf("Push error = %v, want bits directory error", err)
+	}
+	if len(run.commands) != 0 {
+		t.Fatalf("Push ran commands for non-directory bits: %#v", run.commands)
+	}
+}
+
+func TestPushRejectsMissingBitsUnderEscapingSymlinkAncestor(t *testing.T) {
+	workRoot := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(workRoot, "redirect")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	run := &recordingRunner{}
+	_, _, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Push(
+		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: filepath.Join(link, "missing")},
+	)
+	if err == nil || !strings.Contains(err.Error(), "work root") {
+		t.Fatalf("Push error = %v, want physical confinement error", err)
+	}
+	if len(run.commands) != 0 {
+		t.Fatalf("Push ran commands through escaping ancestor: %#v", run.commands)
+	}
+}
+
 func TestInspectAppUsesTypedV3JSON(t *testing.T) {
 	processGUID := "123e4567-e89b-12d3-a456-426614174002"
 	run := &recordingRunner{outputs: [][]byte{
 		[]byte(`{"resources":[{"guid":"` + processGUID + `","type":"web","state":"STARTED"}]}`),
-		[]byte(`{"resources":[{"state":"RUNNING"}]}`),
+		[]byte(`[{"type":"web","index":0,"state":"RUNNING"}]`),
 	}}
 
 	app, err := (Provider{Run: run}).InspectApp(context.Background(), appGUID)
@@ -200,6 +260,33 @@ func TestInspectAppUsesTypedV3JSON(t *testing.T) {
 	}
 	if !reflect.DeepEqual(run.commands, want) || !app.Running || !app.Ready {
 		t.Fatalf("InspectApp = (%#v, %#v), commands %#v", app, err, run.commands)
+	}
+}
+
+func TestInspectAppEmptyStatsIsNotReady(t *testing.T) {
+	processGUID := "123e4567-e89b-12d3-a456-426614174002"
+	run := &recordingRunner{outputs: [][]byte{
+		[]byte(`{"resources":[{"guid":"` + processGUID + `","type":"web","state":"STARTED"}]}`),
+		[]byte(`[]`),
+	}}
+	app, err := (Provider{Run: run}).InspectApp(context.Background(), appGUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Running || app.Ready {
+		t.Fatalf("InspectApp = %#v, want empty stats to mean not running and not ready", app)
+	}
+}
+
+func TestInspectAppRejectsMalformedStatsArray(t *testing.T) {
+	processGUID := "123e4567-e89b-12d3-a456-426614174002"
+	run := &recordingRunner{outputs: [][]byte{
+		[]byte(`{"resources":[{"guid":"` + processGUID + `","type":"web","state":"STARTED"}]}`),
+		[]byte(`[{"state":`),
+	}}
+	_, err := (Provider{Run: run}).InspectApp(context.Background(), appGUID)
+	if err == nil || !strings.Contains(err.Error(), "process stats JSON") {
+		t.Fatalf("InspectApp error = %v, want explicit stats JSON error", err)
 	}
 }
 
@@ -229,7 +316,13 @@ func TestOperationErrorsAreBoundedAndDoNotContainOutput(t *testing.T) {
 
 func TestCommandDisplayIsBoundedAndSanitized(t *testing.T) {
 	run := &recordingRunner{outputs: [][]byte{nil, []byte(appGUID)}}
-	bitsPath := "/tmp/" + strings.Repeat("x", 2000) + "\nforged"
+	bitsPath := t.TempDir()
+	for i := 0; i < 6; i++ {
+		bitsPath = filepath.Join(bitsPath, strings.Repeat("x", 200)+"\nforged")
+		if err := os.Mkdir(bitsPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	_, operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Push(
 		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath},
 	)
