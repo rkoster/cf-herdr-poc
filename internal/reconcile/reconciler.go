@@ -37,8 +37,10 @@ type Runtime interface {
 }
 
 type CFProvider interface {
-	Push(context.Context, cf.PushRequest) (cf.App, model.Operation, error)
+	Stage(context.Context, cf.PushRequest) (model.Operation, error)
 	AppGUID(context.Context, string) (string, model.Operation, error)
+	ConfigureEnrollment(context.Context, string, string, string) (model.Operation, error)
+	StartApp(context.Context, string) (model.Operation, error)
 	InspectApp(context.Context, string) (cf.App, error)
 	SecureRoute(context.Context, cf.RouteRequest) (model.Operation, error)
 	AddRoutePolicy(context.Context, cf.RoutePolicyRequest) (model.Operation, error)
@@ -162,6 +164,11 @@ func (r *Reconciler) Retry(ctx context.Context, name string) error {
 	return r.ReconcileOne(ctx, name)
 }
 
+func (r *Reconciler) AllowsActions(name string) bool {
+	sandbox, ok := r.store.Get(name)
+	return ok && sandbox.Desired != model.DesiredDeleted
+}
+
 func (r *Reconciler) reconcileCreate(ctx context.Context, sandbox model.Sandbox) error {
 	for {
 		current, ok := r.store.Get(sandbox.Name)
@@ -171,6 +178,21 @@ func (r *Reconciler) reconcileCreate(ctx context.Context, sandbox model.Sandbox)
 		sandbox = current
 		if sandbox.Desired == model.DesiredDeleted {
 			return r.reconcileDelete(ctx, sandbox)
+		}
+		if needsEnrollment(sandbox.Phase) {
+			enrollment, ok := r.enrollments[sandbox.Name]
+			if !ok || (!enrollment.ExpiresAt().IsZero() && !enrollment.ExpiresAt().After(r.clock.Now())) {
+				if ok {
+					if err := enrollment.Cleanup(); err != nil {
+						return r.fail(sandbox.Name, sandbox.Phase, err)
+					}
+					delete(r.enrollments, sandbox.Name)
+				}
+				if err := r.persistPhase(sandbox.Name, model.PhasePreparingInvite, nil); err != nil {
+					return err
+				}
+				continue
+			}
 		}
 		var err error
 		switch sandbox.Phase {
@@ -187,39 +209,49 @@ func (r *Reconciler) reconcileCreate(ctx context.Context, sandbox model.Sandbox)
 				err = r.persistPhase(sandbox.Name, model.PhasePreparingInvite, nil)
 			}
 		case model.PhasePreparingInvite:
-			err = r.ensureEnrollment(ctx, sandbox)
-			if err == nil {
-				err = r.persistPhase(sandbox.Name, model.PhaseStaging, nil)
-			}
-		case model.PhaseStaging:
-			err = r.ensurePrepared(ctx, sandbox)
+			err = r.persistPhase(sandbox.Name, model.PhasePreparingInvite, nil)
 			if err == nil {
 				err = r.ensureEnrollment(ctx, sandbox)
 			}
 			if err == nil {
-				err = r.persistPhase(sandbox.Name, model.PhaseDiscoveringApp, nil)
+				err = r.persistPhase(sandbox.Name, model.PhaseStaging, nil)
+			}
+		case model.PhaseStaging:
+			err = r.persistPhase(sandbox.Name, model.PhaseStaging, nil)
+			if err == nil {
+				err = r.ensurePrepared(ctx, sandbox)
+			}
+			if err == nil {
+				err = r.ensureEnrollment(ctx, sandbox)
 			}
 			if err == nil {
 				prepared := r.prepared[sandbox.Name]
+				err = r.persistPhase(sandbox.Name, model.PhaseStaging, nil)
+				if err != nil {
+					break
+				}
 				err = r.runtime.InstallEnrollment(prepared.Path, r.enrollments[sandbox.Name].Path())
 				if err != nil {
 					break
 				}
-				app, op, pushErr := r.effectPush(ctx, sandbox, prepared.Path)
+				err = r.persistPhase(sandbox.Name, model.PhaseStaging, nil)
+				if err != nil {
+					break
+				}
+				op, stageErr := r.effectStage(ctx, sandbox, prepared.Path)
 				err = r.appendOperation(sandbox.Name, op)
 				if err == nil {
-					err = pushErr
+					err = stageErr
 				}
-				if err == nil && app.GUID != "" {
-					err = r.store.Update(sandbox.Name, func(s *model.Sandbox) error {
-						s.AppGUID = app.GUID
-						s.Phase = model.PhaseSecuringRoute
-						s.UpdatedAt = r.clock.Now()
-						return nil
-					})
+				if err == nil {
+					err = r.persistPhase(sandbox.Name, model.PhaseDiscoveringApp, nil)
 				}
 			}
 		case model.PhaseDiscoveringApp:
+			err = r.persistPhase(sandbox.Name, model.PhaseDiscoveringApp, nil)
+			if err != nil {
+				break
+			}
 			var guid string
 			var op model.Operation
 			guid, op, err = r.effectGUID(ctx, sandbox.Name)
@@ -227,12 +259,18 @@ func (r *Reconciler) reconcileCreate(ctx context.Context, sandbox model.Sandbox)
 				err = persistErr
 			}
 			if err == nil {
-				err = r.store.Update(sandbox.Name, func(s *model.Sandbox) error { s.AppGUID = guid; return nil })
-			}
-			if err == nil {
-				err = r.persistPhase(sandbox.Name, model.PhaseSecuringRoute, nil)
+				err = r.store.Update(sandbox.Name, func(s *model.Sandbox) error {
+					s.AppGUID = guid
+					s.Phase = model.PhaseSecuringRoute
+					s.UpdatedAt = r.clock.Now()
+					return nil
+				})
 			}
 		case model.PhaseSecuringRoute:
+			err = r.persistPhase(sandbox.Name, model.PhaseSecuringRoute, nil)
+			if err != nil {
+				break
+			}
 			host := sandbox.Name + "." + r.config.IdentityDomain
 			op, e := r.effectSecureRoute(ctx, cf.RouteRequest{AppName: sandbox.Name, AppGUID: sandbox.AppGUID, Domain: r.config.IdentityDomain, Host: sandbox.Name, SourceAppGUID: r.config.ManagerAppGUID})
 			err = r.appendOperation(sandbox.Name, op)
@@ -246,15 +284,47 @@ func (r *Reconciler) reconcileCreate(ctx context.Context, sandbox model.Sandbox)
 				err = r.persistPhase(sandbox.Name, model.PhaseSecuringManagerRoute, nil)
 			}
 		case model.PhaseSecuringManagerRoute:
+			err = r.persistPhase(sandbox.Name, model.PhaseSecuringManagerRoute, nil)
+			if err != nil {
+				break
+			}
 			op, e := r.effectAddPolicy(ctx, cf.RoutePolicyRequest{Domain: r.config.IdentityDomain, Host: r.config.ManagerRouteHost, SourceAppGUID: sandbox.AppGUID})
 			err = r.appendOperation(sandbox.Name, op)
 			if err == nil && e != nil && !isAlreadyExists(e) {
 				err = e
 			}
 			if err == nil {
+				err = r.persistPhase(sandbox.Name, model.PhaseConfiguringEnrollment, nil)
+			}
+		case model.PhaseConfiguringEnrollment:
+			err = r.persistPhase(sandbox.Name, model.PhaseConfiguringEnrollment, nil)
+			if err == nil {
+				op, e := r.effectConfigureEnrollment(ctx, sandbox.Name)
+				err = r.appendOperation(sandbox.Name, op)
+				if err == nil {
+					err = e
+				}
+			}
+			if err == nil {
+				err = r.persistPhase(sandbox.Name, model.PhaseStarting, nil)
+			}
+		case model.PhaseStarting:
+			err = r.persistPhase(sandbox.Name, model.PhaseStarting, nil)
+			if err == nil {
+				op, e := r.effectStartApp(ctx, sandbox.Name)
+				err = r.appendOperation(sandbox.Name, op)
+				if err == nil {
+					err = e
+				}
+			}
+			if err == nil {
 				err = r.persistPhase(sandbox.Name, model.PhaseWaitingForApp, nil)
 			}
 		case model.PhaseWaitingForApp:
+			err = r.persistPhase(sandbox.Name, model.PhaseWaitingForApp, nil)
+			if err != nil {
+				break
+			}
 			err = r.poll(ctx, "inspect-app", func() (bool, error) {
 				app, e := r.cf.InspectApp(ctx, sandbox.AppGUID)
 				return app.Running && app.Ready, e
@@ -263,15 +333,18 @@ func (r *Reconciler) reconcileCreate(ctx context.Context, sandbox model.Sandbox)
 				err = r.persistPhase(sandbox.Name, model.PhaseWaitingForRoute, nil)
 			}
 		case model.PhaseWaitingForRoute:
+			err = r.persistPhase(sandbox.Name, model.PhaseWaitingForRoute, nil)
+			if err != nil {
+				break
+			}
 			err = r.poll(ctx, "probe-route", func() (bool, error) { return r.probe.Reachable(ctx, sandbox.InternalHost) })
 			if err == nil {
 				err = r.persistPhase(sandbox.Name, model.PhaseJoiningPack, nil)
 			}
 		case model.PhaseJoiningPack:
-			var present bool
-			present, err = r.effectMemberPresent(ctx, sandbox.Name)
-			if err == nil && !present {
-				err = errors.New("Collie Pack member did not enroll")
+			err = r.persistPhase(sandbox.Name, model.PhaseJoiningPack, nil)
+			if err == nil {
+				err = r.poll(ctx, "observe-member", func() (bool, error) { return r.pack.MemberPresent(ctx, sandbox.Name) })
 			}
 			if err == nil {
 				err = r.cleanupTransient(sandbox.Name)
@@ -297,22 +370,39 @@ func (r *Reconciler) reconcileCreate(ctx context.Context, sandbox model.Sandbox)
 	}
 }
 
+func needsEnrollment(phase model.Phase) bool {
+	switch phase {
+	case model.PhaseDiscoveringApp, model.PhaseSecuringRoute, model.PhaseSecuringManagerRoute, model.PhaseConfiguringEnrollment, model.PhaseStarting:
+		return true
+	}
+	return false
+}
+
 func (r *Reconciler) reconcileDelete(ctx context.Context, sandbox model.Sandbox) error {
 	if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
 		return err
 	}
 	if sandbox.PackMemberID != "" {
+		if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
+			return err
+		}
 		present, err := r.effectMemberPresent(ctx, sandbox.PackMemberID)
 		if err != nil {
 			return r.fail(sandbox.Name, model.PhaseDeleting, err)
 		}
 		if present {
+			if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
+				return err
+			}
 			if err = r.effectRemoveMember(ctx, sandbox.PackMemberID); err != nil && !isAbsent(err) {
 				return r.fail(sandbox.Name, model.PhaseDeleting, err)
 			}
 		}
 	}
 	if sandbox.AppGUID != "" {
+		if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
+			return err
+		}
 		op, err := r.effectRemovePolicy(ctx, cf.RoutePolicyRequest{Domain: r.config.IdentityDomain, Host: r.config.ManagerRouteHost, SourceAppGUID: sandbox.AppGUID})
 		if save := r.appendOperation(sandbox.Name, op); save != nil {
 			return save
@@ -322,6 +412,9 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sandbox model.Sandbox)
 		}
 	}
 	if sandbox.InternalHost != "" {
+		if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
+			return err
+		}
 		op, err := r.effectRemoveRoute(ctx, cf.RouteRequest{AppName: sandbox.Name, AppGUID: sandbox.AppGUID, Domain: r.config.IdentityDomain, Host: sandbox.Name, SourceAppGUID: r.config.ManagerAppGUID})
 		if save := r.appendOperation(sandbox.Name, op); save != nil {
 			return save
@@ -331,6 +424,9 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sandbox model.Sandbox)
 		}
 	}
 	if sandbox.AppGUID != "" {
+		if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
+			return err
+		}
 		op, err := r.effectDeleteApp(ctx, sandbox.Name)
 		if save := r.appendOperation(sandbox.Name, op); save != nil {
 			return save
@@ -339,8 +435,14 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sandbox model.Sandbox)
 			return r.fail(sandbox.Name, model.PhaseDeleting, err)
 		}
 	}
+	if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
+		return err
+	}
 	if err := r.cleanupTransient(sandbox.Name); err != nil {
 		return r.fail(sandbox.Name, model.PhaseDeleting, err)
+	}
+	if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
+		return err
 	}
 	if err := r.runtime.Cleanup(filepath.Join(r.config.WorkRoot, sandbox.Name)); err != nil && !isAbsent(err) {
 		return r.fail(sandbox.Name, model.PhaseDeleting, err)
@@ -416,12 +518,18 @@ func (r *Reconciler) appendOperation(name string, op model.Operation) error {
 	if op.Name == "" {
 		return nil
 	}
+	op.Name = sanitizeOperationField(op.Name)
+	op.Command = sanitizeOperationField(op.Command)
+	op.Summary = sanitizeOperationField(op.Summary)
+	op.Error = sanitizeOperationField(op.Error)
 	return r.store.Update(name, func(s *model.Sandbox) error {
 		s.Operations = append(s.Operations, op)
 		s.UpdatedAt = r.clock.Now()
 		return nil
 	})
 }
+
+func sanitizeOperationField(value string) string { return sanitize(value) }
 func (r *Reconciler) fail(name string, resume model.Phase, cause error) error {
 	message := sanitize(cause.Error())
 	persistErr := r.store.Update(name, func(s *model.Sandbox) error {
@@ -465,9 +573,17 @@ func (r *Reconciler) effectPrepareEnrollment(ctx context.Context, name string) (
 	r.effect("prepare-invite")
 	return r.pack.PrepareEnrollment(ctx, r.config.ManagerPackHost, name)
 }
-func (r *Reconciler) effectPush(ctx context.Context, s model.Sandbox, path string) (cf.App, model.Operation, error) {
-	r.effect("push")
-	return r.cf.Push(ctx, cf.PushRequest{Name: s.Name, Buildpack: s.Buildpack, BitsPath: path, JoinTokenPath: "/home/vcap/app/.sandbox/join-token", PackLeadAddress: "https://" + r.config.ManagerPackHost})
+func (r *Reconciler) effectStage(ctx context.Context, s model.Sandbox, path string) (model.Operation, error) {
+	r.effect("stage")
+	return r.cf.Stage(ctx, cf.PushRequest{Name: s.Name, Buildpack: s.Buildpack, BitsPath: path})
+}
+func (r *Reconciler) effectConfigureEnrollment(ctx context.Context, name string) (model.Operation, error) {
+	r.effect("configure-enrollment")
+	return r.cf.ConfigureEnrollment(ctx, name, "/home/vcap/app/.sandbox/join-token", "https://"+r.config.ManagerPackHost)
+}
+func (r *Reconciler) effectStartApp(ctx context.Context, name string) (model.Operation, error) {
+	r.effect("start-app")
+	return r.cf.StartApp(ctx, name)
 }
 func (r *Reconciler) effectGUID(ctx context.Context, name string) (string, model.Operation, error) {
 	r.effect("discover-guid")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -98,14 +99,21 @@ func (f *fakeRuntime) Cleanup(string) error {
 }
 
 type fakeEnrollment struct {
-	calls  *[]string
-	path   string
-	expiry time.Time
+	calls       *[]string
+	path        string
+	expiry      time.Time
+	failCleanup bool
 }
 
 func (e *fakeEnrollment) Path() string         { return e.path }
 func (e *fakeEnrollment) ExpiresAt() time.Time { return e.expiry }
-func (e *fakeEnrollment) Cleanup() error       { *e.calls = append(*e.calls, "cleanup-invite"); return nil }
+func (e *fakeEnrollment) Cleanup() error {
+	*e.calls = append(*e.calls, "cleanup-invite")
+	if e.failCleanup {
+		return errors.New("token=cleanup-secret failed")
+	}
+	return nil
+}
 
 type fakePack struct {
 	calls   *[]string
@@ -144,22 +152,19 @@ func (e classifiedError) AlreadyExists() bool { return e.kind == "exists" }
 func (e classifiedError) Absent() bool        { return e.kind == "absent" }
 
 type fakeCF struct {
-	calls  *[]string
-	app    cf.App
-	failAt string
+	calls     *[]string
+	app       cf.App
+	failAt    string
+	operation model.Operation
 }
 
-func (f *fakeCF) Push(_ context.Context, request cf.PushRequest) (cf.App, model.Operation, error) {
-	*f.calls = append(*f.calls, "push")
-	if request.JoinTokenPath == "" || request.PackLeadAddress != "https://manager.identity.example" {
-		return cf.App{}, model.Operation{}, errors.New("missing enrollment push fields")
+func (f *fakeCF) Stage(_ context.Context, _ cf.PushRequest) (model.Operation, error) {
+	*f.calls = append(*f.calls, "stage")
+	op := operation("stage", f.failAt != "stage")
+	if f.failAt == "stage" {
+		return op, errors.New("staging Authorization: Bearer secret")
 	}
-	op := operation("push", f.failAt != "push")
-	if f.failAt == "push" {
-		return cf.App{}, op, errors.New("staging Authorization: Bearer secret")
-	}
-	f.app = cf.App{GUID: sandboxGUID, Running: true, Ready: true}
-	return f.app, op, nil
+	return op, nil
 }
 func (f *fakeCF) AppGUID(context.Context, string) (string, model.Operation, error) {
 	*f.calls = append(*f.calls, "discover-guid")
@@ -174,6 +179,9 @@ func (f *fakeCF) InspectApp(context.Context, string) (cf.App, error) {
 }
 func (f *fakeCF) SecureRoute(context.Context, cf.RouteRequest) (model.Operation, error) {
 	*f.calls = append(*f.calls, "secure-route")
+	if f.operation.Name != "" {
+		return f.operation, nil
+	}
 	if f.failAt == "secure-route-exists" {
 		return operation("secure-route", false), classifiedError{kind: "exists"}
 	}
@@ -182,6 +190,15 @@ func (f *fakeCF) SecureRoute(context.Context, cf.RouteRequest) (model.Operation,
 func (f *fakeCF) AddRoutePolicy(context.Context, cf.RoutePolicyRequest) (model.Operation, error) {
 	*f.calls = append(*f.calls, "secure-manager-route")
 	return operation("secure-manager-route", true), nil
+}
+func (f *fakeCF) ConfigureEnrollment(context.Context, string, string, string) (model.Operation, error) {
+	*f.calls = append(*f.calls, "configure-enrollment")
+	return operation("configure-enrollment", true), nil
+}
+func (f *fakeCF) StartApp(context.Context, string) (model.Operation, error) {
+	*f.calls = append(*f.calls, "start-app")
+	f.app = cf.App{GUID: sandboxGUID, Running: true, Ready: true}
+	return operation("start-app", true), nil
 }
 func (f *fakeCF) RemoveRoutePolicy(context.Context, cf.RoutePolicyRequest) (model.Operation, error) {
 	*f.calls = append(*f.calls, "remove-manager-policy")
@@ -248,15 +265,28 @@ func TestCreationPersistsBeforeEveryEffectInExactOrder(t *testing.T) {
 	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"persist:creating", "prepare-bits", "persist:creating", "persist:preparing-invite", "prepare-invite", "persist:staging", "persist:discovering-app", "install-invite", "push", "persist:discovering-app", "persist:securing-route", "secure-route", "persist:securing-route", "persist:securing-route", "persist:securing-manager-route", "secure-manager-route", "persist:securing-manager-route", "persist:waiting-for-app", "inspect-app", "persist:waiting-for-route", "probe-route", "persist:joining-pack", "observe-member", "cleanup-invite", "cleanup-bits", "persist:joining-pack", "persist:ready"}
-	if !reflect.DeepEqual(*calls, want) {
-		t.Fatalf("calls = %#v\nwant  %#v", *calls, want)
+	wantEffects := []string{"prepare-bits", "prepare-invite", "install-invite", "stage", "discover-guid", "secure-route", "secure-manager-route", "configure-enrollment", "start-app", "inspect-app", "probe-route", "observe-member", "cleanup-invite", "cleanup-bits"}
+	var effects []string
+	for _, call := range *calls {
+		if !strings.HasPrefix(call, "persist:") {
+			effects = append(effects, call)
+		}
+	}
+	if !reflect.DeepEqual(effects, wantEffects) {
+		t.Fatalf("effects=%#v, want %#v", effects, wantEffects)
+	}
+	for i, call := range *calls {
+		if slicesContains(wantEffects, call) && call != "cleanup-invite" && call != "cleanup-bits" {
+			if i == 0 || !strings.HasPrefix((*calls)[i-1], "persist:") {
+				t.Fatalf("effect %q not immediately preceded by persistence: %#v", call, *calls)
+			}
+		}
 	}
 	got, _ := s.Get("demo")
 	if got.Phase != model.PhaseReady || got.Revision != "abc123" || got.AppGUID != sandboxGUID || got.InternalHost != "demo.identity.example" || got.PackMemberID != "demo" {
 		t.Fatalf("sandbox = %#v", got)
 	}
-	if len(got.Operations) != 3 {
+	if len(got.Operations) != 6 {
 		t.Fatalf("operations = %#v, want CF operations", got.Operations)
 	}
 }
@@ -265,7 +295,7 @@ func TestEveryPersistedPhaseResumesWithoutRepeatingPriorEffects(t *testing.T) {
 	tests := []struct {
 		phase     model.Phase
 		forbidden string
-	}{{model.PhasePreparingInvite, "prepare-bits"}, {model.PhaseStaging, "prepare-bits"}, {model.PhaseDiscoveringApp, "push"}, {model.PhaseSecuringRoute, "discover-guid"}, {model.PhaseSecuringManagerRoute, "secure-route"}, {model.PhaseWaitingForApp, "secure-manager-route"}, {model.PhaseWaitingForRoute, "secure-manager-route"}, {model.PhaseJoiningPack, "probe-route"}, {model.PhaseReady, "observe-member"}}
+	}{{model.PhasePreparingInvite, "prepare-bits"}, {model.PhaseStaging, "prepare-bits"}, {model.PhaseWaitingForApp, "start-app"}, {model.PhaseWaitingForRoute, "start-app"}, {model.PhaseJoiningPack, "probe-route"}, {model.PhaseReady, "observe-member"}}
 	for _, tt := range tests {
 		t.Run(string(tt.phase), func(t *testing.T) {
 			r, s, _, cloud, _, _, _, calls := fixture(tt.phase)
@@ -290,12 +320,12 @@ func TestEveryPersistedPhaseResumesWithoutRepeatingPriorEffects(t *testing.T) {
 
 func TestFailureRetainsResumePhaseAndRetryClearsError(t *testing.T) {
 	r, s, _, cloud, _, _, _, _ := fixture(model.PhaseStaging)
-	cloud.failAt = "push"
+	cloud.failAt = "stage"
 	if err := r.ReconcileOne(context.Background(), "demo"); err == nil {
 		t.Fatal("ReconcileOne succeeded")
 	}
 	failed, _ := s.Get("demo")
-	if failed.Phase != model.PhaseFailed || failed.ResumePhase != model.PhaseDiscoveringApp || failed.LastError == "" {
+	if failed.Phase != model.PhaseFailed || failed.ResumePhase != model.PhaseStaging || failed.LastError == "" {
 		t.Fatalf("failed = %#v", failed)
 	}
 	if containsSecret(failed.LastError) {
@@ -311,20 +341,20 @@ func TestFailureRetainsResumePhaseAndRetryClearsError(t *testing.T) {
 	}
 }
 
-func TestPushSuccessThenPersistenceFailureRetriesByDiscoveringGUID(t *testing.T) {
+func TestStageSuccessThenPersistenceFailureRetriesStageIdempotently(t *testing.T) {
 	r, s, _, _, _, _, _, calls := fixture(model.PhaseStaging)
-	s.failOnUpdate = 2
+	s.failOnUpdate = 4
 	if err := r.ReconcileOne(context.Background(), "demo"); err == nil {
 		t.Fatal("ReconcileOne succeeded")
 	}
 	failed, _ := s.Get("demo")
-	if failed.ResumePhase != model.PhaseDiscoveringApp {
+	if failed.ResumePhase != model.PhaseStaging {
 		t.Fatalf("resume phase = %s", failed.ResumePhase)
 	}
 	if err := r.Retry(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
 	}
-	if count(*calls, "push") != 1 || count(*calls, "discover-guid") != 1 {
+	if count(*calls, "stage") != 2 || count(*calls, "discover-guid") != 1 {
 		t.Fatalf("calls = %#v", *calls)
 	}
 }
@@ -339,6 +369,125 @@ func TestExpiredEnrollmentIsRegenerated(t *testing.T) {
 		t.Fatalf("calls = %#v", *calls)
 	}
 	_ = pack
+}
+
+func TestFreshReconcilerRegeneratesInviteAndRestagesBeforePostStageWork(t *testing.T) {
+	r, s, rt, cloud, pack, probe, clock, calls := fixture(model.PhaseSecuringRoute)
+	current, _ := s.Get("demo")
+	current.Revision = "abc"
+	current.AppGUID = sandboxGUID
+	s.items["demo"] = current
+	fresh := New(r.config, s, rt, cloud, pack, probe, clock)
+	if err := fresh.ReconcileOne(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	assertSubsequence(t, *calls, []string{"prepare-invite", "install-invite", "stage", "discover-guid", "secure-route", "secure-manager-route", "configure-enrollment", "start-app"})
+}
+
+func TestExpiredPostStageInviteIsRegeneratedAndRestaged(t *testing.T) {
+	r, s, _, _, _, _, clock, calls := fixture(model.PhaseSecuringRoute)
+	current, _ := s.Get("demo")
+	current.Revision = "abc"
+	current.AppGUID = sandboxGUID
+	s.items["demo"] = current
+	r.enrollments["demo"] = &fakeEnrollment{calls: calls, path: "old", expiry: clock.now.Add(-time.Second)}
+	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	assertSubsequence(t, *calls, []string{"cleanup-invite", "prepare-invite", "install-invite", "stage", "discover-guid", "secure-route", "configure-enrollment", "start-app"})
+}
+
+func TestInviteCleanupFailureRemainsRetryable(t *testing.T) {
+	r, s, _, _, _, _, _, calls := fixture(model.PhaseJoiningPack)
+	r.enrollments["demo"] = &fakeEnrollment{calls: calls, path: "invite", failCleanup: true}
+	if err := r.ReconcileOne(context.Background(), "demo"); err == nil {
+		t.Fatal("succeeded")
+	}
+	got, _ := s.Get("demo")
+	if got.Phase != model.PhaseFailed || got.ResumePhase != model.PhaseJoiningPack || containsSecret(got.LastError) {
+		t.Fatalf("sandbox=%#v", got)
+	}
+}
+
+func TestAppendOperationSanitizesAllExternalFields(t *testing.T) {
+	r, s, _, cloud, _, _, _, _ := fixture(model.PhaseSecuringRoute)
+	current, _ := s.Get("demo")
+	current.AppGUID = sandboxGUID
+	s.items["demo"] = current
+	cloud.operation = model.Operation{Name: "stage\nforged", Command: "token=command-secret", Summary: "Authorization: Bearer summary-secret", Error: "password=error-secret", Success: true}
+	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get("demo")
+	for _, op := range got.Operations {
+		joined := op.Name + op.Command + op.Summary + op.Error
+		if strings.Contains(joined, "secret") || strings.ContainsAny(joined, "\r\n") {
+			t.Fatalf("unsafe operation=%#v", op)
+		}
+	}
+}
+
+func TestRealCFErrorClassificationsAreAccepted(t *testing.T) {
+	if !isAlreadyExists(&cf.Error{Kind: "already_exists"}) || !isAbsent(&cf.Error{Kind: "not_found"}) {
+		t.Fatal("real provider classifications not accepted")
+	}
+}
+
+func TestPackMembershipIsConditionPolled(t *testing.T) {
+	r, s, _, _, pack, _, clock, calls := fixture(model.PhaseJoiningPack)
+	pack.present = false
+	attempt := 0
+	r.beforeEffect = func(name string) {
+		if name == "observe-member" {
+			attempt++
+			if attempt == 2 {
+				pack.present = true
+			}
+		}
+	}
+	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if count(*calls, "observe-member") != 2 || clock.waits != 1 {
+		t.Fatalf("calls=%#v waits=%d", *calls, clock.waits)
+	}
+	got, _ := s.Get("demo")
+	if got.Phase != model.PhaseReady {
+		t.Fatalf("phase=%s", got.Phase)
+	}
+}
+
+func TestAllowsActionsDeniesDesiredDeletedImmediately(t *testing.T) {
+	r, s, _, _, _, _, _, _ := fixture(model.PhaseReady)
+	if !r.AllowsActions("demo") {
+		t.Fatal("present sandbox blocked")
+	}
+	current, _ := s.Get("demo")
+	current.Desired = model.DesiredDeleted
+	s.items["demo"] = current
+	if r.AllowsActions("demo") {
+		t.Fatal("deleted sandbox allowed")
+	}
+}
+
+func TestPersistenceFailurePreventsNextEffect(t *testing.T) {
+	for _, phase := range []model.Phase{model.PhaseCreating, model.PhasePreparingInvite, model.PhaseStaging, model.PhaseDiscoveringApp, model.PhaseSecuringRoute, model.PhaseSecuringManagerRoute, model.PhaseConfiguringEnrollment, model.PhaseStarting, model.PhaseWaitingForApp, model.PhaseWaitingForRoute, model.PhaseJoiningPack} {
+		t.Run(string(phase), func(t *testing.T) {
+			r, s, _, _, _, _, _, calls := fixture(phase)
+			current, _ := s.Get("demo")
+			current.Revision = "abc"
+			current.AppGUID = sandboxGUID
+			current.InternalHost = "demo.identity.example"
+			s.items["demo"] = current
+			s.failUpdate = 1
+			_ = r.ReconcileOne(context.Background(), "demo")
+			for _, call := range *calls {
+				if !strings.HasPrefix(call, "persist:") {
+					t.Fatalf("effect occurred after persistence failure: %#v", *calls)
+				}
+			}
+		})
+	}
 }
 
 func TestTypedDuplicateCreationIsSuccess(t *testing.T) {
@@ -514,4 +663,12 @@ func assertSubsequence(t *testing.T, got, want []string) {
 	if i != len(want) {
 		t.Fatalf("%#v does not contain %#v", got, want)
 	}
+}
+func slicesContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

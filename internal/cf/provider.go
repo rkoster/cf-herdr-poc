@@ -35,11 +35,9 @@ var (
 )
 
 type PushRequest struct {
-	Name            string
-	Buildpack       string
-	BitsPath        string
-	JoinTokenPath   string
-	PackLeadAddress string
+	Name      string
+	Buildpack string
+	BitsPath  string
 }
 
 type RouteRequest struct {
@@ -65,8 +63,10 @@ type App struct {
 }
 
 type CloudFoundry interface {
-	Push(context.Context, PushRequest) (App, model.Operation, error)
+	Stage(context.Context, PushRequest) (model.Operation, error)
 	AppGUID(context.Context, string) (string, model.Operation, error)
+	ConfigureEnrollment(context.Context, string, string, string) (model.Operation, error)
+	StartApp(context.Context, string) (model.Operation, error)
 	InspectApp(context.Context, string) (App, error)
 	SecureRoute(context.Context, RouteRequest) (model.Operation, error)
 	AddRoutePolicy(context.Context, RoutePolicyRequest) (model.Operation, error)
@@ -95,51 +95,39 @@ func (e *Error) Unwrap() error {
 	return e.Cause
 }
 
-func (p Provider) Push(ctx context.Context, request PushRequest) (App, model.Operation, error) {
+func (e *Error) AlreadyExists() bool { return e.Kind == "already_exists" }
+func (e *Error) Absent() bool        { return e.Kind == "not_found" }
+
+func (p Provider) Stage(ctx context.Context, request PushRequest) (model.Operation, error) {
 	if err := validateName("app", request.Name); err != nil {
-		return App{}, model.Operation{}, err
+		return model.Operation{}, err
 	}
 	if !contains(p.Buildpacks, request.Buildpack) {
-		return App{}, model.Operation{}, fmt.Errorf("buildpack is not allowed")
+		return model.Operation{}, fmt.Errorf("buildpack is not allowed")
 	}
 	if err := validateBitsPath(p.WorkRoot, request.BitsPath); err != nil {
-		return App{}, model.Operation{}, err
+		return model.Operation{}, err
 	}
-	args := []string{"push", request.Name, "--no-route"}
-	if request.JoinTokenPath != "" || request.PackLeadAddress != "" {
-		if request.JoinTokenPath != "/home/vcap/app/.sandbox/join-token" || !strings.HasPrefix(request.PackLeadAddress, "https://") {
-			return App{}, model.Operation{}, fmt.Errorf("invalid enrollment configuration")
-		}
-		args = append(args, "--no-start")
+	operation, _, err := p.execute(ctx, "stage", "push", request.Name, "--no-route", "--no-start", "-b", request.Buildpack, "-p", request.BitsPath, "-c", "./.sandbox/start.sh")
+	return operation, err
+}
+
+func (p Provider) ConfigureEnrollment(ctx context.Context, name, tokenAppPath, leadAddress string) (model.Operation, error) {
+	if err := validateName("app", name); err != nil {
+		return model.Operation{}, err
 	}
-	args = append(args, "-b", request.Buildpack, "-p", request.BitsPath, "-c", "./.sandbox/start.sh")
-	operation, _, err := p.execute(ctx, "push", args...)
-	if err != nil {
-		return App{}, operation, err
+	if tokenAppPath != "/home/vcap/app/.sandbox/join-token" || !validHTTPSAddress(leadAddress) {
+		return model.Operation{}, fmt.Errorf("invalid enrollment configuration")
 	}
-	if request.JoinTokenPath != "" {
-		for _, command := range [][]string{{"set-env", request.Name, "COLLIE_JOIN_TOKEN_FILE", request.JoinTokenPath}, {"set-env", request.Name, "COLLIE_PACK_LEAD_ADDRESS", request.PackLeadAddress}, {"start", request.Name}} {
-			next, _, commandErr := p.execute(ctx, "push", command...)
-			operation.Duration += next.Duration
-			operation.Command = bounded(operation.Command + " ; " + next.Command)
-			operation.Summary = appendSummary(operation.Summary, next.Summary)
-			if commandErr != nil {
-				operation.Success = false
-				operation.Error = next.Error
-				return App{}, operation, commandErr
-			}
-		}
+	return p.executeMany(ctx, "configure-enrollment", [][]string{{"set-env", name, "COLLIE_JOIN_TOKEN_FILE", tokenAppPath}, {"set-env", name, "COLLIE_PACK_LEAD_ADDRESS", leadAddress}})
+}
+
+func (p Provider) StartApp(ctx context.Context, name string) (model.Operation, error) {
+	if err := validateName("app", name); err != nil {
+		return model.Operation{}, err
 	}
-	guid, guidOperation, err := p.AppGUID(ctx, request.Name)
-	operation.Duration += guidOperation.Duration
-	operation.Command = bounded(operation.Command + " ; " + guidOperation.Command)
-	operation.Summary = appendSummary(operation.Summary, guidOperation.Summary)
-	if err != nil {
-		operation.Success = false
-		operation.Error = guidOperation.Error
-		return App{}, operation, err
-	}
-	return App{Name: request.Name, GUID: guid}, operation, nil
+	operation, _, err := p.execute(ctx, "start-app", "start", name)
+	return operation, err
 }
 
 func (p Provider) AppGUID(ctx context.Context, name string) (string, model.Operation, error) {
@@ -279,6 +267,10 @@ func (p Provider) executeMany(ctx context.Context, name string, commands [][]str
 		result.Command = bounded(strings.TrimSpace(result.Command + " ; " + operation.Command))
 		result.Summary = appendSummary(result.Summary, operation.Summary)
 		if err != nil {
+			var providerErr *Error
+			if errors.As(err, &providerErr) && ((name == "secure-route" && providerErr.AlreadyExists()) || (name == "remove-route" && providerErr.Absent())) {
+				continue
+			}
 			result.Success = false
 			result.Error = operation.Error
 			result.Duration = time.Since(started)
@@ -308,9 +300,29 @@ func (p Provider) execute(ctx context.Context, operationName string, args ...str
 			operation.Error = bounded(operationName + " canceled: " + ctxErr.Error())
 			cause = ctxErr
 		}
-		return operation, output, &Error{Operation: operationName, Kind: "failed", Cause: cause}
+		return operation, output, &Error{Operation: operationName, Kind: classifyError(operationName, string(output)), Cause: cause}
 	}
 	return operation, output, nil
+}
+
+func classifyError(operation, output string) string {
+	value := strings.ToLower(output)
+	if operation == "secure-route" || operation == "add-route-policy" {
+		if strings.Contains(value, "already exists") {
+			return "already_exists"
+		}
+	}
+	if operation == "delete-app" || operation == "remove-route" || operation == "remove-route-policy" {
+		if strings.Contains(value, "not found") || strings.Contains(value, "does not exist") {
+			return "not_found"
+		}
+	}
+	return "failed"
+}
+
+func validHTTPSAddress(value string) bool {
+	parsed, err := url.Parse(value)
+	return err == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil && parsed.Path == "" && parsed.RawQuery == "" && parsed.Fragment == ""
 }
 
 func commandDisplay(name string, args []string) string {

@@ -5,19 +5,20 @@ import "time"
 type Phase string
 
 const (
-	PhaseCreating             Phase = "creating"
-	PhasePreparingInvite      Phase = "preparing-invite"
-	PhaseStaging              Phase = "staging"
-	PhaseDiscoveringApp       Phase = "discovering-app"
-	PhaseStarting             Phase = "starting"
-	PhaseSecuringRoute        Phase = "securing-route"
-	PhaseSecuringManagerRoute Phase = "securing-manager-route"
-	PhaseWaitingForApp        Phase = "waiting-for-app"
-	PhaseWaitingForRoute      Phase = "waiting-for-route"
-	PhaseJoiningPack          Phase = "joining-pack"
-	PhaseReady                Phase = "ready"
-	PhaseDeleting             Phase = "deleting"
-	PhaseFailed               Phase = "failed"
+	PhaseCreating              Phase = "creating"
+	PhasePreparingInvite       Phase = "preparing-invite"
+	PhaseStaging               Phase = "staging"
+	PhaseDiscoveringApp        Phase = "discovering-app"
+	PhaseStarting              Phase = "starting"
+	PhaseSecuringRoute         Phase = "securing-route"
+	PhaseSecuringManagerRoute  Phase = "securing-manager-route"
+	PhaseConfiguringEnrollment Phase = "configuring-enrollment"
+	PhaseWaitingForApp         Phase = "waiting-for-app"
+	PhaseWaitingForRoute       Phase = "waiting-for-route"
+	PhaseJoiningPack           Phase = "joining-pack"
+	PhaseReady                 Phase = "ready"
+	PhaseDeleting              Phase = "deleting"
+	PhaseFailed                Phase = "failed"
 )
 
 type Desired string

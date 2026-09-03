@@ -42,7 +42,7 @@ func (r *recordingRunner) Run(_ context.Context, name string, args ...string) ([
 	return output, err
 }
 
-func TestPushUsesExactArgvAndDiscoversGUID(t *testing.T) {
+func TestStageUsesExactArgvWithoutStartingOrDiscoveringGUID(t *testing.T) {
 	_, statErr := os.Stat("/tmp/work/demo")
 	if errors.Is(statErr, os.ErrNotExist) {
 		if err := os.MkdirAll("/tmp/work/demo", 0o755); err != nil {
@@ -52,85 +52,120 @@ func TestPushUsesExactArgvAndDiscoversGUID(t *testing.T) {
 	} else if statErr != nil {
 		t.Fatal(statErr)
 	}
-	run := &recordingRunner{outputs: [][]byte{nil, []byte(appGUID + "\n")}}
+	run := &recordingRunner{}
 	provider := Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: "/tmp/work"}
 
-	app, operation, err := provider.Push(context.Background(), PushRequest{
+	operation, err := provider.Stage(context.Background(), PushRequest{
 		Name: "demo", Buildpack: "ruby_buildpack", BitsPath: "/tmp/work/demo",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []command{
-		{name: "cf", args: []string{"push", "demo", "--no-route", "-b", "ruby_buildpack", "-p", "/tmp/work/demo", "-c", "./.sandbox/start.sh"}},
-		{name: "cf", args: []string{"app", "demo", "--guid"}},
-	}
+	want := []command{{name: "cf", args: []string{"push", "demo", "--no-route", "--no-start", "-b", "ruby_buildpack", "-p", "/tmp/work/demo", "-c", "./.sandbox/start.sh"}}}
 	if !reflect.DeepEqual(run.commands, want) {
 		t.Fatalf("commands = %#v, want %#v", run.commands, want)
 	}
-	if app.Name != "demo" || app.GUID != appGUID || !operation.Success || operation.Name == "" {
-		t.Fatalf("Push() = (%#v, %#v), want discovered app and successful operation", app, operation)
+	if !operation.Success || operation.Name != "stage" {
+		t.Fatalf("Stage() = %#v, want successful stage operation", operation)
 	}
 }
 
-func TestPushEnrollmentConfigUsesNoStartThenSetsEnvironmentAndStarts(t *testing.T) {
-	workRoot := t.TempDir()
-	bitsPath := filepath.Join(workRoot, "demo")
-	if err := os.Mkdir(bitsPath, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	run := &recordingRunner{outputs: [][]byte{nil, nil, nil, nil, []byte("22222222-2222-4222-8222-222222222222\n")}}
-	_, _, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Push(context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath, JoinTokenPath: "/home/vcap/app/.sandbox/join-token", PackLeadAddress: "https://manager.identity.example"})
+func TestConfigureEnrollmentAndStartAppUseSeparateExactCommands(t *testing.T) {
+	run := &recordingRunner{}
+	provider := Provider{Run: run}
+	configure, err := provider.ConfigureEnrollment(context.Background(), "demo", "/home/vcap/app/.sandbox/join-token", "https://manager.identity.example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []command{{name: "cf", args: []string{"push", "demo", "--no-route", "--no-start", "-b", "ruby_buildpack", "-p", bitsPath, "-c", "./.sandbox/start.sh"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_JOIN_TOKEN_FILE", "/home/vcap/app/.sandbox/join-token"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_LEAD_ADDRESS", "https://manager.identity.example"}}, {name: "cf", args: []string{"start", "demo"}}, {name: "cf", args: []string{"app", "demo", "--guid"}}}
+	start, err := provider.StartApp(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []command{{name: "cf", args: []string{"set-env", "demo", "COLLIE_JOIN_TOKEN_FILE", "/home/vcap/app/.sandbox/join-token"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_LEAD_ADDRESS", "https://manager.identity.example"}}, {name: "cf", args: []string{"start", "demo"}}}
 	if !reflect.DeepEqual(run.commands, want) {
 		t.Fatalf("commands = %#v, want %#v", run.commands, want)
 	}
+	if configure.Name != "configure-enrollment" || start.Name != "start-app" {
+		t.Fatalf("operations = %#v, %#v", configure, start)
+	}
 }
 
-func TestPushRetainsPushAndGUIDDiagnosticsInOrder(t *testing.T) {
+func TestProviderClassifiesCommonCFResourceErrors(t *testing.T) {
+	tests := []struct {
+		name, operation, output string
+		exists, absent          bool
+	}{{"route exists", "secure-route", "Route demo.identity.example already exists", true, false}, {"policy exists", "add-route-policy", "Route policy already exists.", true, false}, {"app missing", "delete-app", "App 'demo' not found", false, true}, {"route missing", "remove-route", "Route demo.identity.example does not exist", false, true}, {"policy missing", "remove-route-policy", "Route policy not found", false, true}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			run := &recordingRunner{outputs: [][]byte{[]byte(tt.output)}, errors: []error{errors.New("exit status 1")}}
+			operation, _, err := (Provider{Run: run}).execute(context.Background(), tt.operation, "ignored")
+			var providerErr *Error
+			if !errors.As(err, &providerErr) {
+				t.Fatalf("error=%T %v", err, err)
+			}
+			if providerErr.AlreadyExists() != tt.exists || providerErr.Absent() != tt.absent {
+				t.Fatalf("classification=(%v,%v), want (%v,%v)", providerErr.AlreadyExists(), providerErr.Absent(), tt.exists, tt.absent)
+			}
+			if !strings.Contains(operation.Summary, tt.output) {
+				t.Fatalf("summary=%q", operation.Summary)
+			}
+		})
+	}
+}
+
+func TestSecureRouteContinuesAfterCreateAlreadyExists(t *testing.T) {
+	run := &recordingRunner{outputs: [][]byte{[]byte("Route already exists"), nil, nil}, errors: []error{errors.New("exit status 1"), nil, nil}}
+	operation, err := (Provider{Run: run}).SecureRoute(context.Background(), RouteRequest{AppName: "demo", AppGUID: appGUID, Domain: "identity.example", Host: "demo", SourceAppGUID: managerGUID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(run.commands) != 3 || !operation.Success {
+		t.Fatalf("commands=%#v operation=%#v", run.commands, operation)
+	}
+}
+
+func TestRemoveRouteContinuesAfterResourcesAreAbsent(t *testing.T) {
+	run := &recordingRunner{outputs: [][]byte{[]byte("Route policy not found"), []byte("Route mapping does not exist"), []byte("Route not found")}, errors: []error{errors.New("exit 1"), errors.New("exit 1"), errors.New("exit 1")}}
+	operation, err := (Provider{Run: run}).RemoveRoute(context.Background(), RouteRequest{AppName: "demo", AppGUID: appGUID, Domain: "identity.example", Host: "demo", SourceAppGUID: managerGUID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(run.commands) != 3 || !operation.Success {
+		t.Fatalf("commands=%#v operation=%#v", run.commands, operation)
+	}
+}
+
+func TestStageRetainsSanitizedDiagnostics(t *testing.T) {
 	bitsPath := t.TempDir()
-	run := &recordingRunner{outputs: [][]byte{
-		[]byte("push diagnostic"),
-		[]byte(appGUID + "\n"),
-	}}
-	_, operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Push(
+	run := &recordingRunner{outputs: [][]byte{[]byte("stage diagnostic")}}
+	operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Stage(
 		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pushIndex := strings.Index(operation.Summary, "push diagnostic")
-	guidIndex := strings.Index(operation.Summary, appGUID)
-	if pushIndex < 0 || guidIndex <= pushIndex {
-		t.Fatalf("Summary = %q, want push then GUID diagnostics", operation.Summary)
+	if operation.Summary != "stage diagnostic" {
+		t.Fatalf("Summary = %q", operation.Summary)
 	}
 	if len(operation.Summary) > maxOperationSummaryBytes {
 		t.Fatalf("Summary length = %d, want <= %d", len(operation.Summary), maxOperationSummaryBytes)
 	}
 }
 
-func TestPushRetainsSanitizedGUIDFailureDiagnostic(t *testing.T) {
+func TestStageRetainsSanitizedFailureDiagnostic(t *testing.T) {
 	bitsPath := t.TempDir()
 	run := &recordingRunner{
-		outputs: [][]byte{
-			[]byte("push diagnostic"),
-			[]byte("GUID lookup failed\nAuthorization: Bearer secret-value"),
-		},
-		errors: []error{nil, errors.New("exit status 1")},
+		outputs: [][]byte{[]byte("stage failed\nAuthorization: Bearer secret-value")},
+		errors:  []error{errors.New("exit status 1")},
 	}
-	_, operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Push(
+	operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Stage(
 		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath},
 	)
 	if err == nil {
-		t.Fatal("Push succeeded, want GUID lookup failure")
+		t.Fatal("Stage succeeded")
 	}
-	pushIndex := strings.Index(operation.Summary, "push diagnostic")
-	guidIndex := strings.Index(operation.Summary, "GUID lookup failed")
-	if pushIndex < 0 || guidIndex <= pushIndex {
-		t.Fatalf("Summary = %q, want push then GUID failure diagnostics", operation.Summary)
+	if !strings.Contains(operation.Summary, "stage failed") {
+		t.Fatalf("Summary = %q", operation.Summary)
 	}
 	if strings.Contains(operation.Summary, "secret-value") || !strings.Contains(operation.Summary, "[REDACTED]") {
 		t.Fatalf("Summary does not preserve redaction: %q", operation.Summary)
@@ -203,19 +238,19 @@ func TestValidationHappensBeforeRunnerCalls(t *testing.T) {
 		run      func(Provider) error
 	}{
 		{name: "malicious app", provider: Provider{Buildpacks: []string{"ruby_buildpack"}, WorkRoot: "/tmp/work"}, run: func(p Provider) error {
-			_, _, err := p.Push(context.Background(), PushRequest{Name: "demo;rm-rf", Buildpack: "ruby_buildpack", BitsPath: "/tmp/work/demo"})
+			_, err := p.Stage(context.Background(), PushRequest{Name: "demo;rm-rf", Buildpack: "ruby_buildpack", BitsPath: "/tmp/work/demo"})
 			return err
 		}},
 		{name: "unknown buildpack", provider: Provider{Buildpacks: []string{"ruby_buildpack"}, WorkRoot: "/tmp/work"}, run: func(p Provider) error {
-			_, _, err := p.Push(context.Background(), PushRequest{Name: "demo", Buildpack: "evil", BitsPath: "/tmp/work/demo"})
+			_, err := p.Stage(context.Background(), PushRequest{Name: "demo", Buildpack: "evil", BitsPath: "/tmp/work/demo"})
 			return err
 		}},
 		{name: "relative bits", provider: Provider{Buildpacks: []string{"ruby_buildpack"}, WorkRoot: "/tmp/work"}, run: func(p Provider) error {
-			_, _, err := p.Push(context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: "demo"})
+			_, err := p.Stage(context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: "demo"})
 			return err
 		}},
 		{name: "escaped bits", provider: Provider{Buildpacks: []string{"ruby_buildpack"}, WorkRoot: "/tmp/work"}, run: func(p Provider) error {
-			_, _, err := p.Push(context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: "/tmp/elsewhere/demo"})
+			_, err := p.Stage(context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: "/tmp/elsewhere/demo"})
 			return err
 		}},
 		{name: "invalid domain", provider: Provider{}, run: func(p Provider) error {
@@ -248,7 +283,7 @@ func TestPushRejectsBitsPathEscapingThroughSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := &recordingRunner{}
-	_, _, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Push(
+	_, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Stage(
 		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: link},
 	)
 	if err == nil {
@@ -262,7 +297,7 @@ func TestPushRejectsBitsPathEscapingThroughSymlink(t *testing.T) {
 func TestPushRejectsMissingBitsDirectory(t *testing.T) {
 	workRoot := t.TempDir()
 	run := &recordingRunner{}
-	_, _, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Push(
+	_, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Stage(
 		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: filepath.Join(workRoot, "missing")},
 	)
 	if err == nil || !strings.Contains(err.Error(), "bits path") {
@@ -280,7 +315,7 @@ func TestPushRejectsBitsPathThatIsNotDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := &recordingRunner{}
-	_, _, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Push(
+	_, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Stage(
 		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath},
 	)
 	if err == nil || !strings.Contains(err.Error(), "directory") {
@@ -299,7 +334,7 @@ func TestPushRejectsMissingBitsUnderEscapingSymlinkAncestor(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := &recordingRunner{}
-	_, _, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Push(
+	_, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Stage(
 		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: filepath.Join(link, "missing")},
 	)
 	if err == nil || !strings.Contains(err.Error(), "work root") {
@@ -570,7 +605,7 @@ func TestCommandDisplayIsBoundedAndSanitized(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_, operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Push(
+	operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Stage(
 		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath},
 	)
 	if err != nil {
@@ -579,8 +614,8 @@ func TestCommandDisplayIsBoundedAndSanitized(t *testing.T) {
 	if len(operation.Command) > 1024 || strings.ContainsAny(operation.Command, "\r\n") {
 		t.Fatalf("unsafe command display length/content: %q", operation.Command)
 	}
-	if run.commands[0].args[6] != bitsPath {
-		t.Fatalf("bits argv = %q, want original discrete value", run.commands[0].args[6])
+	if run.commands[0].args[7] != bitsPath {
+		t.Fatalf("bits argv = %q, want original discrete value", run.commands[0].args[7])
 	}
 }
 
