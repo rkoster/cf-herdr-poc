@@ -62,6 +62,9 @@ func Load(getenv func(string) string) (Config, error) {
 		if err != nil {
 			return Config{}, fmt.Errorf("MANAGER_RECONCILE_INTERVAL must be a valid duration: %w", err)
 		}
+		if parsed <= 0 {
+			return Config{}, fmt.Errorf("MANAGER_RECONCILE_INTERVAL must be positive")
+		}
 		reconcileInterval = parsed
 	}
 

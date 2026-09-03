@@ -127,6 +127,21 @@ func TestLoadRejectsMalformedReconcileInterval(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsNonpositiveReconcileInterval(t *testing.T) {
+	for _, value := range []string{"0s", "-1s"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := Load(env(map[string]string{
+				"CF_IDENTITY_DOMAIN":         "apps.identity",
+				"SANDBOX_BUILDPACKS":         "ruby_buildpack",
+				"MANAGER_RECONCILE_INTERVAL": value,
+			}))
+			if err == nil || !strings.Contains(err.Error(), "MANAGER_RECONCILE_INTERVAL") {
+				t.Fatalf("Load() error = %v, want error naming MANAGER_RECONCILE_INTERVAL", err)
+			}
+		})
+	}
+}
+
 func env(values map[string]string) func(string) string {
 	return func(key string) string { return values[key] }
 }
