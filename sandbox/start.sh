@@ -26,7 +26,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-"$BIN_DIR/herdr" server & # herdr server
+"$BIN_DIR/herdr" server &
 herdr_pid=$!
 
 deadline=$((SECONDS + ${HERDR_START_TIMEOUT_SECONDS:-30}))
@@ -45,9 +45,9 @@ done
 trust_store="$COLLIE_STATE_DIR/pack-trust.json"
 if [[ ! -f "$trust_store" && -n "${COLLIE_JOIN_TOKEN_FILE:-}" && -f "$COLLIE_JOIN_TOKEN_FILE" ]]; then
   : "${COLLIE_PACK_LEAD_ADDRESS:?COLLIE_PACK_LEAD_ADDRESS is required to join a pack}"
-  "$BIN_DIR/collie" pack join "$COLLIE_PACK_LEAD_ADDRESS" - < "$COLLIE_JOIN_TOKEN_FILE" # collie pack join
+  "$BIN_DIR/collie" pack join "$COLLIE_PACK_LEAD_ADDRESS" - < "$COLLIE_JOIN_TOKEN_FILE"
 fi
 
-(exec "$BIN_DIR/bun" run "$COLLIE_DIR/bridge/index.ts") & # bun run bridge/index.ts
+(exec "$BIN_DIR/bun" run "$COLLIE_DIR/bridge/index.ts") &
 collie_pid=$!
 wait "$collie_pid"

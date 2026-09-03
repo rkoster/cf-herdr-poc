@@ -135,6 +135,80 @@ func TestPrepareRejectsRuntimeSymlink(t *testing.T) {
 	}
 }
 
+func TestPrepareRejectsClonedSandboxSymlinkWithoutWritingOutside(t *testing.T) {
+	workRoot := t.TempDir()
+	destination := filepath.Join(workRoot, "demo")
+	outside := t.TempDir()
+	runtimeDir := t.TempDir()
+	writeFile(t, filepath.Join(runtimeDir, "start.sh"), 0o755, "runtime\n")
+	recorder := &recordingRunner{run: func(_ string, args []string) ([]byte, error) {
+		if args[0] != "clone" {
+			return []byte("abc123\n"), nil
+		}
+		if err := os.MkdirAll(destination, 0o755); err != nil {
+			return nil, err
+		}
+		return nil, os.Symlink(outside, filepath.Join(destination, ".sandbox"))
+	}}
+
+	_, err := (Builder{Run: recorder, RuntimeDir: runtimeDir, WorkRoot: workRoot}).Prepare(
+		context.Background(), "https://git.example/demo.git", destination,
+	)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("error = %v, want sandbox symlink rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "start.sh")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("overlay wrote outside work root: %v", statErr)
+	}
+}
+
+func TestPrepareRejectsSymlinkInExistingOverlayPath(t *testing.T) {
+	workRoot := t.TempDir()
+	destination := filepath.Join(workRoot, "demo")
+	outside := t.TempDir()
+	runtimeDir := t.TempDir()
+	writeFile(t, filepath.Join(runtimeDir, "config", "default.json"), 0o644, "{}\n")
+	recorder := &recordingRunner{run: func(_ string, args []string) ([]byte, error) {
+		if args[0] != "clone" {
+			return []byte("abc123\n"), nil
+		}
+		if err := os.MkdirAll(filepath.Join(destination, ".sandbox"), 0o755); err != nil {
+			return nil, err
+		}
+		return nil, os.Symlink(outside, filepath.Join(destination, ".sandbox", "config"))
+	}}
+
+	_, err := (Builder{Run: recorder, RuntimeDir: runtimeDir, WorkRoot: workRoot}).Prepare(
+		context.Background(), "https://git.example/demo.git", destination,
+	)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("error = %v, want overlay path symlink rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "default.json")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("overlay wrote through nested symlink: %v", statErr)
+	}
+}
+
+func TestPrepareRejectsDestinationThroughSymlinkedAncestor(t *testing.T) {
+	workRoot := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(workRoot, "redirect")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	recorder := &recordingRunner{}
+
+	_, err := (Builder{Run: recorder, RuntimeDir: t.TempDir(), WorkRoot: workRoot}).Prepare(
+		context.Background(), "https://git.example/demo.git", filepath.Join(link, "demo"),
+	)
+	if err == nil {
+		t.Fatal("Prepare succeeded through symlinked ancestor, want error")
+	}
+	if len(recorder.commands) != 0 {
+		t.Fatalf("ran commands for physically escaped destination: %#v", recorder.commands)
+	}
+}
+
 func writeFile(t *testing.T, path string, mode os.FileMode, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
