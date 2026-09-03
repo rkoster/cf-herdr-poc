@@ -18,11 +18,17 @@ import (
 	"cf-herdr-poc/internal/runner"
 )
 
-const maxOperationText = 1024
+const (
+	maxOperationText         = 1024
+	maxOperationSummaryBytes = 4 * 1024
+)
 
 var (
-	namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
-	uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	namePattern       = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
+	uuidPattern       = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	ansiPattern       = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+	authorizationLine = regexp.MustCompile(`(?i)^(\s*authorization\s*[:=]\s*)(?:bearer\s+)?\S+.*$`)
+	secretLine        = regexp.MustCompile(`(?i)^(\s*(?:join[_-]?token|access[_-]?token|refresh[_-]?token|cf_instance_key|cf_instance_cert|private[_-]?key|client[_-]?secret|password)\s*[:=]\s*).*$`)
 )
 
 type PushRequest struct {
@@ -238,6 +244,7 @@ func (p Provider) executeMany(ctx context.Context, name string, commands [][]str
 	for _, command := range commands {
 		operation, _, err := p.execute(ctx, name, command...)
 		result.Command = bounded(strings.TrimSpace(result.Command + " ; " + operation.Command))
+		result.Summary = appendSummary(result.Summary, operation.Summary)
 		if err != nil {
 			result.Success = false
 			result.Error = operation.Error
@@ -260,6 +267,7 @@ func (p Provider) execute(ctx context.Context, operationName string, args ...str
 	output, err := p.Run.Run(ctx, "cf", args...)
 	operation.Duration = time.Since(started)
 	operation.Success = err == nil
+	operation.Summary = sanitizeOutput(output)
 	if err != nil {
 		cause := err
 		operation.Error = bounded(operationName + " failed")
@@ -285,6 +293,59 @@ func bounded(value string) string {
 	}, value)
 	if len(value) > maxOperationText {
 		return value[:maxOperationText]
+	}
+	return value
+}
+
+func sanitizeOutput(output []byte) string {
+	value := ansiPattern.ReplaceAllString(string(output), "")
+	value = strings.Map(func(character rune) rune {
+		switch character {
+		case '\n', '\t':
+			return character
+		case '\r':
+			return '\n'
+		}
+		if character < 0x20 || character == 0x7f {
+			return ' '
+		}
+		return character
+	}, value)
+	lines := strings.Split(value, "\n")
+	inPEMBlock := false
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "-----BEGIN ") && strings.HasSuffix(trimmed, "-----") {
+			inPEMBlock = true
+			lines[index] = "[REDACTED PEM BLOCK]"
+			continue
+		}
+		if inPEMBlock {
+			lines[index] = ""
+			if strings.HasPrefix(trimmed, "-----END ") && strings.HasSuffix(trimmed, "-----") {
+				inPEMBlock = false
+			}
+			continue
+		}
+		if matches := authorizationLine.FindStringSubmatch(line); matches != nil {
+			lines[index] = matches[1] + "[REDACTED]"
+			continue
+		}
+		if matches := secretLine.FindStringSubmatch(line); matches != nil {
+			lines[index] = matches[1] + "[REDACTED]"
+		}
+	}
+	value = strings.TrimSpace(strings.Join(lines, "\n"))
+	if len(value) > maxOperationSummaryBytes {
+		value = value[:maxOperationSummaryBytes]
+	}
+	return value
+}
+
+func appendSummary(existing, next string) string {
+	value := strings.TrimSpace(existing + "\n" + next)
+	if len(value) > maxOperationSummaryBytes {
+		value = value[:maxOperationSummaryBytes]
 	}
 	return value
 }

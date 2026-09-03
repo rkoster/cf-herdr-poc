@@ -316,6 +316,70 @@ func TestOperationErrorsAreBoundedAndDoNotContainOutput(t *testing.T) {
 	}
 }
 
+func TestOperationRetainsSanitizedOutputOnSuccessAndFailure(t *testing.T) {
+	tests := []struct {
+		name    string
+		runErr  error
+		wantErr bool
+	}{
+		{name: "success"},
+		{name: "failure", runErr: errors.New("exit status 1"), wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			run := &recordingRunner{
+				outputs: [][]byte{[]byte("upload complete\nAuthorization: Bearer bearer-value\nJOIN_TOKEN=join-value\nCF_INSTANCE_KEY=key-value\nCF_INSTANCE_CERT=cert-value\n-----BEGIN CERTIFICATE-----\ncertificate-body\n-----END CERTIFICATE-----\n\x1b[31mstaging\x1b[0m\x00done\n")},
+				errors:  []error{test.runErr},
+			}
+			operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
+			if (err != nil) != test.wantErr {
+				t.Fatalf("DeleteApp error = %v, wantErr %v", err, test.wantErr)
+			}
+			if !strings.Contains(operation.Summary, "upload complete") || !strings.Contains(operation.Summary, "staging done") {
+				t.Fatalf("Summary = %q, want retained friction output", operation.Summary)
+			}
+			for _, secret := range []string{"bearer-value", "join-value", "key-value", "cert-value", "certificate-body"} {
+				if strings.Contains(operation.Summary, secret) {
+					t.Fatalf("Summary contains secret %q: %q", secret, operation.Summary)
+				}
+			}
+			if !strings.Contains(operation.Summary, "[REDACTED]") || strings.Contains(operation.Summary, "\x1b") || strings.ContainsRune(operation.Summary, '\x00') {
+				t.Fatalf("Summary is not sanitized: %q", operation.Summary)
+			}
+		})
+	}
+}
+
+func TestMultiCommandOperationCombinesSanitizedOutput(t *testing.T) {
+	run := &recordingRunner{outputs: [][]byte{
+		[]byte("route created"),
+		[]byte("route mapped"),
+		[]byte("policy added"),
+	}}
+	operation, err := (Provider{Run: run}).SecureRoute(context.Background(), RouteRequest{
+		AppName: "demo", AppGUID: appGUID, Domain: "apps.identity", Host: "demo", SourceAppGUID: managerGUID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, evidence := range []string{"route created", "route mapped", "policy added"} {
+		if !strings.Contains(operation.Summary, evidence) {
+			t.Fatalf("Summary = %q, want %q", operation.Summary, evidence)
+		}
+	}
+}
+
+func TestOperationSummaryHasSmallExplicitCap(t *testing.T) {
+	run := &recordingRunner{outputs: [][]byte{[]byte(strings.Repeat("x", 100000))}}
+	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operation.Summary) != maxOperationSummaryBytes {
+		t.Fatalf("Summary length = %d, want %d", len(operation.Summary), maxOperationSummaryBytes)
+	}
+}
+
 func TestCommandDisplayIsBoundedAndSanitized(t *testing.T) {
 	run := &recordingRunner{outputs: [][]byte{nil, []byte(appGUID)}}
 	bitsPath := t.TempDir()
