@@ -51,16 +51,22 @@ func TestSandboxViewOmitsPrivateStateAndSanitizesText(t *testing.T) {
 }
 
 func TestSandboxViewStripsPersistedRepositoryCredentials(t *testing.T) {
-	view := PublicSandbox(model.Sandbox{Repository: "https://legacy-user:legacy-password@git.example/team/demo.git"})
+	view := PublicSandbox(model.Sandbox{Repository: "https://legacy-user:legacy-password@git.example/team/demo.git?token=query-secret#fragment-secret"})
 	encoded, err := json.Marshal(view)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	if strings.Contains(text, "legacy-user") || strings.Contains(text, "legacy-password") {
+	if strings.Contains(text, "legacy-user") || strings.Contains(text, "legacy-password") || strings.Contains(text, "query-secret") || strings.Contains(text, "fragment-secret") || strings.Contains(text, "token=") {
 		t.Fatalf("public JSON contains repository credentials: %s", text)
 	}
 	if view.Repository != "https://git.example/team/demo.git" {
 		t.Fatalf("repository = %q", view.Repository)
+	}
+}
+
+func TestSandboxViewRedactsMalformedPersistedRepository(t *testing.T) {
+	if got := PublicSandbox(model.Sandbox{Repository: "not a URL?token=legacy-secret"}).Repository; got != "[redacted repository URL]" {
+		t.Fatalf("repository = %q", got)
 	}
 }

@@ -76,7 +76,7 @@ func run() error {
 	reconciler := reconcile.New(reconcile.Config{WorkRoot: cfg.WorkRoot, IdentityDomain: cfg.IdentityDomain, ManagerRouteHost: cfg.ManagerPackHost, ManagerPackHost: cfg.ManagerPackHost, ManagerAppGUID: cfg.ManagerAppGUID, PollAttempts: 30, PollInterval: time.Second, ScanInterval: cfg.ReconcileInterval}, state, reconcile.BundleRuntime{Builder: builder}, cloud, reconcile.ConcretePackManager{Manager: packManager}, probe, realClock{})
 	collieURL, _ := url.Parse("http://" + cfg.CollieAddress)
 	web := http.StripPrefix("/manager/", http.FileServer(http.Dir(cfg.WebDir)))
-	handler, err := httpapi.New(httpapi.Config{Store: state, Reconciler: reconciler, Buildpacks: cfg.Buildpacks, CollieURL: collieURL, ManagerPackHost: cfg.ManagerPackHost, Authorize: httpapi.BearerAuthorizer(cfg.APIToken), Healthy: collie.Healthy, Web: web})
+	handler, err := httpapi.New(httpapi.Config{Store: state, Reconciler: reconciler, Buildpacks: cfg.Buildpacks, CollieURL: collieURL, ManagerPackHost: cfg.ManagerPackHost, ManagerToken: cfg.APIToken, TrustForwardedProto: true, Healthy: collie.Healthy, ErrorSink: func(err error) { log.Printf("manager API reconciliation: %v", err) }, Web: web})
 	if err != nil {
 		return fmt.Errorf("build HTTP gateway: %w", err)
 	}
@@ -91,7 +91,7 @@ func run() error {
 		return fmt.Errorf("wait for lead Collie: %w", err)
 	}
 	reconciler.Start(ctx)
-	server := &http.Server{Addr: cfg.Address, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	server := managerHTTPServer(cfg.Address, handler)
 	errorsChannel := make(chan error, 1)
 	go func() {
 		err := server.ListenAndServe()
@@ -107,7 +107,7 @@ func run() error {
 	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
-	return errors.Join(serveErr, stopAll(shutdownCtx, server.Shutdown, reconciler.Stop, collie.Stop))
+	return errors.Join(serveErr, stopAll(shutdownCtx, server.Shutdown, handler.Close, reconciler.Stop, collie.Stop))
 }
 
 func waitForShutdown(ctx context.Context, httpErrors, supervisorErrors <-chan error) error {
@@ -124,10 +124,16 @@ func waitForShutdown(ctx context.Context, httpErrors, supervisorErrors <-chan er
 	}
 }
 
-func stopAll(ctx context.Context, stopHTTP func(context.Context) error, stopReconciler func(), stopCollie func(context.Context) error) error {
+func managerHTTPServer(address string, handler http.Handler) *http.Server {
+	// A bounded WriteTimeout limits stuck clients while still allowing POC reverse-proxy streams.
+	return &http.Server{Addr: address, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
+}
+
+func stopAll(ctx context.Context, stopHTTP, stopAPI func(context.Context) error, stopReconciler func(), stopCollie func(context.Context) error) error {
 	httpErr := stopHTTP(ctx)
+	apiErr := stopAPI(ctx)
 	stopReconciler()
-	return errors.Join(httpErr, stopCollie(ctx))
+	return errors.Join(httpErr, apiErr, stopCollie(ctx))
 }
 
 func loopbackAddress(address string) (string, int, error) {

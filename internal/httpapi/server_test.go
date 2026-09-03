@@ -3,7 +3,9 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -77,17 +79,28 @@ func (f *fakeReconciler) ReconcileOne(_ context.Context, name string) error {
 }
 func (f *fakeReconciler) Retry(_ context.Context, name string) error { f.retried <- name; return nil }
 
-func newTestHandler(t *testing.T, store *memoryStore, reconciler *fakeReconciler, collie *httptest.Server) http.Handler {
+type blockingReconciler struct {
+	reconcile func(context.Context, string) error
+}
+
+func (f *blockingReconciler) ReconcileOne(ctx context.Context, name string) error {
+	return f.reconcile(ctx, name)
+}
+func (f *blockingReconciler) Retry(ctx context.Context, name string) error {
+	return f.reconcile(ctx, name)
+}
+
+func newTestHandler(t *testing.T, store *memoryStore, reconciler Reconciler, collie *httptest.Server) *Handler {
 	return newTestHandlerWithHealth(t, store, reconciler, collie, func() bool { return true })
 }
 
-func newTestHandlerWithHealth(t *testing.T, store *memoryStore, reconciler *fakeReconciler, collie *httptest.Server, healthy func() bool) http.Handler {
+func newTestHandlerWithHealth(t *testing.T, store *memoryStore, reconciler Reconciler, collie *httptest.Server, healthy func() bool) *Handler {
 	t.Helper()
 	u, err := url.Parse(collie.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(Config{Store: store, Reconciler: reconciler, Buildpacks: []string{"ruby_buildpack"}, CollieURL: u, ManagerPackHost: "pack.identity.example", Authorize: BearerAuthorizer("test-token"), Healthy: healthy, Now: func() time.Time { return time.Unix(100, 0).UTC() }})
+	h, err := New(Config{Store: store, Reconciler: reconciler, Buildpacks: []string{"ruby_buildpack"}, CollieURL: u, ManagerPackHost: "pack.identity.example", ManagerToken: "test-token", Healthy: healthy, ErrorSink: func(error) {}, Now: func() time.Time { return time.Unix(100, 0).UTC() }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,6 +131,101 @@ func TestManagerAPIRequiresAuthorization(t *testing.T) {
 	}
 	if got := request(t, h, http.MethodGet, "/manager/healthz", "", "public.example", false).Code; got != http.StatusOK {
 		t.Fatalf("health status = %d", got)
+	}
+}
+
+func TestSessionCookieAuthorizesAPIAndCollie(t *testing.T) {
+	collie := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer collie.Close()
+	h := newTestHandler(t, &memoryStore{items: map[string]model.Sandbox{}}, &fakeReconciler{make(chan string, 1), make(chan string, 1)}, collie)
+	login := httptest.NewRequest(http.MethodPost, "/manager/api/session", strings.NewReader(`{"token":"test-token"}`))
+	login.Host = "public.example"
+	login.Header.Set("Content-Type", "application/json")
+	login.TLS = &tls.ConnectionState{}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, login)
+	cookies := w.Result().Cookies()
+	if w.Code != http.StatusNoContent || len(cookies) != 1 {
+		t.Fatalf("login = %d, cookies %#v", w.Code, cookies)
+	}
+	cookie := cookies[0]
+	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteStrictMode || cookie.Path != "/" || strings.Contains(cookie.Value, "test-token") {
+		t.Fatalf("unsafe session cookie: %#v", cookie)
+	}
+	for _, path := range []string{"/manager/api/sandboxes", "/collie/assets/app.js"} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Host = "public.example"
+		r.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, r)
+		if response.Code == http.StatusUnauthorized {
+			t.Fatalf("cookie rejected for %s", path)
+		}
+	}
+	forged := *cookie
+	forged.Value += "x"
+	r := httptest.NewRequest(http.MethodGet, "/collie/assets/app.js", nil)
+	r.Host = "public.example"
+	r.AddCookie(&forged)
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, r)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("forged cookie status = %d", response.Code)
+	}
+}
+
+func TestSessionForwardedProtoTrustOnlyPermitsLoginTransport(t *testing.T) {
+	collie := httptest.NewServer(http.NotFoundHandler())
+	defer collie.Close()
+	u, _ := url.Parse(collie.URL)
+	config := Config{Store: &memoryStore{items: map[string]model.Sandbox{}}, Reconciler: &fakeReconciler{make(chan string, 1), make(chan string, 1)}, Buildpacks: []string{"ruby_buildpack"}, CollieURL: u, ManagerPackHost: "pack.identity.example", ManagerToken: "test-token", Healthy: func() bool { return true }, ErrorSink: func(error) {}}
+	untrusted, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login := func(h http.Handler, token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/manager/api/session", strings.NewReader(`{"token":"`+token+`"}`))
+		r.Host = "public.example"
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-Forwarded-Proto", "https")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if got := login(untrusted, "test-token").Code; got != http.StatusBadRequest {
+		t.Fatalf("untrusted header login status = %d", got)
+	}
+	config.TrustForwardedProto = true
+	trusted, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := login(trusted, "wrong").Code; got != http.StatusUnauthorized {
+		t.Fatalf("wrong token status = %d", got)
+	}
+	if got := login(trusted, "test-token"); got.Code != http.StatusNoContent || len(got.Result().Cookies()) != 1 {
+		t.Fatalf("trusted login = %d", got.Code)
+	}
+	probe := httptest.NewRequest(http.MethodGet, "/manager/api/sandboxes", nil)
+	probe.Host = "public.example"
+	probe.Header.Set("X-Forwarded-Proto", "https")
+	w := httptest.NewRecorder()
+	trusted.ServeHTTP(w, probe)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("forwarded proto weakened auth: %d", w.Code)
+	}
+}
+
+func TestSessionLogoutClearsCookie(t *testing.T) {
+	collie := httptest.NewServer(http.NotFoundHandler())
+	defer collie.Close()
+	h := newTestHandler(t, &memoryStore{items: map[string]model.Sandbox{}}, &fakeReconciler{make(chan string, 1), make(chan string, 1)}, collie)
+	r := httptest.NewRequest(http.MethodDelete, "/manager/api/session", nil)
+	r.Host = "public.example"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent || len(w.Result().Cookies()) != 1 || w.Result().Cookies()[0].MaxAge >= 0 {
+		t.Fatalf("logout = %d %#v", w.Code, w.Result().Cookies())
 	}
 }
 
@@ -236,6 +344,8 @@ func TestAPIValidationAndSortedGET(t *testing.T) {
 		{"bad repository", `{"name":"demo","repository":"file:///etc/passwd","buildpack":"ruby_buildpack"}`, true},
 		{"HTTP repository credentials", `{"name":"demo","repository":"https://user:password@git.example/demo.git","buildpack":"ruby_buildpack"}`, true},
 		{"SSH repository userinfo", `{"name":"demo","repository":"ssh://git@git.example/demo.git","buildpack":"ruby_buildpack"}`, true},
+		{"repository query", `{"name":"demo","repository":"https://git.example/demo.git?token=secret","buildpack":"ruby_buildpack"}`, true},
+		{"repository fragment", `{"name":"demo","repository":"ssh://git.example/demo.git#secret","buildpack":"ruby_buildpack"}`, true},
 		{"repository option", `{"name":"demo","repository":"--upload-pack=x","buildpack":"ruby_buildpack"}`, true},
 		{"bad buildpack", `{"name":"demo","repository":"ssh://git@git.example/demo.git","buildpack":"evil"}`, true},
 		{"unknown field", `{"name":"demo","repository":"https://git.example/demo.git","buildpack":"ruby_buildpack","token":"x"}`, true},
@@ -274,7 +384,10 @@ func TestCollieAndPackProxyRouting(t *testing.T) {
 	defer collie.Close()
 	h := newTestHandler(t, &memoryStore{items: map[string]model.Sandbox{}}, &fakeReconciler{make(chan string, 1), make(chan string, 1)}, collie)
 
-	w := request(t, h, http.MethodPost, "/collie/assets/app.js?v=1", "body", "public.example", false)
+	if got := request(t, h, http.MethodGet, "/collie/assets/app.js", "", "public.example", false).Code; got != http.StatusUnauthorized {
+		t.Fatalf("unauthorized Collie status = %d", got)
+	}
+	w := request(t, h, http.MethodPost, "/collie/assets/app.js?v=1", "body", "public.example", true)
 	if w.Code != http.StatusCreated || w.Header().Get("X-Collie") != "yes" || w.Body.String() != "body|/assets/app.js?v=1" {
 		t.Fatalf("collie proxy = %d %q", w.Code, w.Body.String())
 	}
@@ -293,7 +406,7 @@ func TestCollieAndPackProxyRouting(t *testing.T) {
 		{"pack.identity.example", "/pack/v1/hello", http.StatusCreated},
 		{"pack.identity.example:443", "/other", http.StatusNotFound},
 		{"public.example", "/pack/v1/hello", http.StatusNotFound},
-		{"public.example", "/collie/pack/v1/hello", http.StatusCreated},
+		{"public.example", "/collie/pack/v1/hello", http.StatusUnauthorized},
 	}
 	for _, tt := range combos {
 		w := request(t, h, http.MethodGet, tt.path, "", tt.host, false)
@@ -325,4 +438,66 @@ func TestBearerAuthorizer(t *testing.T) {
 	if !authorize(r) {
 		t.Fatal("valid bearer token rejected")
 	}
+}
+
+func TestCloseCancelsAndWaitsForTrackedReconcile(t *testing.T) {
+	collie := httptest.NewServer(http.NotFoundHandler())
+	defer collie.Close()
+	started := make(chan struct{})
+	finished := make(chan struct{})
+	reconciler := &blockingReconciler{reconcile: func(ctx context.Context, _ string) error {
+		close(started)
+		<-ctx.Done()
+		close(finished)
+		return ctx.Err()
+	}}
+	errorsSeen := make(chan error, 1)
+	u, _ := url.Parse(collie.URL)
+	h, err := New(Config{Store: &memoryStore{items: map[string]model.Sandbox{}}, Reconciler: reconciler, Buildpacks: []string{"ruby_buildpack"}, CollieURL: u, ManagerPackHost: "pack.identity.example", ManagerToken: "test-token", Healthy: func() bool { return true }, ErrorSink: func(err error) { errorsSeen <- err }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := request(t, h, http.MethodPost, "/manager/api/sandboxes", `{"name":"demo","repository":"https://git.example/demo.git","buildpack":"ruby_buildpack"}`, "public.example", true)
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d", created.Code)
+	}
+	<-started
+	if err := h.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-finished:
+	default:
+		t.Fatal("Close returned before reconcile finished")
+	}
+	select {
+	case err := <-errorsSeen:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("reported error = %v", err)
+		}
+	default:
+		t.Fatal("reconcile error was discarded")
+	}
+
+	closed := request(t, h, http.MethodPost, "/manager/api/sandboxes", `{"name":"other","repository":"https://git.example/other.git","buildpack":"ruby_buildpack"}`, "public.example", true)
+	if closed.Code != http.StatusServiceUnavailable {
+		t.Fatalf("enqueue after Close status = %d", closed.Code)
+	}
+}
+
+func TestCloseHonorsContextWhileWaiting(t *testing.T) {
+	collie := httptest.NewServer(http.NotFoundHandler())
+	defer collie.Close()
+	block := make(chan struct{})
+	started := make(chan struct{})
+	reconciler := &blockingReconciler{reconcile: func(context.Context, string) error { close(started); <-block; return nil }}
+	h := newTestHandler(t, &memoryStore{items: map[string]model.Sandbox{}}, reconciler, collie)
+	_ = request(t, h, http.MethodPost, "/manager/api/sandboxes", `{"name":"demo","repository":"https://git.example/demo.git","buildpack":"ruby_buildpack"}`, "public.example", true)
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := h.Close(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Close error = %v", err)
+	}
+	close(block)
 }

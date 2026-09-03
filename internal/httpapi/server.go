@@ -2,7 +2,10 @@ package httpapi
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,12 +17,17 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"cf-herdr-poc/internal/model"
 )
 
-const maxRequestBody = 64 << 10
+const (
+	maxRequestBody = 64 << 10
+	sessionCookie  = "manager_session"
+	sessionContext = "cf-herdr-poc manager browser session v1"
+)
 
 type Store interface {
 	List() []model.Sandbox
@@ -34,24 +42,32 @@ type Reconciler interface {
 }
 
 type Config struct {
-	Store           Store
-	Reconciler      Reconciler
-	Buildpacks      []string
-	CollieURL       *url.URL
-	ManagerPackHost string
-	Authorize       func(*http.Request) bool
-	Healthy         func() bool
-	Web             http.Handler
-	Now             func() time.Time
+	Store               Store
+	Reconciler          Reconciler
+	Buildpacks          []string
+	CollieURL           *url.URL
+	ManagerPackHost     string
+	ManagerToken        string
+	TrustForwardedProto bool
+	Healthy             func() bool
+	ErrorSink           func(error)
+	Web                 http.Handler
+	Now                 func() time.Time
 }
 
-type server struct {
-	config Config
-	collie *httputil.ReverseProxy
+type Handler struct {
+	config       Config
+	collie       *httputil.ReverseProxy
+	sessionValue string
+	ctx          context.Context
+	cancel       context.CancelFunc
+	jobsMu       sync.Mutex
+	jobs         sync.WaitGroup
+	closed       bool
 }
 
-func New(config Config) (http.Handler, error) {
-	if config.Store == nil || config.Reconciler == nil || config.CollieURL == nil || config.Authorize == nil || config.Healthy == nil {
+func New(config Config) (*Handler, error) {
+	if config.Store == nil || config.Reconciler == nil || config.CollieURL == nil || config.ManagerToken == "" || config.Healthy == nil || config.ErrorSink == nil {
 		return nil, errors.New("HTTP API dependencies are required")
 	}
 	if config.CollieURL.Scheme != "http" || !isLoopback(config.CollieURL.Hostname()) {
@@ -63,7 +79,8 @@ func New(config Config) (http.Handler, error) {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
-	return &server{config: config, collie: httputil.NewSingleHostReverseProxy(config.CollieURL)}, nil
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Handler{config: config, collie: httputil.NewSingleHostReverseProxy(config.CollieURL), sessionValue: deriveSession(config.ManagerToken), ctx: ctx, cancel: cancel}, nil
 }
 
 func BearerAuthorizer(token string) func(*http.Request) bool {
@@ -74,7 +91,13 @@ func BearerAuthorizer(token string) func(*http.Request) bool {
 	}
 }
 
-func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func deriveSession(token string) string {
+	mac := hmac.New(sha256.New, []byte(token))
+	_, _ = mac.Write([]byte(sessionContext))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host, ok := canonicalHost(r.Host)
 	if !ok {
 		http.NotFound(w, r)
@@ -89,6 +112,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/manager/api" || strings.HasPrefix(r.URL.Path, "/manager/api/") {
+		if r.URL.Path == "/manager/api/session" {
+			s.session(w, r)
+			return
+		}
 		s.authorized(w, r, s.api)
 		return
 	}
@@ -102,8 +129,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	case strings.HasPrefix(r.URL.Path, "/collie/"):
-		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/collie")
-		s.collie.ServeHTTP(w, r)
+		s.authorized(w, r, func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/collie")
+			s.collie.ServeHTTP(w, r)
+		})
 	case strings.HasPrefix(r.URL.Path, "/pack/v1/"):
 		http.NotFound(w, r)
 	case strings.HasPrefix(r.URL.Path, "/manager/") && s.config.Web != nil:
@@ -113,8 +142,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *server) authorized(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-	if !s.config.Authorize(r) {
+func (s *Handler) authorized(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	if !s.authorize(r) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="manager"`)
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -122,7 +151,95 @@ func (s *server) authorized(w http.ResponseWriter, r *http.Request, next http.Ha
 	next(w, r)
 }
 
-func (s *server) api(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) authorize(r *http.Request) bool {
+	if BearerAuthorizer(s.config.ManagerToken)(r) {
+		return true
+	}
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return false
+	}
+	return hmac.Equal([]byte(cookie.Value), []byte(s.sessionValue))
+}
+
+func (s *Handler) session(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: "/", MaxAge: -1, Expires: time.Unix(1, 0), HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST, DELETE")
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !hasJSONContentType(r) {
+		writeAPIError(w, http.StatusUnsupportedMediaType, "content type must be application/json")
+		return
+	}
+	body := http.MaxBytesReader(w, r.Body, maxRequestBody)
+	decoder := json.NewDecoder(body)
+	decoder.DisallowUnknownFields()
+	var input struct {
+		Token string `json:"token"`
+	}
+	if err := decoder.Decode(&input); err != nil || requireEOF(decoder) != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	want, got := []byte(s.config.ManagerToken), []byte(input.Token)
+	if len(want) != len(got) || subtle.ConstantTimeCompare(want, got) != 1 {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if r.TLS == nil && !(s.config.TrustForwardedProto && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")) {
+		writeAPIError(w, http.StatusBadRequest, "HTTPS required")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: s.sessionValue, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Handler) enqueue(run func(context.Context) error) bool {
+	s.jobsMu.Lock()
+	defer s.jobsMu.Unlock()
+	if s.closed {
+		return false
+	}
+	s.jobs.Add(1)
+	go func() {
+		defer s.jobs.Done()
+		if err := run(s.ctx); err != nil {
+			s.config.ErrorSink(err)
+		}
+	}()
+	return true
+}
+
+func (s *Handler) acceptingJobs() bool {
+	s.jobsMu.Lock()
+	defer s.jobsMu.Unlock()
+	return !s.closed
+}
+
+func (s *Handler) Close(ctx context.Context) error {
+	s.jobsMu.Lock()
+	if !s.closed {
+		s.closed = true
+		s.cancel()
+	}
+	s.jobsMu.Unlock()
+	done := make(chan struct{})
+	go func() { s.jobs.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Handler) api(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/manager/api/sandboxes":
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
@@ -138,7 +255,7 @@ func (s *server) api(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *server) sandboxes(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) sandboxes(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		items := s.config.Store.List()
 		sort.Slice(items, func(i, j int) bool {
@@ -156,6 +273,10 @@ func (s *server) sandboxes(w http.ResponseWriter, r *http.Request) {
 	}
 	if !hasJSONContentType(r) {
 		http.Error(w, "content type must be application/json", http.StatusUnsupportedMediaType)
+		return
+	}
+	if !s.acceptingJobs() {
+		writeAPIError(w, http.StatusServiceUnavailable, "shutting down")
 		return
 	}
 	body := http.MaxBytesReader(w, r.Body, maxRequestBody)
@@ -196,11 +317,14 @@ func (s *server) sandboxes(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	go func() { _ = s.config.Reconciler.ReconcileOne(context.Background(), input.Name) }()
+	if !s.enqueue(func(ctx context.Context) error { return s.config.Reconciler.ReconcileOne(ctx, input.Name) }) {
+		writeAPIError(w, http.StatusServiceUnavailable, "shutting down")
+		return
+	}
 	writeJSON(w, http.StatusAccepted, PublicSandbox(sandbox))
 }
 
-func (s *server) sandbox(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) sandbox(w http.ResponseWriter, r *http.Request) {
 	remainder := strings.TrimPrefix(r.URL.Path, "/manager/api/sandboxes/")
 	name := remainder
 	retry := false
@@ -217,11 +341,22 @@ func (s *server) sandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if retry && r.Method == http.MethodPost {
-		go func() { _ = s.config.Reconciler.Retry(context.Background(), name) }()
+		if !s.acceptingJobs() {
+			writeAPIError(w, http.StatusServiceUnavailable, "shutting down")
+			return
+		}
+		if !s.enqueue(func(ctx context.Context) error { return s.config.Reconciler.Retry(ctx, name) }) {
+			writeAPIError(w, http.StatusServiceUnavailable, "shutting down")
+			return
+		}
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	if !retry && r.Method == http.MethodDelete {
+		if !s.acceptingJobs() {
+			writeAPIError(w, http.StatusServiceUnavailable, "shutting down")
+			return
+		}
 		now := s.config.Now()
 		if err := s.config.Store.Update(name, func(value *model.Sandbox) error {
 			value.Desired = model.DesiredDeleted
@@ -232,7 +367,10 @@ func (s *server) sandbox(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "persist deletion", http.StatusInternalServerError)
 			return
 		}
-		go func() { _ = s.config.Reconciler.ReconcileOne(context.Background(), name) }()
+		if !s.enqueue(func(ctx context.Context) error { return s.config.Reconciler.ReconcileOne(ctx, name) }) {
+			writeAPIError(w, http.StatusServiceUnavailable, "shutting down")
+			return
+		}
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
@@ -266,7 +404,7 @@ func validRepository(value string) bool {
 		return len(parts) == 2 && validHostname(strings.TrimPrefix(parts[0], "git@")) && parts[1] != ""
 	}
 	parsed, err := url.Parse(value)
-	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "ssh") && parsed.Host != "" && parsed.User == nil
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "ssh") && parsed.Host != "" && parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == ""
 }
 func validHostname(value string) bool {
 	if value == "" || strings.ContainsAny(value, "/@?#") {

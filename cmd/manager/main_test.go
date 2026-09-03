@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestLoopbackAddress(t *testing.T) {
@@ -22,12 +24,19 @@ func TestLoopbackAddress(t *testing.T) {
 func TestStopAllUsesReverseStartupOrderAndJoinsErrors(t *testing.T) {
 	var order []string
 	wantErr := errors.New("collie stop")
-	err := stopAll(context.Background(), func(context.Context) error { order = append(order, "http"); return nil }, func() { order = append(order, "reconciler") }, func(context.Context) error { order = append(order, "collie"); return wantErr })
-	if !reflect.DeepEqual(order, []string{"http", "reconciler", "collie"}) {
+	err := stopAll(context.Background(), func(context.Context) error { order = append(order, "http"); return nil }, func(context.Context) error { order = append(order, "api"); return nil }, func() { order = append(order, "reconciler") }, func(context.Context) error { order = append(order, "collie"); return wantErr })
+	if !reflect.DeepEqual(order, []string{"http", "api", "reconciler", "collie"}) {
 		t.Fatalf("stop order = %#v", order)
 	}
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("stopAll error = %v", err)
+	}
+}
+
+func TestManagerHTTPServerSetsResourceTimeouts(t *testing.T) {
+	server := managerHTTPServer(":8080", http.NotFoundHandler())
+	if server.ReadHeaderTimeout <= 0 || server.ReadTimeout <= 0 || server.WriteTimeout != 60*time.Second || server.IdleTimeout <= 0 || server.MaxHeaderBytes <= 0 {
+		t.Fatalf("unsafe HTTP server limits: %#v", server)
 	}
 }
 

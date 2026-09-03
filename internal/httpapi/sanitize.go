@@ -45,12 +45,17 @@ func publicRepository(value string) string {
 	parsed, err := url.Parse(value)
 	if err == nil && parsed.Host != "" {
 		parsed.User = nil
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
 		return parsed.String()
 	}
 	if strings.Contains(value, "@") && !strings.HasPrefix(value, "git@") {
-		return "[REDACTED]"
+		return "[redacted repository URL]"
 	}
-	return value
+	if strings.HasPrefix(value, "git@") && !strings.ContainsAny(value, "?#") {
+		return value
+	}
+	return "[redacted repository URL]"
 }
 
 var secretPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*(?:bearer\s+)?|\b(?:token|secret|password)\s*[=:]\s*)\S+`)
