@@ -35,9 +35,11 @@ var (
 )
 
 type PushRequest struct {
-	Name      string
-	Buildpack string
-	BitsPath  string
+	Name            string
+	Buildpack       string
+	BitsPath        string
+	JoinTokenPath   string
+	PackLeadAddress string
 }
 
 type RouteRequest struct {
@@ -103,10 +105,30 @@ func (p Provider) Push(ctx context.Context, request PushRequest) (App, model.Ope
 	if err := validateBitsPath(p.WorkRoot, request.BitsPath); err != nil {
 		return App{}, model.Operation{}, err
 	}
-	args := []string{"push", request.Name, "--no-route", "-b", request.Buildpack, "-p", request.BitsPath, "-c", "./.sandbox/start.sh"}
+	args := []string{"push", request.Name, "--no-route"}
+	if request.JoinTokenPath != "" || request.PackLeadAddress != "" {
+		if request.JoinTokenPath != "/home/vcap/app/.sandbox/join-token" || !strings.HasPrefix(request.PackLeadAddress, "https://") {
+			return App{}, model.Operation{}, fmt.Errorf("invalid enrollment configuration")
+		}
+		args = append(args, "--no-start")
+	}
+	args = append(args, "-b", request.Buildpack, "-p", request.BitsPath, "-c", "./.sandbox/start.sh")
 	operation, _, err := p.execute(ctx, "push", args...)
 	if err != nil {
 		return App{}, operation, err
+	}
+	if request.JoinTokenPath != "" {
+		for _, command := range [][]string{{"set-env", request.Name, "COLLIE_JOIN_TOKEN_FILE", request.JoinTokenPath}, {"set-env", request.Name, "COLLIE_PACK_LEAD_ADDRESS", request.PackLeadAddress}, {"start", request.Name}} {
+			next, _, commandErr := p.execute(ctx, "push", command...)
+			operation.Duration += next.Duration
+			operation.Command = bounded(operation.Command + " ; " + next.Command)
+			operation.Summary = appendSummary(operation.Summary, next.Summary)
+			if commandErr != nil {
+				operation.Success = false
+				operation.Error = next.Error
+				return App{}, operation, commandErr
+			}
+		}
 	}
 	guid, guidOperation, err := p.AppGUID(ctx, request.Name)
 	operation.Duration += guidOperation.Duration

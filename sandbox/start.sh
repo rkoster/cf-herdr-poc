@@ -63,6 +63,7 @@ trust_store="$COLLIE_STATE_DIR/pack-trust.json"
 if [[ ! -f "$trust_store" && -n "${COLLIE_JOIN_TOKEN_FILE:-}" && -f "$COLLIE_JOIN_TOKEN_FILE" ]]; then
   : "${COLLIE_PACK_LEAD_ADDRESS:?COLLIE_PACK_LEAD_ADDRESS is required to join a pack}"
   "$BIN_DIR/collie" pack join "$COLLIE_PACK_LEAD_ADDRESS" - < "$COLLIE_JOIN_TOKEN_FILE"
+  rm -f -- "$COLLIE_JOIN_TOKEN_FILE"
 fi
 
 (exec "$BIN_DIR/bun" run "$COLLIE_DIR/bridge/index.ts") &

@@ -23,6 +23,23 @@ type Builder struct {
 	WorkRoot   string
 }
 
+func (b Builder) InstallEnrollment(destination, source string) error {
+	if err := withinWorkRoot(b.WorkRoot, destination); err != nil {
+		return err
+	}
+	if err := rejectSymlinkComponents(b.WorkRoot, filepath.Join(destination, ".sandbox", "join-token")); err != nil {
+		return err
+	}
+	contents, err := os.ReadFile(source)
+	if err != nil {
+		return fmt.Errorf("read enrollment file: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, ".sandbox", "join-token"), contents, 0o600); err != nil {
+		return fmt.Errorf("install enrollment file: %w", err)
+	}
+	return nil
+}
+
 func (b Builder) Prepare(ctx context.Context, repoURL, destination string) (result Result, resultErr error) {
 	if repoURL == "" || strings.HasPrefix(repoURL, "-") {
 		return Result{}, fmt.Errorf("invalid repository URL")

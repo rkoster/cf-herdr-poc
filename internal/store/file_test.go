@@ -24,6 +24,7 @@ func TestFileRoundTripPreservesSandboxState(t *testing.T) {
 		Buildpack:    "ruby_buildpack",
 		Desired:      model.DesiredPresent,
 		Phase:        model.PhaseReady,
+		ResumePhase:  model.PhaseJoiningPack,
 		InternalHost: "demo.apps.internal",
 		PackMemberID: "member-id",
 		Operations: []model.Operation{{

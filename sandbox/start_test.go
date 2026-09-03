@@ -54,6 +54,9 @@ func TestLauncherContract(t *testing.T) {
 	if strings.Contains(script, `$(cat "$COLLIE_JOIN_TOKEN_FILE")`) {
 		t.Fatal("launcher expands token into argv")
 	}
+	if !strings.Contains(script, `rm -f -- "$COLLIE_JOIN_TOKEN_FILE"`) {
+		t.Fatal("launcher does not remove one-time invite after joining")
+	}
 	if strings.Contains(script, "echo $COLLIE_JOIN_TOKEN") || strings.Contains(script, "set -x") {
 		t.Fatal("launcher may print the token")
 	}

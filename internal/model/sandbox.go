@@ -5,14 +5,19 @@ import "time"
 type Phase string
 
 const (
-	PhaseCreating      Phase = "creating"
-	PhaseStaging       Phase = "staging"
-	PhaseStarting      Phase = "starting"
-	PhaseSecuringRoute Phase = "securing-route"
-	PhaseJoiningPack   Phase = "joining-pack"
-	PhaseReady         Phase = "ready"
-	PhaseDeleting      Phase = "deleting"
-	PhaseFailed        Phase = "failed"
+	PhaseCreating             Phase = "creating"
+	PhasePreparingInvite      Phase = "preparing-invite"
+	PhaseStaging              Phase = "staging"
+	PhaseDiscoveringApp       Phase = "discovering-app"
+	PhaseStarting             Phase = "starting"
+	PhaseSecuringRoute        Phase = "securing-route"
+	PhaseSecuringManagerRoute Phase = "securing-manager-route"
+	PhaseWaitingForApp        Phase = "waiting-for-app"
+	PhaseWaitingForRoute      Phase = "waiting-for-route"
+	PhaseJoiningPack          Phase = "joining-pack"
+	PhaseReady                Phase = "ready"
+	PhaseDeleting             Phase = "deleting"
+	PhaseFailed               Phase = "failed"
 )
 
 type Desired string
@@ -40,6 +45,7 @@ type Sandbox struct {
 	Buildpack    string      `json:"buildpack"`
 	Desired      Desired     `json:"desired"`
 	Phase        Phase       `json:"phase"`
+	ResumePhase  Phase       `json:"resumePhase,omitempty"`
 	InternalHost string      `json:"internalHost,omitempty"`
 	PackMemberID string      `json:"packMemberId,omitempty"`
 	LastError    string      `json:"lastError,omitempty"`

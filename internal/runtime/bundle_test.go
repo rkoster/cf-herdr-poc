@@ -82,6 +82,28 @@ func TestPrepareClonesBeforeOverlayAndReturnsRevision(t *testing.T) {
 	}
 }
 
+func TestInstallEnrollmentCopiesPrivateTokenIntoPreparedRuntime(t *testing.T) {
+	root := t.TempDir()
+	destination := filepath.Join(root, "demo")
+	if err := os.MkdirAll(filepath.Join(destination, ".sandbox"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "invite")
+	if err := os.WriteFile(source, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Builder{WorkRoot: root}).InstallEnrollment(destination, source); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(destination, ".sandbox", "join-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
 func TestPrepareRejectsUnsafeInputsBeforeRunningCommands(t *testing.T) {
 	workRoot := t.TempDir()
 	tests := []struct {

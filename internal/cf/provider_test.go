@@ -73,6 +73,23 @@ func TestPushUsesExactArgvAndDiscoversGUID(t *testing.T) {
 	}
 }
 
+func TestPushEnrollmentConfigUsesNoStartThenSetsEnvironmentAndStarts(t *testing.T) {
+	workRoot := t.TempDir()
+	bitsPath := filepath.Join(workRoot, "demo")
+	if err := os.Mkdir(bitsPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	run := &recordingRunner{outputs: [][]byte{nil, nil, nil, nil, []byte("22222222-2222-4222-8222-222222222222\n")}}
+	_, _, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}).Push(context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath, JoinTokenPath: "/home/vcap/app/.sandbox/join-token", PackLeadAddress: "https://manager.identity.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []command{{name: "cf", args: []string{"push", "demo", "--no-route", "--no-start", "-b", "ruby_buildpack", "-p", bitsPath, "-c", "./.sandbox/start.sh"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_JOIN_TOKEN_FILE", "/home/vcap/app/.sandbox/join-token"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_LEAD_ADDRESS", "https://manager.identity.example"}}, {name: "cf", args: []string{"start", "demo"}}, {name: "cf", args: []string{"app", "demo", "--guid"}}}
+	if !reflect.DeepEqual(run.commands, want) {
+		t.Fatalf("commands = %#v, want %#v", run.commands, want)
+	}
+}
+
 func TestPushRetainsPushAndGUIDDiagnosticsInOrder(t *testing.T) {
 	bitsPath := t.TempDir()
 	run := &recordingRunner{outputs: [][]byte{
