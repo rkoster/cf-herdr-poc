@@ -489,6 +489,47 @@ useful tail`
 	}
 }
 
+func TestOutputRedactionRemovesCompleteQuotedAndEscapedValues(t *testing.T) {
+	output := `useful start
+export PASSWORD='shell multi word suffix leak'
+PRIVATE_KEY="quoted private key suffix leak"
+{"client_secret":"json multi word suffix leak","private_key":"-----BEGIN PRIVATE KEY-----\njson-key-body\n-----END PRIVATE KEY-----","message":"useful-json"}
+payload "message":"-----BEGIN RSA PRIVATE KEY-----\nescaped-key-body\n-----END RSA PRIVATE KEY-----"
+Authorization: Bearer header-secret
+token and secret are harmless words in prose
+useful end`
+	run := &recordingRunner{outputs: [][]byte{[]byte(output)}}
+	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"shell multi word", "suffix leak", "quoted private key", "json multi word", "json-key-body", "escaped-key-body", "header-secret"} {
+		if strings.Contains(operation.Summary, secret) {
+			t.Fatalf("Summary contains %q: %q", secret, operation.Summary)
+		}
+	}
+	for _, useful := range []string{"useful start", "useful-json", "token and secret are harmless words in prose", "useful end"} {
+		if !strings.Contains(operation.Summary, useful) {
+			t.Fatalf("Summary dropped %q: %q", useful, operation.Summary)
+		}
+	}
+}
+
+func TestOversizedSingleCommandSummaryPreservesNewestDiagnostic(t *testing.T) {
+	final := "FINAL FAILURE: staging rejected"
+	run := &recordingRunner{outputs: [][]byte{[]byte(strings.Repeat("old output ", 1000) + final)}}
+	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(operation.Summary, "[older output truncated]\n") || !strings.Contains(operation.Summary, final) {
+		t.Fatalf("Summary does not preserve newest diagnostic: %q", operation.Summary)
+	}
+	if len(operation.Summary) > maxOperationSummaryBytes {
+		t.Fatalf("Summary length = %d, want <= %d", len(operation.Summary), maxOperationSummaryBytes)
+	}
+}
+
 func TestOperationSummaryHasSmallExplicitCap(t *testing.T) {
 	run := &recordingRunner{outputs: [][]byte{[]byte(strings.Repeat("x", 100000))}}
 	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
@@ -497,6 +538,9 @@ func TestOperationSummaryHasSmallExplicitCap(t *testing.T) {
 	}
 	if len(operation.Summary) != maxOperationSummaryBytes {
 		t.Fatalf("Summary length = %d, want %d", len(operation.Summary), maxOperationSummaryBytes)
+	}
+	if !strings.HasPrefix(operation.Summary, "[older output truncated]\n") {
+		t.Fatalf("Summary = %q, want truncation marker", operation.Summary)
 	}
 }
 

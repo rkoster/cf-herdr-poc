@@ -29,7 +29,8 @@ var (
 	ansiPattern      = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 	bearerValue      = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)([^"'\s,}]+)`)
 	standaloneBearer = regexp.MustCompile(`(?i)(\bbearer\s+)([^"'\s,}]+)`)
-	secretAssignment = regexp.MustCompile(`(?i)((?:join[_-]?token|access[_-]?token|refresh[_-]?token|cf_instance_key|cf_instance_cert|private[_-]?key|client[_-]?secret|password)\s*["']?\s*[:=]\s*["']?)([^"'\s,}]+)`)
+	jsonSecret       = regexp.MustCompile(`(?i)("(?:[^"\\]*(?:token|secret|password|private_key|instance_key|instance_cert|authorization)[^"\\]*)"\s*:\s*)("(?:\\.|[^"\\])*"|[^,}\s]+)`)
+	shellSecret      = regexp.MustCompile(`(?i)(\b(?:export\s+)?[a-z0-9_]*(?:token|secret|password|private_key|instance_key|instance_cert|authorization)[a-z0-9_]*\s*=\s*)("(?:\\.|[^"\\])*"|'[^']*'|[^\s,}]+)`)
 	pemBlock         = regexp.MustCompile(`(?s)-----BEGIN [^-]+-----.*?-----END [^-]+-----`)
 )
 
@@ -326,16 +327,30 @@ func sanitizeOutput(output []byte) string {
 	}, value)
 	value = bearerValue.ReplaceAllString(value, "${1}[REDACTED]")
 	value = standaloneBearer.ReplaceAllString(value, "${1}[REDACTED]")
-	value = secretAssignment.ReplaceAllString(value, "${1}[REDACTED]")
+	value = jsonSecret.ReplaceAllStringFunc(value, redactAssignment)
+	value = shellSecret.ReplaceAllStringFunc(value, redactAssignment)
 	value = strings.TrimSpace(value)
-	if len(value) > maxOperationSummaryBytes {
-		value = value[:maxOperationSummaryBytes]
-	}
-	return value
+	return capSummary(value)
 }
 
 func appendSummary(existing, next string) string {
-	value := strings.TrimSpace(existing + "\n" + next)
+	return capSummary(strings.TrimSpace(existing + "\n" + next))
+}
+
+func redactAssignment(value string) string {
+	separator := strings.IndexAny(value, "=:")
+	if separator < 0 {
+		return value
+	}
+	prefix := value[:separator+1]
+	remainder := strings.TrimSpace(value[separator+1:])
+	if len(remainder) >= 2 && (remainder[0] == '"' || remainder[0] == '\'') {
+		return prefix + string(remainder[0]) + "[REDACTED]" + string(remainder[0])
+	}
+	return prefix + "[REDACTED]"
+}
+
+func capSummary(value string) string {
 	if len(value) > maxOperationSummaryBytes {
 		const marker = "[older output truncated]\n"
 		value = marker + value[len(value)-(maxOperationSummaryBytes-len(marker)):]
