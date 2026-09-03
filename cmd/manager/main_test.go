@@ -30,3 +30,15 @@ func TestStopAllUsesReverseStartupOrderAndJoinsErrors(t *testing.T) {
 		t.Fatalf("stopAll error = %v", err)
 	}
 }
+
+func TestWaitForShutdownReturnsSupervisorError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	httpErrors := make(chan error)
+	supervisorErrors := make(chan error, 1)
+	want := errors.New("Collie exited")
+	supervisorErrors <- want
+	if err := waitForShutdown(ctx, httpErrors, supervisorErrors); !errors.Is(err, want) {
+		t.Fatalf("waitForShutdown error = %v", err)
+	}
+}

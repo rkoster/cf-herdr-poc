@@ -49,3 +49,18 @@ func TestSandboxViewOmitsPrivateStateAndSanitizesText(t *testing.T) {
 		}
 	}
 }
+
+func TestSandboxViewStripsPersistedRepositoryCredentials(t *testing.T) {
+	view := PublicSandbox(model.Sandbox{Repository: "https://legacy-user:legacy-password@git.example/team/demo.git"})
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	if strings.Contains(text, "legacy-user") || strings.Contains(text, "legacy-password") {
+		t.Fatalf("public JSON contains repository credentials: %s", text)
+	}
+	if view.Repository != "https://git.example/team/demo.git" {
+		t.Fatalf("repository = %q", view.Repository)
+	}
+}

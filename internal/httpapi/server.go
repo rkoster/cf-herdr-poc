@@ -40,6 +40,7 @@ type Config struct {
 	CollieURL       *url.URL
 	ManagerPackHost string
 	Authorize       func(*http.Request) bool
+	Healthy         func() bool
 	Web             http.Handler
 	Now             func() time.Time
 }
@@ -50,7 +51,7 @@ type server struct {
 }
 
 func New(config Config) (http.Handler, error) {
-	if config.Store == nil || config.Reconciler == nil || config.CollieURL == nil || config.Authorize == nil {
+	if config.Store == nil || config.Reconciler == nil || config.CollieURL == nil || config.Authorize == nil || config.Healthy == nil {
 		return nil, errors.New("HTTP API dependencies are required")
 	}
 	if config.CollieURL.Scheme != "http" || !isLoopback(config.CollieURL.Hostname()) {
@@ -87,15 +88,19 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if r.URL.Path == "/manager/api" || strings.HasPrefix(r.URL.Path, "/manager/api/") {
+		s.authorized(w, r, s.api)
+		return
+	}
 	switch {
 	case r.URL.Path == "/":
 		http.Redirect(w, r, "/manager/", http.StatusTemporaryRedirect)
 	case r.URL.Path == "/manager/healthz" && r.Method == http.MethodGet:
-		w.WriteHeader(http.StatusOK)
-	case r.URL.Path == "/manager/api/sandboxes" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
-		s.authorized(w, r, s.sandboxes)
-	case strings.HasPrefix(r.URL.Path, "/manager/api/sandboxes/"):
-		s.authorized(w, r, s.sandbox)
+		if !s.config.Healthy() {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	case strings.HasPrefix(r.URL.Path, "/collie/"):
 		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/collie")
 		s.collie.ServeHTTP(w, r)
@@ -111,10 +116,26 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *server) authorized(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
 	if !s.config.Authorize(r) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="manager"`)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	next(w, r)
+}
+
+func (s *server) api(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case r.URL.Path == "/manager/api/sandboxes":
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			w.Header().Set("Allow", "GET, POST")
+			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.sandboxes(w, r)
+	case strings.HasPrefix(r.URL.Path, "/manager/api/sandboxes/"):
+		s.sandbox(w, r)
+	default:
+		writeAPIError(w, http.StatusNotFound, "not found")
+	}
 }
 
 func (s *server) sandboxes(w http.ResponseWriter, r *http.Request) {
@@ -188,11 +209,11 @@ func (s *server) sandbox(w http.ResponseWriter, r *http.Request) {
 		retry = true
 	}
 	if !validName(name) || strings.Contains(name, "/") {
-		http.NotFound(w, r)
+		writeAPIError(w, http.StatusNotFound, "not found")
 		return
 	}
 	if _, ok := s.config.Store.Get(name); !ok {
-		http.NotFound(w, r)
+		writeAPIError(w, http.StatusNotFound, "not found")
 		return
 	}
 	if retry && r.Method == http.MethodPost {
@@ -216,7 +237,7 @@ func (s *server) sandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Allow", "POST, DELETE")
-	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 }
 
 var namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
@@ -245,7 +266,7 @@ func validRepository(value string) bool {
 		return len(parts) == 2 && validHostname(strings.TrimPrefix(parts[0], "git@")) && parts[1] != ""
 	}
 	parsed, err := url.Parse(value)
-	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "ssh") && parsed.Host != "" && parsed.User == nil || err == nil && parsed.Scheme == "ssh" && parsed.Host != ""
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "ssh") && parsed.Host != "" && parsed.User == nil
 }
 func validHostname(value string) bool {
 	if value == "" || strings.ContainsAny(value, "/@?#") {
@@ -286,6 +307,9 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+func writeAPIError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
 }
 func isLoopback(host string) bool {
 	ip := net.ParseIP(host)

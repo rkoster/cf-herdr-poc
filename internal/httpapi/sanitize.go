@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -33,11 +34,23 @@ type SandboxView struct {
 }
 
 func PublicSandbox(sandbox model.Sandbox) SandboxView {
-	view := SandboxView{Name: sandbox.Name, Repository: sandbox.Repository, Revision: sandbox.Revision, Buildpack: sandbox.Buildpack, Desired: sandbox.Desired, Phase: sandbox.Phase, ResumePhase: sandbox.ResumePhase, PackMemberID: sandbox.PackMemberID, LastError: sanitize(sandbox.LastError), CreatedAt: sandbox.CreatedAt, UpdatedAt: sandbox.UpdatedAt}
+	view := SandboxView{Name: sandbox.Name, Repository: publicRepository(sandbox.Repository), Revision: sandbox.Revision, Buildpack: sandbox.Buildpack, Desired: sandbox.Desired, Phase: sandbox.Phase, ResumePhase: sandbox.ResumePhase, PackMemberID: sandbox.PackMemberID, LastError: sanitize(sandbox.LastError), CreatedAt: sandbox.CreatedAt, UpdatedAt: sandbox.UpdatedAt}
 	for _, operation := range sandbox.Operations {
 		view.Operations = append(view.Operations, OperationView{Name: sanitize(operation.Name), Summary: sanitize(operation.Summary), StartedAt: operation.StartedAt, Duration: operation.Duration, Success: operation.Success, Error: sanitize(operation.Error)})
 	}
 	return view
+}
+
+func publicRepository(value string) string {
+	parsed, err := url.Parse(value)
+	if err == nil && parsed.Host != "" {
+		parsed.User = nil
+		return parsed.String()
+	}
+	if strings.Contains(value, "@") && !strings.HasPrefix(value, "git@") {
+		return "[REDACTED]"
+	}
+	return value
 }
 
 var secretPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*(?:bearer\s+)?|\b(?:token|secret|password)\s*[=:]\s*)\S+`)

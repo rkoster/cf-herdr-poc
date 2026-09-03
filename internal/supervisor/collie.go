@@ -23,6 +23,8 @@ type Collie interface {
 	Restart(context.Context) error
 	Ready(context.Context) error
 	Stop(context.Context) error
+	Errors() <-chan error
+	Healthy() bool
 }
 
 type Config struct {
@@ -66,25 +68,43 @@ type Supervisor struct {
 	mu         sync.Mutex
 	process    Process
 	generation *processGeneration
+	errors     chan error
+	healthy    bool
 }
 
 type processGeneration struct {
-	done chan struct{}
-	mu   sync.Mutex
-	err  error
+	done     chan struct{}
+	mu       sync.Mutex
+	err      error
+	expected bool
 }
 
-func (g *processGeneration) finish(err error) {
+func (g *processGeneration) finish(err error) bool {
 	g.mu.Lock()
 	g.err = err
-	g.mu.Unlock()
+	expected := g.expected
 	close(g.done)
+	g.mu.Unlock()
+	return expected
 }
 
 func (g *processGeneration) exitError() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.err
+}
+
+func (g *processGeneration) expectExit() bool {
+	g.mu.Lock()
+	select {
+	case <-g.done:
+		g.mu.Unlock()
+		return false
+	default:
+	}
+	g.expected = true
+	g.mu.Unlock()
+	return true
 }
 
 func New(config Config, factory ProcessFactory, probe Probe) *Supervisor {
@@ -121,7 +141,7 @@ func New(config Config, factory ProcessFactory, probe Probe) *Supervisor {
 	if probe == nil {
 		probe = httpProbe
 	}
-	return &Supervisor{config: config, factory: factory, probe: probe}
+	return &Supervisor{config: config, factory: factory, probe: probe, errors: make(chan error, 1)}
 }
 
 func (s *Supervisor) Start(ctx context.Context) error {
@@ -152,14 +172,33 @@ func (s *Supervisor) startLocked(ctx context.Context) error {
 	generation := &processGeneration{done: make(chan struct{})}
 	s.process, s.generation = process, generation
 	go func() {
-		generation.finish(process.Wait())
+		waitErr := process.Wait()
+		expected := generation.finish(waitErr)
+		if !expected {
+			if waitErr == nil {
+				waitErr = errors.New("unexpected clean exit")
+			}
+			select {
+			case s.errors <- fmt.Errorf("%w: %v", ErrChildExited, waitErr):
+			default:
+			}
+		}
 		s.mu.Lock()
 		if s.generation == generation {
 			s.process, s.generation = nil, nil
+			s.healthy = false
 		}
 		s.mu.Unlock()
 	}()
 	return nil
+}
+
+func (s *Supervisor) Errors() <-chan error { return s.errors }
+
+func (s *Supervisor) Healthy() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.healthy && s.generation != nil && !s.generation.isDone()
 }
 
 func (s *Supervisor) Restart(ctx context.Context) error {
@@ -194,6 +233,11 @@ func (s *Supervisor) Ready(ctx context.Context) error {
 		default:
 		}
 		if err := s.probe(ctx, url); err == nil {
+			s.mu.Lock()
+			if s.generation == generation && !generation.isDone() {
+				s.healthy = true
+			}
+			s.mu.Unlock()
 			return nil
 		}
 		select {
@@ -228,6 +272,11 @@ func (s *Supervisor) stopLocked(ctx context.Context) error {
 		s.process, s.generation = nil, nil
 		return nil
 	}
+	if !generation.expectExit() {
+		s.process, s.generation, s.healthy = nil, nil, false
+		return nil
+	}
+	s.healthy = false
 	if err := process.Stop(s.config.StopTimeout); err != nil {
 		return fmt.Errorf("stop collie: %w", err)
 	}

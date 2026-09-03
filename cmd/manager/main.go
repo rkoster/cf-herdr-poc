@@ -76,7 +76,7 @@ func run() error {
 	reconciler := reconcile.New(reconcile.Config{WorkRoot: cfg.WorkRoot, IdentityDomain: cfg.IdentityDomain, ManagerRouteHost: cfg.ManagerPackHost, ManagerPackHost: cfg.ManagerPackHost, ManagerAppGUID: cfg.ManagerAppGUID, PollAttempts: 30, PollInterval: time.Second, ScanInterval: cfg.ReconcileInterval}, state, reconcile.BundleRuntime{Builder: builder}, cloud, reconcile.ConcretePackManager{Manager: packManager}, probe, realClock{})
 	collieURL, _ := url.Parse("http://" + cfg.CollieAddress)
 	web := http.StripPrefix("/manager/", http.FileServer(http.Dir(cfg.WebDir)))
-	handler, err := httpapi.New(httpapi.Config{Store: state, Reconciler: reconciler, Buildpacks: cfg.Buildpacks, CollieURL: collieURL, ManagerPackHost: cfg.ManagerPackHost, Authorize: httpapi.BearerAuthorizer(cfg.APIToken), Web: web})
+	handler, err := httpapi.New(httpapi.Config{Store: state, Reconciler: reconciler, Buildpacks: cfg.Buildpacks, CollieURL: collieURL, ManagerPackHost: cfg.ManagerPackHost, Authorize: httpapi.BearerAuthorizer(cfg.APIToken), Healthy: collie.Healthy, Web: web})
 	if err != nil {
 		return fmt.Errorf("build HTTP gateway: %w", err)
 	}
@@ -101,18 +101,27 @@ func run() error {
 		close(errorsChannel)
 	}()
 
-	var serveErr error
-	select {
-	case <-ctx.Done():
-	case err := <-errorsChannel:
-		if err != nil {
-			cancel()
-			serveErr = fmt.Errorf("serve manager HTTP: %w", err)
-		}
+	serveErr := waitForShutdown(ctx, errorsChannel, collie.Errors())
+	if serveErr != nil {
+		cancel()
 	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	return errors.Join(serveErr, stopAll(shutdownCtx, server.Shutdown, reconciler.Stop, collie.Stop))
+}
+
+func waitForShutdown(ctx context.Context, httpErrors, supervisorErrors <-chan error) error {
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-httpErrors:
+		if err == nil {
+			return nil
+		}
+		return fmt.Errorf("serve manager HTTP: %w", err)
+	case err := <-supervisorErrors:
+		return err
+	}
 }
 
 func stopAll(ctx context.Context, stopHTTP func(context.Context) error, stopReconciler func(), stopCollie func(context.Context) error) error {

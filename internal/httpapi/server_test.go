@@ -78,12 +78,16 @@ func (f *fakeReconciler) ReconcileOne(_ context.Context, name string) error {
 func (f *fakeReconciler) Retry(_ context.Context, name string) error { f.retried <- name; return nil }
 
 func newTestHandler(t *testing.T, store *memoryStore, reconciler *fakeReconciler, collie *httptest.Server) http.Handler {
+	return newTestHandlerWithHealth(t, store, reconciler, collie, func() bool { return true })
+}
+
+func newTestHandlerWithHealth(t *testing.T, store *memoryStore, reconciler *fakeReconciler, collie *httptest.Server, healthy func() bool) http.Handler {
 	t.Helper()
 	u, err := url.Parse(collie.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(Config{Store: store, Reconciler: reconciler, Buildpacks: []string{"ruby_buildpack"}, CollieURL: u, ManagerPackHost: "pack.identity.example", Authorize: BearerAuthorizer("test-token"), Now: func() time.Time { return time.Unix(100, 0).UTC() }})
+	h, err := New(Config{Store: store, Reconciler: reconciler, Buildpacks: []string{"ruby_buildpack"}, CollieURL: u, ManagerPackHost: "pack.identity.example", Authorize: BearerAuthorizer("test-token"), Healthy: healthy, Now: func() time.Time { return time.Unix(100, 0).UTC() }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +118,47 @@ func TestManagerAPIRequiresAuthorization(t *testing.T) {
 	}
 	if got := request(t, h, http.MethodGet, "/manager/healthz", "", "public.example", false).Code; got != http.StatusOK {
 		t.Fatalf("health status = %d", got)
+	}
+}
+
+func TestManagerAPINamespaceAuthenticatesBeforeDispatch(t *testing.T) {
+	collie := httptest.NewServer(http.NotFoundHandler())
+	defer collie.Close()
+	h := newTestHandler(t, &memoryStore{items: map[string]model.Sandbox{}}, &fakeReconciler{make(chan string, 1), make(chan string, 1)}, collie)
+	for _, tt := range []struct {
+		name, method, path string
+		auth               bool
+		want               int
+	}{
+		{"unauthorized method", http.MethodPut, "/manager/api/sandboxes", false, http.StatusUnauthorized},
+		{"authorized method", http.MethodPut, "/manager/api/sandboxes", true, http.StatusMethodNotAllowed},
+		{"unauthorized unknown", http.MethodGet, "/manager/api/unknown", false, http.StatusUnauthorized},
+		{"authorized unknown", http.MethodGet, "/manager/api/unknown", true, http.StatusNotFound},
+		{"namespace root", http.MethodGet, "/manager/api", true, http.StatusNotFound},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			response := request(t, h, tt.method, tt.path, "", "public.example", tt.auth)
+			if response.Code != tt.want {
+				t.Fatalf("status = %d, want %d: %s", response.Code, tt.want, response.Body.String())
+			}
+			if got := response.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+				t.Fatalf("content type = %q", got)
+			}
+		})
+	}
+}
+
+func TestHealthReflectsDependencyReadiness(t *testing.T) {
+	collie := httptest.NewServer(http.NotFoundHandler())
+	defer collie.Close()
+	healthy := false
+	h := newTestHandlerWithHealth(t, &memoryStore{items: map[string]model.Sandbox{}}, &fakeReconciler{make(chan string, 1), make(chan string, 1)}, collie, func() bool { return healthy })
+	if got := request(t, h, http.MethodGet, "/manager/healthz", "", "public.example", false).Code; got != http.StatusServiceUnavailable {
+		t.Fatalf("unhealthy status = %d", got)
+	}
+	healthy = true
+	if got := request(t, h, http.MethodGet, "/manager/healthz", "", "public.example", false).Code; got != http.StatusOK {
+		t.Fatalf("healthy status = %d", got)
 	}
 }
 
@@ -189,6 +234,8 @@ func TestAPIValidationAndSortedGET(t *testing.T) {
 	}{
 		{"bad name", `{"name":"Demo","repository":"https://git.example/demo.git","buildpack":"ruby_buildpack"}`, true},
 		{"bad repository", `{"name":"demo","repository":"file:///etc/passwd","buildpack":"ruby_buildpack"}`, true},
+		{"HTTP repository credentials", `{"name":"demo","repository":"https://user:password@git.example/demo.git","buildpack":"ruby_buildpack"}`, true},
+		{"SSH repository userinfo", `{"name":"demo","repository":"ssh://git@git.example/demo.git","buildpack":"ruby_buildpack"}`, true},
 		{"repository option", `{"name":"demo","repository":"--upload-pack=x","buildpack":"ruby_buildpack"}`, true},
 		{"bad buildpack", `{"name":"demo","repository":"ssh://git@git.example/demo.git","buildpack":"evil"}`, true},
 		{"unknown field", `{"name":"demo","repository":"https://git.example/demo.git","buildpack":"ruby_buildpack","token":"x"}`, true},

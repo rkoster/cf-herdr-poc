@@ -115,11 +115,13 @@ func TestLauncherForwardsSignalsAndReapsChildren(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := prepareLauncher(t)
 			state := filepath.Join(root, "state")
+			socket := shortLauncherSocket(t)
 			logPath := filepath.Join(root, "signals.log")
 			command := exec.Command("bash", filepath.Join(root, "start.sh"))
 			command.Env = append(os.Environ(),
 				"SANDBOX_LAUNCHER_HELPER=1",
 				"SANDBOX_STATE_DIR="+state,
+				"HERDR_SOCKET_PATH="+socket,
 				"SIGNAL_LOG="+logPath,
 				"SANDBOX_MEMBER_ID=demo",
 				"COLLIE_PACK_LEAD_ADDRESS=https://manager.identity.example",
@@ -162,7 +164,7 @@ func TestLauncherUsesRegularTrustStoreWhenMarkerIsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := exec.Command("bash", filepath.Join(root, "start.sh"))
-	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_BOOTSTRAP_TRUST_ONLY=1", "SANDBOX_STATE_DIR="+state, "SIGNAL_LOG="+logPath, "COLLIE_JOIN_TOKEN_FILE="+token)
+	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_BOOTSTRAP_TRUST_ONLY=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "COLLIE_JOIN_TOKEN_FILE="+token)
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -192,11 +194,28 @@ func TestLauncherRejectsSymlinkTrustStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := exec.Command("bash", filepath.Join(root, "start.sh"))
-	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+state, "SIGNAL_LOG="+filepath.Join(root, "signals.log"))
+	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"))
 	err := command.Run()
 	if err == nil {
 		t.Fatal("launcher accepted symlink trust store")
 	}
+}
+
+func TestShortLauncherSocketIsUnixPathLengthSafe(t *testing.T) {
+	path := shortLauncherSocket(t)
+	if len(path) >= 100 {
+		t.Fatalf("socket path is too long: %d bytes: %s", len(path), path)
+	}
+}
+
+func shortLauncherSocket(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "sb-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "h.sock")
 }
 
 func prepareLauncher(t *testing.T) string {

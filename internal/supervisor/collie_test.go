@@ -95,6 +95,91 @@ func TestRestartAfterUnsolicitedExitStartsNewWithoutSignalingOldProcess(t *testi
 	}
 }
 
+func TestUnsolicitedExitIsDelivered(t *testing.T) {
+	events := []string{}
+	child := newFakeProcess(&events)
+	s := New(Config{}, func(ProcessConfig) Process { return child }, func(context.Context, string) error { return nil })
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	child.wait <- errors.New("exit status 7")
+	select {
+	case err := <-s.Errors():
+		if !errors.Is(err, ErrChildExited) || !strings.Contains(err.Error(), "exit status 7") {
+			t.Fatalf("Errors() = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unsolicited exit was not delivered")
+	}
+}
+
+func TestRequestedRestartAndStopDoNotDeliverExit(t *testing.T) {
+	events := []string{}
+	s := New(Config{}, func(ProcessConfig) Process { return newFakeProcess(&events) }, func(context.Context, string) error { return nil })
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Restart(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-s.Errors():
+		t.Fatalf("expected lifecycle delivered error: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestHealthyTracksChildLifecycle(t *testing.T) {
+	events := []string{}
+	child := newFakeProcess(&events)
+	s := New(Config{}, func(ProcessConfig) Process { return child }, func(context.Context, string) error { return nil })
+	if s.Healthy() {
+		t.Fatal("new supervisor is healthy")
+	}
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s.Healthy() {
+		t.Fatal("unprobed supervisor is healthy")
+	}
+	if err := s.Ready(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Healthy() {
+		t.Fatal("ready supervisor is unhealthy")
+	}
+	child.wait <- errors.New("exit")
+	select {
+	case <-s.Errors():
+	case <-time.After(time.Second):
+		t.Fatal("exit was not delivered")
+	}
+	if s.Healthy() {
+		t.Fatal("exited supervisor is healthy")
+	}
+}
+
+func TestGenerationExpectedExitOrdering(t *testing.T) {
+	before := &processGeneration{done: make(chan struct{})}
+	if !before.expectExit() {
+		t.Fatal("live generation could not be marked expected")
+	}
+	if expected := before.finish(nil); !expected {
+		t.Fatal("requested exit was classified unsolicited")
+	}
+
+	after := &processGeneration{done: make(chan struct{})}
+	if expected := after.finish(nil); expected {
+		t.Fatal("unsolicited exit was classified expected")
+	}
+	if after.expectExit() {
+		t.Fatal("finished generation was marked expected")
+	}
+}
+
 func TestNondefaultLoopbackHostIsSharedByChildAndReadiness(t *testing.T) {
 	events := []string{}
 	var processConfig ProcessConfig
