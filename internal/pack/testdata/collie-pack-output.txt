@@ -1,0 +1,23 @@
+# Captured from Collie Pack CLI source/output contract on 2026-09-03.
+# Source: collie/cli/pack.ts at the checkout reviewed for Task 8.
+# Invite token and identifiers below are synthetic; spacing and prose match Collie.
+--- invite ---
+uY4Jf9P2_abc-DEF.0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+  single-use · expires 2026-09-03T18:00:00.000Z (10 minutes)
+  Shown once — only its hash is stored. Run this on the machine that is joining:
+    collie pack join pack.apps.example
+    collie pack join pack.apps.example -   # paste the token on stdin
+  Passing it as an argument instead leaves it in `ps` output for every local uid.
+--- status ---
+pack   manager  (pack-id)
+mode   lead
+self   manager  0123456789abcdef…
+bind   127.0.0.1
+secret generation 1, rotated 2026-09-03T17:50:00.000Z
+
+members:
+  sandbox-a  (peer)  sandbox.example
+    pinned  fedcba9876543210…  enrolled 2026-09-03T17:55:00.000Z
+    secret  generation 1 — current
+    link    not probed (--no-probe)

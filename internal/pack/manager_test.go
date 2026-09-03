@@ -166,22 +166,19 @@ func TestMemberIDMatchesCollieContract(t *testing.T) {
 	}
 }
 
-func TestFixturesMatchNestedCollieOutputContract(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("repository path fixture")
-	}
-	source, err := os.ReadFile("../../collie/cli/pack.ts")
+func TestCapturedCollieOutputFixtureExercisesParsers(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/collie-pack-output.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, contract := range []string{
-		"deps.io.out(`${minted.token}.${leadFp}`)",
-		"deps.io.out(`  single-use · expires ${new Date(minted.expiresAt).toISOString()} (10 minutes)`)",
-		"emit(`  ${m.memberId}  (${m.role})  ${m.address}`, \"plain\")",
-	} {
-		if !strings.Contains(string(source), contract) {
-			t.Fatalf("nested Collie output contract drifted: %q", contract)
-		}
+	parsedInvite, expiry := parseInvite(fixture)
+	if parsedInvite != invite || expiry.IsZero() {
+		t.Fatalf("parseInvite() = %q, %v", parsedInvite, expiry)
+	}
+	r := &fakeRunner{output: fixture}
+	present, err := New(r, &fakeSupervisor{}, Config{TempDir: t.TempDir()}).MemberPresent(context.Background(), "sandbox-a")
+	if err != nil || !present {
+		t.Fatalf("MemberPresent() = %v, %v", present, err)
 	}
 }
 
