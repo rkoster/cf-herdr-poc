@@ -125,12 +125,12 @@ func TestSecureRouteContinuesAfterCreateAlreadyExists(t *testing.T) {
 }
 
 func TestRemoveRouteContinuesAfterResourcesAreAbsent(t *testing.T) {
-	run := &recordingRunner{outputs: [][]byte{[]byte("Route policy not found"), []byte("Route mapping does not exist"), []byte("Route not found")}, errors: []error{errors.New("exit 1"), errors.New("exit 1"), errors.New("exit 1")}}
+	run := &recordingRunner{outputs: [][]byte{[]byte("Route policy not found"), []byte(appGUID), []byte("Route mapping does not exist"), []byte("Route not found")}, errors: []error{errors.New("exit 1"), nil, errors.New("exit 1"), errors.New("exit 1")}}
 	operation, err := (Provider{Run: run}).RemoveRoute(context.Background(), RouteRequest{AppName: "demo", AppGUID: appGUID, Domain: "identity.example", Host: "demo", SourceAppGUID: managerGUID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(run.commands) != 3 || !operation.Success {
+	if len(run.commands) != 4 || !operation.Success {
 		t.Fatalf("commands=%#v operation=%#v", run.commands, operation)
 	}
 }
@@ -176,7 +176,7 @@ func TestStageRetainsSanitizedFailureDiagnostic(t *testing.T) {
 }
 
 func TestRouteOperationsUseExactArgv(t *testing.T) {
-	run := &recordingRunner{}
+	run := &recordingRunner{outputs: [][]byte{nil, nil, nil, nil, []byte(appGUID)}}
 	provider := Provider{Run: run}
 	request := RouteRequest{AppName: "demo", AppGUID: appGUID, Domain: "apps.identity", Host: "demo", SourceAppGUID: managerGUID}
 
@@ -191,6 +191,7 @@ func TestRouteOperationsUseExactArgv(t *testing.T) {
 		{name: "cf", args: []string{"map-route", "demo", "apps.identity", "--hostname", "demo"}},
 		{name: "cf", args: []string{"add-route-policy", "apps.identity", "--hostname", "demo", "--source", "cf:app:" + managerGUID}},
 		{name: "cf", args: []string{"remove-route-policy", "apps.identity", "--hostname", "demo", "--source", "cf:app:" + managerGUID}},
+		{name: "cf", args: []string{"app", "demo", "--guid"}},
 		{name: "cf", args: []string{"unmap-route", "demo", "apps.identity", "--hostname", "demo"}},
 		{name: "cf", args: []string{"delete-route", "apps.identity", "--hostname", "demo", "-f"}},
 	}
@@ -220,14 +221,70 @@ func TestGenericRoutePolicySupportsSandboxToManagerEnrollment(t *testing.T) {
 }
 
 func TestDeleteAppUsesExactArgv(t *testing.T) {
-	run := &recordingRunner{}
-	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
+	run := &recordingRunner{outputs: [][]byte{[]byte(appGUID), nil}}
+	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo", appGUID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []command{{name: "cf", args: []string{"delete", "demo", "-f"}}}
+	want := []command{{name: "cf", args: []string{"app", "demo", "--guid"}}, {name: "cf", args: []string{"delete", "demo", "-f"}}}
 	if !reflect.DeepEqual(run.commands, want) || !operation.Success {
 		t.Fatalf("DeleteApp commands/operation = (%#v, %#v)", run.commands, operation)
+	}
+}
+
+func TestDeleteAppDoesNotDeleteReplacement(t *testing.T) {
+	replacement := "123e4567-e89b-12d3-a456-426614174099"
+	run := &recordingRunner{outputs: [][]byte{[]byte(replacement)}}
+	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo", appGUID)
+	var providerErr *Error
+	if !errors.As(err, &providerErr) || !providerErr.IdentityMismatch() || operation.Success {
+		t.Fatalf("DeleteApp() = (%#v, %v), want identity mismatch", operation, err)
+	}
+	want := []command{{name: "cf", args: []string{"app", "demo", "--guid"}}}
+	if !reflect.DeepEqual(run.commands, want) {
+		t.Fatalf("commands = %#v, want no replacement delete", run.commands)
+	}
+}
+
+func TestDeleteAppTreatsOriginalAbsenceAsSuccess(t *testing.T) {
+	run := &recordingRunner{outputs: [][]byte{[]byte("App 'demo' not found")}, errors: []error{errors.New("exit 1")}}
+	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo", appGUID)
+	if err != nil || !operation.Success || len(run.commands) != 1 {
+		t.Fatalf("DeleteApp() = (%#v, %v), commands %#v", operation, err, run.commands)
+	}
+}
+
+func TestRemoveRouteNeverUnmapsReplacement(t *testing.T) {
+	replacement := "123e4567-e89b-12d3-a456-426614174099"
+	run := &recordingRunner{outputs: [][]byte{nil, []byte(replacement), nil}}
+	operation, err := (Provider{Run: run}).RemoveRoute(context.Background(), RouteRequest{AppName: "demo", AppGUID: appGUID, Domain: "apps.identity", Host: "demo", SourceAppGUID: managerGUID})
+	var providerErr *Error
+	if !errors.As(err, &providerErr) || !providerErr.IdentityMismatch() || operation.Success {
+		t.Fatalf("RemoveRoute() = (%#v, %v), want identity mismatch", operation, err)
+	}
+	want := []command{
+		{name: "cf", args: []string{"remove-route-policy", "apps.identity", "--hostname", "demo", "--source", "cf:app:" + managerGUID}},
+		{name: "cf", args: []string{"app", "demo", "--guid"}},
+		{name: "cf", args: []string{"delete-route", "apps.identity", "--hostname", "demo", "-f"}},
+	}
+	if !reflect.DeepEqual(run.commands, want) {
+		t.Fatalf("commands = %#v, want replacement-safe cleanup", run.commands)
+	}
+}
+
+func TestRemoveRouteTreatsAbsentOriginalAsSuccessfulCleanup(t *testing.T) {
+	run := &recordingRunner{
+		outputs: [][]byte{nil, []byte("App 'demo' not found"), nil},
+		errors:  []error{nil, errors.New("exit 1"), nil},
+	}
+	operation, err := (Provider{Run: run}).RemoveRoute(context.Background(), RouteRequest{AppName: "demo", AppGUID: appGUID, Domain: "apps.identity", Host: "demo", SourceAppGUID: managerGUID})
+	if err != nil || !operation.Success {
+		t.Fatalf("RemoveRoute() = (%#v, %v), want successful absent-app cleanup", operation, err)
+	}
+	for _, invoked := range run.commands {
+		if len(invoked.args) > 0 && invoked.args[0] == "unmap-route" {
+			t.Fatalf("absent app was unmapped: %#v", run.commands)
+		}
 	}
 }
 
@@ -425,7 +482,7 @@ func TestInspectAppRejectsMalformedJSON(t *testing.T) {
 func TestOperationErrorsAreBoundedAndDoNotContainOutput(t *testing.T) {
 	secret := "SUPER-SECRET-TOKEN"
 	run := &recordingRunner{outputs: [][]byte{[]byte(secret + strings.Repeat("x", 100000))}, errors: []error{errors.New("exit status 1")}}
-	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
+	operation, _, err := (Provider{Run: run}).execute(context.Background(), "delete-app", "delete", "demo", "-f")
 	if err == nil {
 		t.Fatal("DeleteApp succeeded")
 	}
@@ -453,7 +510,7 @@ func TestOperationRetainsSanitizedOutputOnSuccessAndFailure(t *testing.T) {
 				outputs: [][]byte{[]byte("upload complete\nAuthorization: Bearer bearer-value\nJOIN_TOKEN=join-value\nCF_INSTANCE_KEY=key-value\nCF_INSTANCE_CERT=cert-value\n-----BEGIN CERTIFICATE-----\ncertificate-body\n-----END CERTIFICATE-----\n\x1b[31mstaging\x1b[0m\x00done\n")},
 				errors:  []error{test.runErr},
 			}
-			operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
+			operation, _, err := (Provider{Run: run}).execute(context.Background(), "delete-app", "delete", "demo", "-f")
 			if (err != nil) != test.wantErr {
 				t.Fatalf("DeleteApp error = %v, wantErr %v", err, test.wantErr)
 			}
@@ -525,7 +582,7 @@ certificate-body
 -----END CERTIFICATE-----"
 useful tail`
 	run := &recordingRunner{outputs: [][]byte{[]byte(output)}}
-	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
+	operation, _, err := (Provider{Run: run}).execute(context.Background(), "delete-app", "delete", "demo", "-f")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,7 +608,7 @@ Authorization: Bearer header-secret
 token and secret are harmless words in prose
 useful end`
 	run := &recordingRunner{outputs: [][]byte{[]byte(output)}}
-	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
+	operation, _, err := (Provider{Run: run}).execute(context.Background(), "delete-app", "delete", "demo", "-f")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +627,7 @@ useful end`
 func TestOversizedSingleCommandSummaryPreservesNewestDiagnostic(t *testing.T) {
 	final := "FINAL FAILURE: staging rejected"
 	run := &recordingRunner{outputs: [][]byte{[]byte(strings.Repeat("old output ", 1000) + final)}}
-	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
+	operation, _, err := (Provider{Run: run}).execute(context.Background(), "delete-app", "delete", "demo", "-f")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +641,7 @@ func TestOversizedSingleCommandSummaryPreservesNewestDiagnostic(t *testing.T) {
 
 func TestOperationSummaryHasSmallExplicitCap(t *testing.T) {
 	run := &recordingRunner{outputs: [][]byte{[]byte(strings.Repeat("x", 100000))}}
-	operation, err := (Provider{Run: run}).DeleteApp(context.Background(), "demo")
+	operation, _, err := (Provider{Run: run}).execute(context.Background(), "delete-app", "delete", "demo", "-f")
 	if err != nil {
 		t.Fatal(err)
 	}

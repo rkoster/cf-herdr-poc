@@ -41,6 +41,8 @@ cf delete-route "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_ROUTE_HOST" -f
 
 From the manager and sandbox containers, use their instance certificate and key at `/etc/cf-instance-credentials/instance.crt` and `/etc/cf-instance-credentials/instance.key` to request `/pack/v1/hello` and the sandbox enrollment endpoint. Repeat without a certificate and from an unrelated app identity.
 
+The deployed process contract is asymmetric: manager Collie remains on its configured loopback port with `COLLIE_PACK_TRANSPORT=cf-identity`; sandbox Collie exports `COLLIE_PACK_TRANSPORT=cf-identity`, `COLLIE_HOST=0.0.0.0`, `COLLIE_ALLOW_NON_LOOPBACK_BIND=1`, and derives `COLLIE_PORT` from CF's runtime `PORT`. `sandbox-bootstrap` inherits those values, listens on that port for enrollment, and exits before Collie starts. Gorouter terminates TLS, so both backend listeners serve plain HTTP. CF identity mode must leave the sandbox peer browser disabled.
+
 ## Assertions
 
 - `MANAGER_PACK_HOST` remains the exact FQDN in HTTP Host matching and enrollment URLs; CF CLI `--hostname` receives only `MANAGER_ROUTE_HOST`.
@@ -49,6 +51,7 @@ From the manager and sandbox containers, use their instance certificate and key 
 - The manager public route is the only ordinary public route; no sandbox has one.
 - Enrollment uses `https://$MANAGER_PACK_HOST` without duplicating the identity domain.
 - Existing Pack authentication remains required after route-policy admission.
+- Sandbox teardown resolves the current app GUID before any name-based unmap or deletion. A replacement app is neither unmapped nor deleted; GUID-independent policy and stable-route cleanup may continue. Because lookup and mutation are separate CF CLI calls, this is a race-narrowing preflight under the POC's trusted same-operator boundary, not an atomic identity guarantee.
 
 ## Capture
 

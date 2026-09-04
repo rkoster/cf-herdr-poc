@@ -46,7 +46,7 @@ type CFProvider interface {
 	AddRoutePolicy(context.Context, cf.RoutePolicyRequest) (model.Operation, error)
 	RemoveRoutePolicy(context.Context, cf.RoutePolicyRequest) (model.Operation, error)
 	RemoveRoute(context.Context, cf.RouteRequest) (model.Operation, error)
-	DeleteApp(context.Context, string) (model.Operation, error)
+	DeleteApp(context.Context, string, string) (model.Operation, error)
 }
 
 type Enrollment interface {
@@ -274,6 +274,9 @@ func (r *Reconciler) reconcileCreate(ctx context.Context, sandbox model.Sandbox)
 			if persistErr := r.appendOperation(sandbox.Name, op); persistErr != nil {
 				err = persistErr
 			}
+			if err == nil && sandbox.AppGUID != "" && guid != sandbox.AppGUID {
+				err = fmt.Errorf("app identity mismatch: persisted GUID does not match current app")
+			}
 			if err == nil {
 				next := model.PhaseSecuringRoute
 				if recovery, ok := r.recoveryPhase[sandbox.Name]; ok {
@@ -460,6 +463,15 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sandbox model.Sandbox)
 			return r.fail(sandbox.Name, model.PhaseDeleting, err)
 		}
 		appExists = err == nil
+		if appExists {
+			if err := r.store.Update(sandbox.Name, func(s *model.Sandbox) error {
+				s.AppGUID = appGUID
+				s.UpdatedAt = r.clock.Now()
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
 	}
 	if appExists {
 		if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
@@ -489,7 +501,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sandbox model.Sandbox)
 		if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
 			return err
 		}
-		op, err := r.effectDeleteApp(ctx, sandbox.Name)
+		op, err := r.effectDeleteApp(ctx, sandbox.Name, appGUID)
 		if save := r.appendOperation(sandbox.Name, op); save != nil {
 			return save
 		}
@@ -682,9 +694,9 @@ func (r *Reconciler) effectRemoveRoute(ctx context.Context, q cf.RouteRequest) (
 	r.effect("remove-route")
 	return r.cf.RemoveRoute(ctx, q)
 }
-func (r *Reconciler) effectDeleteApp(ctx context.Context, name string) (model.Operation, error) {
+func (r *Reconciler) effectDeleteApp(ctx context.Context, name, expectedGUID string) (model.Operation, error) {
 	r.effect("delete-app")
-	return r.cf.DeleteApp(ctx, name)
+	return r.cf.DeleteApp(ctx, name, expectedGUID)
 }
 
 type absent interface{ Absent() bool }

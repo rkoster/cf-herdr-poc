@@ -158,13 +158,16 @@ func (e classifiedError) AlreadyExists() bool { return e.kind == "exists" }
 func (e classifiedError) Absent() bool        { return e.kind == "absent" }
 
 type fakeCF struct {
-	calls     *[]string
-	app       cf.App
-	failAt    string
-	operation model.Operation
-	guidErr   error
-	policy    cf.RoutePolicyRequest
-	leadURL   string
+	calls        *[]string
+	app          cf.App
+	failAt       string
+	operation    model.Operation
+	guidErr      error
+	guid         string
+	policy       cf.RoutePolicyRequest
+	removedRoute cf.RouteRequest
+	deletedGUID  string
+	leadURL      string
 }
 
 func (f *fakeCF) Stage(_ context.Context, _ cf.PushRequest) (model.Operation, error) {
@@ -179,6 +182,9 @@ func (f *fakeCF) AppGUID(context.Context, string) (string, model.Operation, erro
 	*f.calls = append(*f.calls, "discover-guid")
 	if f.guidErr != nil {
 		return "", operation("app-guid", false), f.guidErr
+	}
+	if f.guid != "" {
+		return f.guid, operation("app-guid", true), nil
 	}
 	return sandboxGUID, operation("app-guid", true), nil
 }
@@ -221,14 +227,16 @@ func (f *fakeCF) RemoveRoutePolicy(context.Context, cf.RoutePolicyRequest) (mode
 	}
 	return operation("remove-manager-policy", true), nil
 }
-func (f *fakeCF) RemoveRoute(context.Context, cf.RouteRequest) (model.Operation, error) {
+func (f *fakeCF) RemoveRoute(_ context.Context, request cf.RouteRequest) (model.Operation, error) {
+	f.removedRoute = request
 	*f.calls = append(*f.calls, "remove-route")
 	if f.failAt == "remove-route" {
 		return operation("remove-route", false), errors.New("route failed")
 	}
 	return operation("remove-route", true), nil
 }
-func (f *fakeCF) DeleteApp(context.Context, string) (model.Operation, error) {
+func (f *fakeCF) DeleteApp(_ context.Context, _ string, expectedGUID string) (model.Operation, error) {
+	f.deletedGUID = expectedGUID
 	*f.calls = append(*f.calls, "delete-app")
 	if f.failAt == "delete-app" {
 		return operation("delete-app", false), errors.New("delete failed")
@@ -237,6 +245,40 @@ func (f *fakeCF) DeleteApp(context.Context, string) (model.Operation, error) {
 		return operation("delete-app", false), classifiedError{kind: "absent"}
 	}
 	return operation("delete-app", true), nil
+}
+
+func TestDeletionPassesPersistedOwnershipToDestructiveOperations(t *testing.T) {
+	r, s, _, cloud, pack, _, _, _ := fixture(model.PhaseReady)
+	current, _ := s.Get("demo")
+	current.Desired = model.DesiredDeleted
+	current.AppGUID = sandboxGUID
+	s.items["demo"] = current
+	pack.present = false
+	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if cloud.removedRoute.AppGUID != sandboxGUID || cloud.deletedGUID != sandboxGUID {
+		t.Fatalf("ownership passed to cleanup = route %q delete %q", cloud.removedRoute.AppGUID, cloud.deletedGUID)
+	}
+}
+
+func TestDiscoveryNeverOverwritesPersistedAppIdentity(t *testing.T) {
+	replacement := "123e4567-e89b-12d3-a456-426614174099"
+	r, s, _, cloud, _, _, _, calls := fixture(model.PhaseDiscoveringApp)
+	current, _ := s.Get("demo")
+	current.AppGUID = sandboxGUID
+	s.items["demo"] = current
+	cloud.guid = replacement
+	if err := r.ReconcileOne(context.Background(), "demo"); err == nil || !strings.Contains(err.Error(), "identity mismatch") {
+		t.Fatalf("ReconcileOne error = %v, want identity mismatch", err)
+	}
+	got, _ := s.Get("demo")
+	if got.AppGUID != sandboxGUID || got.Phase != model.PhaseFailed {
+		t.Fatalf("persisted identity overwritten: %#v", got)
+	}
+	if count(*calls, "secure-route") != 0 {
+		t.Fatalf("replacement route secured: %#v", *calls)
+	}
 }
 
 type fakeProbe struct {

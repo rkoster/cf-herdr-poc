@@ -72,7 +72,7 @@ type CloudFoundry interface {
 	AddRoutePolicy(context.Context, RoutePolicyRequest) (model.Operation, error)
 	RemoveRoutePolicy(context.Context, RoutePolicyRequest) (model.Operation, error)
 	RemoveRoute(context.Context, RouteRequest) (model.Operation, error)
-	DeleteApp(context.Context, string) (model.Operation, error)
+	DeleteApp(context.Context, string, string) (model.Operation, error)
 }
 
 type Provider struct {
@@ -95,8 +95,9 @@ func (e *Error) Unwrap() error {
 	return e.Cause
 }
 
-func (e *Error) AlreadyExists() bool { return e.Kind == "already_exists" }
-func (e *Error) Absent() bool        { return e.Kind == "not_found" }
+func (e *Error) AlreadyExists() bool    { return e.Kind == "already_exists" }
+func (e *Error) Absent() bool           { return e.Kind == "not_found" }
+func (e *Error) IdentityMismatch() bool { return e.Kind == "identity_mismatch" }
 
 func (p Provider) Stage(ctx context.Context, request PushRequest) (model.Operation, error) {
 	if err := validateName("app", request.Name); err != nil {
@@ -179,19 +180,62 @@ func (p Provider) RemoveRoute(ctx context.Context, request RouteRequest) (model.
 	if err := validateRouteRequest(request); err != nil {
 		return model.Operation{}, err
 	}
-	commands := [][]string{
-		{"remove-route-policy", request.Domain, "--hostname", request.Host, "--source", "cf:app:" + request.SourceAppGUID},
-		{"unmap-route", request.AppName, request.Domain, "--hostname", request.Host},
-		{"delete-route", request.Domain, "--hostname", request.Host, "-f"},
+	result, err := p.executeMany(ctx, "remove-route", [][]string{{"remove-route-policy", request.Domain, "--hostname", request.Host, "--source", "cf:app:" + request.SourceAppGUID}})
+	if err != nil {
+		return result, err
 	}
-	return p.executeMany(ctx, "remove-route", commands)
+	identity, output, identityErr := p.execute(ctx, "remove-route", "app", request.AppName, "--guid")
+	result = mergeOperations(result, identity)
+	matched := identityErr == nil && strings.TrimSpace(string(output)) == request.AppGUID
+	mismatch := identityErr == nil && !matched
+	if identityErr != nil && !isProviderAbsent(identityErr) {
+		return result, identityErr
+	}
+	if isProviderAbsent(identityErr) {
+		result.Success = true
+		result.Error = ""
+	}
+	commands := [][]string{}
+	if matched {
+		commands = append(commands, []string{"unmap-route", request.AppName, request.Domain, "--hostname", request.Host})
+	}
+	commands = append(commands, []string{"delete-route", request.Domain, "--hostname", request.Host, "-f"})
+	cleanup, cleanupErr := p.executeMany(ctx, "remove-route", commands)
+	result = mergeOperations(result, cleanup)
+	if cleanupErr != nil {
+		return result, cleanupErr
+	}
+	if mismatch {
+		result.Success = false
+		result.Error = "remove-route identity mismatch"
+		return result, &Error{Operation: "remove-route", Kind: "identity_mismatch"}
+	}
+	return result, nil
 }
 
-func (p Provider) DeleteApp(ctx context.Context, name string) (model.Operation, error) {
+func (p Provider) DeleteApp(ctx context.Context, name, expectedGUID string) (model.Operation, error) {
 	if err := validateName("app", name); err != nil {
 		return model.Operation{}, err
 	}
-	operation, _, err := p.execute(ctx, "delete-app", "delete", name, "-f")
+	if err := validateGUID(expectedGUID); err != nil {
+		return model.Operation{}, err
+	}
+	operation, output, err := p.execute(ctx, "delete-app", "app", name, "--guid")
+	if err != nil {
+		if isProviderAbsent(err) {
+			operation.Success = true
+			operation.Error = ""
+			return operation, nil
+		}
+		return operation, err
+	}
+	if strings.TrimSpace(string(output)) != expectedGUID {
+		operation.Success = false
+		operation.Error = "delete-app identity mismatch"
+		return operation, &Error{Operation: "delete-app", Kind: "identity_mismatch"}
+	}
+	deleted, _, err := p.execute(ctx, "delete-app", "delete", name, "-f")
+	operation = mergeOperations(operation, deleted)
 	return operation, err
 }
 
@@ -281,6 +325,22 @@ func (p Provider) executeMany(ctx context.Context, name string, commands [][]str
 	return result, nil
 }
 
+func mergeOperations(first, second model.Operation) model.Operation {
+	first.Command = bounded(strings.TrimSpace(first.Command + " ; " + second.Command))
+	first.Summary = appendSummary(first.Summary, second.Summary)
+	first.Duration += second.Duration
+	first.Success = first.Success && second.Success
+	if second.Error != "" {
+		first.Error = second.Error
+	}
+	return first
+}
+
+func isProviderAbsent(err error) bool {
+	var providerErr *Error
+	return errors.As(err, &providerErr) && providerErr.Absent()
+}
+
 func (p Provider) execute(ctx context.Context, operationName string, args ...string) (model.Operation, []byte, error) {
 	started := time.Now().UTC()
 	operation := model.Operation{Name: operationName, StartedAt: started, Command: commandDisplay("cf", args)}
@@ -312,7 +372,7 @@ func classifyError(operation, output string) string {
 			return "already_exists"
 		}
 	}
-	if operation == "delete-app" || operation == "remove-route" || operation == "remove-route-policy" {
+	if operation == "delete-app" || operation == "remove-route" || operation == "remove-route-policy" || operation == "app-guid" {
 		if strings.Contains(value, "not found") || strings.Contains(value, "does not exist") {
 			return "not_found"
 		}
@@ -396,10 +456,8 @@ func validateRouteRequest(request RouteRequest) error {
 	if err := validateName("app", request.AppName); err != nil {
 		return err
 	}
-	if request.AppGUID != "" {
-		if err := validateGUID(request.AppGUID); err != nil {
-			return err
-		}
+	if err := validateGUID(request.AppGUID); err != nil {
+		return err
 	}
 	return validateRoutePolicy(RoutePolicyRequest{Domain: request.Domain, Host: request.Host, SourceAppGUID: request.SourceAppGUID})
 }

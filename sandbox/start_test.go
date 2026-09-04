@@ -90,6 +90,25 @@ func TestLauncherContract(t *testing.T) {
 	}
 }
 
+func TestLauncherExportsCFPeerRuntimeBeforeBootstrapAndCollie(t *testing.T) {
+	lines := executableLines(readLauncher(t))
+	script := strings.Join(lines, "\n")
+	required := []string{
+		`export COLLIE_PORT="${PORT:?Cloud Foundry PORT is required}"`,
+		`export COLLIE_HOST=0.0.0.0`,
+		`export COLLIE_ALLOW_NON_LOOPBACK_BIND=1`,
+		`export COLLIE_PACK_TRANSPORT=cf-identity`,
+	}
+	bootstrap := strings.Index(script, `"$BIN_DIR/sandbox-bootstrap" &`)
+	collie := strings.Index(script, `(exec "$BIN_DIR/bun" run "$COLLIE_DIR/bridge/index.ts") &`)
+	for _, assignment := range required {
+		position := strings.Index(script, assignment)
+		if position < 0 || position > bootstrap || position > collie {
+			t.Fatalf("launcher must export %q before bootstrap and Collie", assignment)
+		}
+	}
+}
+
 func TestExecutableLinesIgnoreComments(t *testing.T) {
 	lines := executableLines("\n# herdr server\n  # collie pack join\n# bun run bridge/index.ts\n")
 	if len(lines) != 0 {
@@ -124,6 +143,7 @@ func TestLauncherForwardsSignalsAndReapsChildren(t *testing.T) {
 				"HERDR_SOCKET_PATH="+socket,
 				"SIGNAL_LOG="+logPath,
 				"SANDBOX_MEMBER_ID=demo",
+				"PORT=8080",
 				"COLLIE_PACK_LEAD_ADDRESS=https://manager.identity.example",
 				"COLLIE_JOIN_TOKEN_FILE="+filepath.Join(root, "token"),
 			)
@@ -164,7 +184,7 @@ func TestLauncherUsesRegularTrustStoreWhenMarkerIsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := exec.Command("bash", filepath.Join(root, "start.sh"))
-	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_BOOTSTRAP_TRUST_ONLY=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "COLLIE_JOIN_TOKEN_FILE="+token)
+	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_BOOTSTRAP_TRUST_ONLY=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "COLLIE_JOIN_TOKEN_FILE="+token, "PORT=8080")
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +214,7 @@ func TestLauncherRejectsSymlinkTrustStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := exec.Command("bash", filepath.Join(root, "start.sh"))
-	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"))
+	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"), "PORT=8080")
 	err := command.Run()
 	if err == nil {
 		t.Fatal("launcher accepted symlink trust store")
@@ -257,6 +277,11 @@ func readLauncher(t *testing.T) string {
 func runLauncherHelper() {
 	role := os.Getenv("SANDBOX_HELPER_ROLE")
 	if role == "sandbox-bootstrap" {
+		for key, want := range map[string]string{"COLLIE_PORT": "8080", "COLLIE_HOST": "0.0.0.0", "COLLIE_ALLOW_NON_LOOPBACK_BIND": "1", "COLLIE_PACK_TRANSPORT": "cf-identity"} {
+			if os.Getenv(key) != want {
+				os.Exit(2)
+			}
+		}
 		if os.Getenv("SANDBOX_BOOTSTRAP_TRUST_ONLY") != "" {
 			path := os.Getenv("COLLIE_PACK_TRUST_STORE")
 			_ = os.MkdirAll(filepath.Dir(path), 0o700)
@@ -291,6 +316,11 @@ func runLauncherHelper() {
 		}
 		defer listener.Close()
 	} else {
+		for key, want := range map[string]string{"COLLIE_PORT": "8080", "COLLIE_HOST": "0.0.0.0", "COLLIE_ALLOW_NON_LOOPBACK_BIND": "1", "COLLIE_PACK_TRANSPORT": "cf-identity"} {
+			if os.Getenv(key) != want {
+				os.Exit(2)
+			}
+		}
 		logLine(logPath, "bun started")
 	}
 	signals := make(chan os.Signal, 1)

@@ -36,6 +36,7 @@ type Config struct {
 	SocketPath    string
 	Host          string
 	Port          int
+	PackTransport string
 	Stdout        io.Writer
 	Stderr        io.Writer
 	ReadyTimeout  time.Duration
@@ -164,7 +165,7 @@ func (s *Supervisor) startLocked(ctx context.Context) error {
 	if !isLoopback(s.config.Host) {
 		return fmt.Errorf("Collie host %q must be loopback", s.config.Host)
 	}
-	env := collieruntime.Environment(collieruntime.Runtime{ConfigDir: s.config.ConfigDir, StateDir: s.config.StateDir, SocketPath: s.config.SocketPath, Host: s.config.Host, Port: s.config.Port}, os.Environ())
+	env := collieruntime.Environment(collieruntime.Runtime{ConfigDir: s.config.ConfigDir, StateDir: s.config.StateDir, SocketPath: s.config.SocketPath, Host: s.config.Host, Port: s.config.Port, PackTransport: s.config.PackTransport}, os.Environ())
 	process := s.factory(ProcessConfig{Name: s.config.Executable, Args: append([]string(nil), s.config.Args...), Dir: s.config.Dir, Env: env, Stdout: s.config.Stdout, Stderr: s.config.Stderr})
 	if err := process.Start(); err != nil {
 		return fmt.Errorf("start collie: %w", err)

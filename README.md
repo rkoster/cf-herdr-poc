@@ -10,6 +10,8 @@ This is a deliberately dirty POC, not a production deployment. Live `cf push` va
 - Lead Collie runs from `dist/sandbox/runtime/collie` under manager supervision, using the bundled Bun and Collie executables.
 - Each sandbox receives `dist/sandbox/runtime`, starts Herdr, Bun, Collie, and `sandbox-bootstrap`, and joins the lead through the manager identity route.
 - The public manager route is for operators and browsers. The separate manager identity route is only for sandbox-to-manager Pack enrollment.
+- The manager Collie stays on loopback and uses `cf-identity` for outbound Pack requests with its CF instance certificate and key. Sandbox Collie derives `COLLIE_PORT` from CF's runtime `PORT`, binds `0.0.0.0`, and enables the non-loopback escape hatch only in `sandbox/start.sh`; CF identity mode keeps its peer browser disabled.
+- Gorouter terminates the identity-route TLS connection. Collie's backend listener is plain HTTP on the assigned app port; `sandbox-bootstrap` temporarily uses that same port and exits before Collie binds it.
 
 The nested Collie fork is pinned at `e6c7d8b80e70267439d768ffc5b9e3d408b84cd0`. Its source bridge requires the root Collie `node_modules`; `web/node_modules`, Git metadata, configuration, credentials, and runtime state are not packaged.
 
@@ -48,7 +50,7 @@ Required at startup:
 | `MANAGER_PACK_HOST` | Full direct-child FQDN for the manager identity route, for example `cf-herdr-manager-pack.apps.internal`. |
 | `MANAGER_API_TOKEN` | Operator API bearer token; set out of band and never commit it. |
 
-The manifest supplies nonsecret packaged paths: `MANAGER_WEB_DIR=./web`, `MANAGER_COLLIE_DIR=./sandbox/runtime/collie`, `MANAGER_RUNTIME_DIR=./sandbox/runtime`, `MANAGER_BUN_EXECUTABLE=./sandbox/runtime/bin/bun`, and `MANAGER_COLLIE_EXECUTABLE=./sandbox/runtime/bin/collie`. State defaults under `./data`; Collie listens only on `127.0.0.1:9191`.
+The manifest supplies nonsecret packaged paths: `MANAGER_WEB_DIR=./web`, `MANAGER_COLLIE_DIR=./sandbox/runtime/collie`, `MANAGER_RUNTIME_DIR=./sandbox/runtime`, `MANAGER_BUN_EXECUTABLE=./sandbox/runtime/bin/bun`, and `MANAGER_COLLIE_EXECUTABLE=./sandbox/runtime/bin/collie`. State defaults under `./data`; manager Collie listens only on `127.0.0.1:9191` and explicitly uses `COLLIE_PACK_TRANSPORT=cf-identity`. The sandbox provider does not set `COLLIE_PORT` with `cf set-env`: Cloud Foundry assigns `PORT` at runtime and the launcher derives Collie's port from it.
 
 ## Deploy
 
@@ -81,6 +83,8 @@ cf add-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --sou
 Confirm the binary buildpack and every sandbox buildpack are allow-listed by platform operators before pushing. The manifest's `binary_buildpack` is required because the manager Go binary is prebuilt.
 
 ## Cleanup
+
+Manager reconciliation records each sandbox app GUID. Before a name-addressed app deletion or route unmap, the provider resolves the name again and requires the GUID to match. An absent original is already clean; a replacement is never deleted or unmapped, while manager-owned route policies and the stable sandbox route can still be removed. This preflight narrows but cannot eliminate the race between separate CF CLI calls. The POC assumes a trusted, single-operator space during cleanup; stronger multi-operator guarantees require GUID-addressed CAPI deletion and job handling.
 
 Remove policies before deleting routes and apps:
 

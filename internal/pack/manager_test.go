@@ -271,6 +271,7 @@ esac
   printf 'HERDR_SOCKET_PATH=%s\n' "$HERDR_SOCKET_PATH"
   printf 'COLLIE_HOST=%s\n' "$COLLIE_HOST"
   printf 'COLLIE_PORT=%s\n' "$COLLIE_PORT"
+  printf 'COLLIE_PACK_TRANSPORT=%s\n' "$COLLIE_PACK_TRANSPORT"
   printf 'TRUST_PATH=%s\n' "$HERDR_PLUGIN_STATE_DIR/pack-trust.json"
 } > "$record"
 if [ "${1:-}" = bridge ]; then
@@ -283,7 +284,7 @@ printf '%s\n\n  single-use · expires 2026-09-03T18:00:00.000Z (10 minutes)\n' '
 	if err := os.WriteFile(script, []byte(scriptBody), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	s := supervisor.New(supervisor.Config{Executable: script, Args: []string{"bridge"}, ConfigDir: configDir, StateDir: stateDir, SocketPath: filepath.Join(temp, "herdr.sock"), Port: 8787, StopTimeout: time.Second, Stdout: io.Discard, Stderr: io.Discard}, nil, func(context.Context, string) error { return nil })
+	s := supervisor.New(supervisor.Config{Executable: script, Args: []string{"bridge"}, ConfigDir: configDir, StateDir: stateDir, SocketPath: filepath.Join(temp, "herdr.sock"), Port: 8787, PackTransport: "cf-identity", StopTimeout: time.Second, Stdout: io.Discard, Stderr: io.Discard}, nil, func(context.Context, string) error { return nil })
 	if err := s.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -306,6 +307,10 @@ printf '%s\n\n  single-use · expires 2026-09-03T18:00:00.000Z (10 minutes)\n' '
 	}
 	if string(bridgeValues) != string(cliValues) {
 		t.Fatalf("bridge environment:\n%s\nCLI environment:\n%s", bridgeValues, cliValues)
+	}
+	values := string(cliValues)
+	if !strings.Contains(values, "COLLIE_HOST=127.0.0.1\n") || !strings.Contains(values, "COLLIE_PORT=8787\n") || !strings.Contains(values, "COLLIE_PACK_TRANSPORT=cf-identity\n") {
+		t.Fatalf("manager Collie environment is not loopback CF identity mode:\n%s", values)
 	}
 }
 
