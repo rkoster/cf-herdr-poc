@@ -1,6 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { StrictMode } from "react";
+import { render, screen, within } from "@testing-library/react";
 
 import { SandboxCard } from "@/components/sandbox-card";
 import type { SandboxPhase, SandboxView } from "@/lib/types";
@@ -24,14 +22,7 @@ const creationPhases: Array<[SandboxPhase, string]> = [
 
 function card(phase: SandboxPhase, resumePhase?: SandboxPhase) {
   const sandbox: SandboxView = { ...existingSandbox, desired: "present", phase, resumePhase };
-  return render(<SandboxCard sandbox={sandbox} onRetry={async () => {}} onDelete={async () => {}} />);
-}
-
-function deferred() {
-  let resolve!: () => void;
-  let reject!: (reason: Error) => void;
-  const promise = new Promise<void>((accept, decline) => { resolve = accept; reject = decline; });
-  return { promise, reject, resolve };
+  return render(<SandboxCard sandbox={sandbox} onRetry={async () => true} onDelete={async () => true} />);
 }
 
 test.each(creationPhases)("renders actual lifecycle phase %s as %s", (phase, label) => {
@@ -53,64 +44,11 @@ test("renders failed at its resume phase without presenting failure as progress"
   expect(screen.getByText("Waiting for route").closest("li")).toHaveClass("current", "failed");
 });
 
-test("serializes retry and restores controls after failure", async () => {
-  const user = userEvent.setup();
-  const request = deferred();
-  const onRetry = vi.fn(() => request.promise);
+test("renders controlled retry busy state", () => {
   const sandbox: SandboxView = { ...existingSandbox, desired: "present", phase: "failed", resumePhase: "waiting-for-route" };
-  render(<SandboxCard sandbox={sandbox} onRetry={onRetry} onDelete={async () => {}} />);
-
+  render(<SandboxCard sandbox={sandbox} pending="retry" onRetry={async () => true} onDelete={async () => true} />);
   const retry = screen.getByRole("button", { name: "Retry demo-ruby" });
-  await user.dblClick(retry);
-  expect(onRetry).toHaveBeenCalledTimes(1);
   expect(retry).toBeDisabled();
   expect(screen.getByRole("button", { name: "Delete demo-ruby" })).toBeDisabled();
   expect(screen.getByRole("status")).toHaveTextContent("Retrying demo-ruby");
-
-  await act(async () => request.reject(new Error("retry failed")));
-  expect(retry).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Delete demo-ruby" })).toBeEnabled();
-});
-
-test("serializes confirmed deletion and locks confirmation controls", async () => {
-  const user = userEvent.setup();
-  const request = deferred();
-  const onDelete = vi.fn(() => request.promise);
-  const sandbox: SandboxView = { ...existingSandbox, desired: "present", phase: "failed", resumePhase: "waiting-for-route" };
-  render(<SandboxCard sandbox={sandbox} onRetry={async () => {}} onDelete={onDelete} />);
-
-  await user.click(screen.getByRole("button", { name: "Delete demo-ruby" }));
-  const confirm = screen.getByRole("button", { name: "Confirm delete demo-ruby" });
-  await user.dblClick(confirm);
-  expect(onDelete).toHaveBeenCalledTimes(1);
-  expect(confirm).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Retry demo-ruby" })).toBeDisabled();
-  expect(screen.getByRole("status")).toHaveTextContent("Deleting demo-ruby");
-
-  await act(async () => request.reject(new Error("delete failed")));
-  expect(confirm).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
-});
-
-test("does not update card state when a pending action settles after unmount", async () => {
-  const request = deferred();
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  const sandbox: SandboxView = { ...existingSandbox, desired: "present", phase: "failed", resumePhase: "waiting-for-route" };
-  const view = render(<SandboxCard sandbox={sandbox} onRetry={() => request.promise} onDelete={async () => {}} />);
-  await userEvent.click(screen.getByRole("button", { name: "Retry demo-ruby" }));
-  view.unmount();
-  await act(async () => request.resolve());
-  expect(error).not.toHaveBeenCalled();
-  error.mockRestore();
-});
-
-test("restores controls after failure under React Strict Mode", async () => {
-  const request = deferred();
-  const sandbox: SandboxView = { ...existingSandbox, desired: "present", phase: "failed", resumePhase: "waiting-for-route" };
-  render(<StrictMode><SandboxCard sandbox={sandbox} onRetry={() => request.promise} onDelete={async () => {}} /></StrictMode>);
-  const retry = screen.getByRole("button", { name: "Retry demo-ruby" });
-  await userEvent.click(retry);
-  await act(async () => request.reject(new Error("retry failed")));
-  expect(retry).toBeEnabled();
 });

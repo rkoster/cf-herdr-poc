@@ -12,6 +12,13 @@ function renderManager() {
   return { router, ...render(<RouterProvider router={router} />) };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((accept, decline) => { resolve = accept; reject = decline; });
+  return { promise, reject, resolve };
+}
+
 test("renders existing sandboxes and creation fields", async () => {
   renderManager();
   expect(await screen.findByRole("heading", { name: "demo-ruby" })).toBeInTheDocument();
@@ -64,16 +71,17 @@ test("confirms delete, retries failures, and opens the enrolled agent", async ()
   const user = userEvent.setup();
   let deleted = 0;
   let retried = 0;
+  let phase = "failed";
   server.use(
-    http.get("/manager/api/sandboxes", () => HttpResponse.json([{ ...existingSandbox, phase: "failed", lastError: "route propagation timed out" }])),
-    http.delete("/manager/api/sandboxes/demo-ruby", () => { deleted++; return new HttpResponse(null, { status: 202 }); }),
-    http.post("/manager/api/sandboxes/demo-ruby/retry", () => { retried++; return new HttpResponse(null, { status: 202 }); }),
+    http.get("/manager/api/sandboxes", () => HttpResponse.json([{ ...existingSandbox, phase, lastError: phase === "failed" ? "route propagation timed out" : undefined, updatedAt: phase === "failed" ? existingSandbox.updatedAt : "2026-09-03T10:04:00Z" }])),
+    http.delete("/manager/api/sandboxes/demo-ruby", () => { deleted++; phase = "deleting"; return new HttpResponse(null, { status: 202 }); }),
+    http.post("/manager/api/sandboxes/demo-ruby/retry", () => { retried++; phase = "waiting-for-route"; return new HttpResponse(null, { status: 202 }); }),
   );
   renderManager();
   expect(await screen.findByRole("alert")).toHaveTextContent("route propagation timed out");
   await user.click(screen.getByRole("button", { name: "Retry demo-ruby" }));
   await waitFor(() => expect(retried).toBe(1));
-  await user.click(screen.getByRole("button", { name: "Delete demo-ruby" }));
+  await user.click(await screen.findByRole("button", { name: "Delete demo-ruby" }));
   expect(deleted).toBe(0);
   await user.click(screen.getByRole("button", { name: "Confirm delete demo-ruby" }));
   await waitFor(() => expect(deleted).toBe(1));
@@ -123,6 +131,80 @@ test.each([
   expect(screen.getByRole("button", { name: buttonName })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: buttonName }));
   await waitFor(() => expect(attempts).toBe(2));
+});
+
+test("holds retry busy through revalidation and clears when loader state changes", async () => {
+  const user = userEvent.setup();
+  const refresh = deferred<Response>();
+  let lists = 0;
+  let retries = 0;
+  server.use(
+    http.get("/manager/api/sandboxes", () => {
+      lists++;
+      if (lists === 1) return HttpResponse.json([{ ...existingSandbox, phase: "failed", resumePhase: "waiting-for-route" }]);
+      return refresh.promise;
+    }),
+    http.post("/manager/api/sandboxes/demo-ruby/retry", () => { retries++; return new HttpResponse(null, { status: 202 }); }),
+  );
+  renderManager();
+  const retry = await screen.findByRole("button", { name: "Retry demo-ruby" });
+  await user.dblClick(retry);
+  expect(retries).toBe(1);
+  expect(retry).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Delete demo-ruby" })).toBeDisabled();
+  expect(screen.getByRole("status")).toHaveTextContent("Retrying demo-ruby");
+
+  refresh.resolve(HttpResponse.json([{ ...existingSandbox, phase: "waiting-for-route", updatedAt: "2026-09-03T10:04:00Z" }]));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Retry demo-ruby" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Delete demo-ruby" })).toBeEnabled());
+});
+
+test("keeps delete busy until revalidation removes the sandbox", async () => {
+  const user = userEvent.setup();
+  const refresh = deferred<Response>();
+  let lists = 0;
+  let deletes = 0;
+  server.use(
+    http.get("/manager/api/sandboxes", () => ++lists === 1 ? HttpResponse.json([{ ...existingSandbox, phase: "failed" }]) : refresh.promise),
+    http.delete("/manager/api/sandboxes/demo-ruby", () => { deletes++; return new HttpResponse(null, { status: 202 }); }),
+  );
+  renderManager();
+  await screen.findByRole("button", { name: "Delete demo-ruby" });
+  await user.click(screen.getByRole("button", { name: "Delete demo-ruby" }));
+  const confirm = screen.getByRole("button", { name: "Confirm delete demo-ruby" });
+  await user.dblClick(confirm);
+  expect(deletes).toBe(1);
+  expect(confirm).toBeDisabled();
+  expect(screen.getByRole("status")).toHaveTextContent("Deleting demo-ruby");
+  refresh.resolve(HttpResponse.json([]));
+  expect(await screen.findByText("No sandboxes provisioned.")).toBeInTheDocument();
+});
+
+test("clears route-owned busy state when mutation fails", async () => {
+  const user = userEvent.setup();
+  server.use(
+    http.get("/manager/api/sandboxes", () => HttpResponse.json([{ ...existingSandbox, phase: "failed" }])),
+    http.post("/manager/api/sandboxes/demo-ruby/retry", () => HttpResponse.json({ error: "retry unavailable" }, { status: 503 })),
+  );
+  renderManager();
+  const retry = await screen.findByRole("button", { name: "Retry demo-ruby" });
+  await user.click(retry);
+  expect(await screen.findByRole("alert")).toHaveTextContent("retry unavailable");
+  expect(retry).toBeEnabled();
+});
+
+test("reports a revalidation failure without retaining the pending route", async () => {
+  const user = userEvent.setup();
+  let lists = 0;
+  server.use(
+    http.get("/manager/api/sandboxes", () => ++lists === 1 ? HttpResponse.json([{ ...existingSandbox, phase: "failed" }]) : HttpResponse.json({ error: "refresh unavailable" }, { status: 503 })),
+    http.post("/manager/api/sandboxes/demo-ruby/retry", () => new HttpResponse(null, { status: 202 })),
+  );
+  renderManager();
+  const retry = await screen.findByRole("button", { name: "Retry demo-ruby" });
+  await user.click(retry);
+  expect(await screen.findByRole("alert")).toHaveTextContent("refresh unavailable");
+  expect(screen.queryByRole("status", { name: /Retrying/ })).not.toBeInTheDocument();
 });
 
 test("logs in without retaining or rendering the token and logs out", async () => {
