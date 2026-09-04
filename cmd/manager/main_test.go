@@ -3,11 +3,45 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 )
+
+func TestManagerWebServesAssetsAndFallsBackToIndex(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("manager app"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "assets"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "assets", "app.js"), []byte("bundle"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler := managerWeb(dir)
+	for _, tt := range []struct {
+		path, want string
+		status     int
+	}{
+		{"/manager/", "manager app", http.StatusOK},
+		{"/manager/sandboxes/demo", "manager app", http.StatusOK},
+		{"/manager/assets/app.js", "bundle", http.StatusOK},
+		{"/manager/assets/missing.js", "404 page not found\n", http.StatusNotFound},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, tt.path, nil))
+		body, _ := io.ReadAll(response.Result().Body)
+		if response.Code != tt.status || string(body) != tt.want {
+			t.Errorf("%s = %d %q, want %d %q", tt.path, response.Code, body, tt.status, tt.want)
+		}
+	}
+}
 
 func TestLoopbackAddress(t *testing.T) {
 	host, port, err := loopbackAddress("127.0.0.1:9191")

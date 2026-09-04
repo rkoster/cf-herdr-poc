@@ -134,6 +134,41 @@ func TestManagerAPIRequiresAuthorization(t *testing.T) {
 	}
 }
 
+func TestConfigReturnsProtectedBuildpackAllowlist(t *testing.T) {
+	collie := httptest.NewServer(http.NotFoundHandler())
+	defer collie.Close()
+	h := newTestHandler(t, &memoryStore{items: map[string]model.Sandbox{}}, &fakeReconciler{make(chan string, 1), make(chan string, 1)}, collie)
+
+	if got := request(t, h, http.MethodGet, "/manager/api/config", "", "public.example", false).Code; got != http.StatusUnauthorized {
+		t.Fatalf("unauthorized config status = %d", got)
+	}
+	response := request(t, h, http.MethodGet, "/manager/api/config", "", "public.example", true)
+	if response.Code != http.StatusOK || response.Body.String() != "{\"buildpacks\":[\"ruby_buildpack\"]}\n" {
+		t.Fatalf("config = %d %q", response.Code, response.Body.String())
+	}
+	if got := request(t, h, http.MethodPost, "/manager/api/config", "{}", "public.example", true).Code; got != http.StatusMethodNotAllowed {
+		t.Fatalf("POST config status = %d", got)
+	}
+}
+
+func TestManagerWebFallsBackToIndexForClientRoutes(t *testing.T) {
+	collie := httptest.NewServer(http.NotFoundHandler())
+	defer collie.Close()
+	store := &memoryStore{items: map[string]model.Sandbox{}}
+	h := newTestHandler(t, store, &fakeReconciler{make(chan string, 1), make(chan string, 1)}, collie)
+	h.config.Web = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/manager/sandboxes/demo" {
+			t.Fatalf("web path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte("manager app"))
+	})
+
+	response := request(t, h, http.MethodGet, "/manager/sandboxes/demo", "", "public.example", false)
+	if response.Code != http.StatusOK || response.Body.String() != "manager app" {
+		t.Fatalf("web response = %d %q", response.Code, response.Body.String())
+	}
+}
+
 func TestSessionCookieAuthorizesAPIAndCollie(t *testing.T) {
 	collie := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	defer collie.Close()

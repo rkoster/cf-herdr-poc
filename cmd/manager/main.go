@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -75,7 +76,7 @@ func run() error {
 	probe := identity.New(identity.Config{CertPath: cfg.InstanceCert, KeyPath: cfg.InstanceKey, Timeout: 10 * time.Second, MaxBodyBytes: 64 << 10})
 	reconciler := reconcile.New(reconcile.Config{WorkRoot: cfg.WorkRoot, IdentityDomain: cfg.IdentityDomain, ManagerRouteHost: cfg.ManagerPackHost, ManagerPackHost: cfg.ManagerPackHost, ManagerAppGUID: cfg.ManagerAppGUID, PollAttempts: 30, PollInterval: time.Second, ScanInterval: cfg.ReconcileInterval}, state, reconcile.BundleRuntime{Builder: builder}, cloud, reconcile.ConcretePackManager{Manager: packManager}, probe, realClock{})
 	collieURL, _ := url.Parse("http://" + cfg.CollieAddress)
-	web := http.StripPrefix("/manager/", http.FileServer(http.Dir(cfg.WebDir)))
+	web := managerWeb(cfg.WebDir)
 	handler, err := httpapi.New(httpapi.Config{Store: state, Reconciler: reconciler, Buildpacks: cfg.Buildpacks, CollieURL: collieURL, ManagerPackHost: cfg.ManagerPackHost, ManagerToken: cfg.APIToken, TrustForwardedProto: true, Healthy: collie.Healthy, ErrorSink: func(err error) { log.Printf("manager API reconciliation: %v", err) }, Web: web})
 	if err != nil {
 		return fmt.Errorf("build HTTP gateway: %w", err)
@@ -108,6 +109,28 @@ func run() error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	return errors.Join(serveErr, stopAll(shutdownCtx, server.Shutdown, handler.Close, reconciler.Stop, collie.Stop))
+}
+
+func managerWeb(dir string) http.Handler {
+	files := http.StripPrefix("/manager/", http.FileServer(http.Dir(dir)))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/manager/")
+		if path == "" {
+			files.ServeHTTP(w, r)
+			return
+		}
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(path))); err == nil {
+			files.ServeHTTP(w, r)
+			return
+		}
+		if strings.Contains(filepath.Base(path), ".") {
+			http.NotFound(w, r)
+			return
+		}
+		request := r.Clone(r.Context())
+		request.URL.Path = "/manager/"
+		files.ServeHTTP(w, request)
+	})
 }
 
 func waitForShutdown(ctx context.Context, httpErrors, supervisorErrors <-chan error) error {

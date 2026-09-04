@@ -262,6 +262,13 @@ func (s *Handler) Close(ctx context.Context) error {
 
 func (s *Handler) api(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.URL.Path == "/manager/api/config":
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string][]string{"buildpacks": s.config.Buildpacks})
 	case r.URL.Path == "/manager/api/sandboxes":
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			w.Header().Set("Allow", "GET, POST")
