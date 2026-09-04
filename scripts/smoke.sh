@@ -148,7 +148,12 @@ direct_cleanup() {
 manager_absent() {
   local status
   status=$(gateway_status GET "$MANAGER_URL/manager/api/sandboxes")
-  [[ $status == 200 ]] && valid_json "$RESPONSE_JSON" && ! jq -e --arg name "$SANDBOX_NAME" '.[] | select(.name==$name)' "$RESPONSE_JSON" >/dev/null
+  [[ $status == 200 ]] || return 1
+  if ! valid_sandbox_collection "$RESPONSE_JSON"; then
+    printf 'smoke: manager sandbox deletion response returned unexpected schema\n' >&2
+    return 1
+  fi
+  ! jq -e --arg name "$SANDBOX_NAME" '.[] | select(.name==$name)' "$RESPONSE_JSON" >/dev/null
 }
 
 cf_resources_absent() {

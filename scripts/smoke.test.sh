@@ -71,6 +71,7 @@ case "$url $method" in
     elif [[ ! -f "$FAKE_STATE/created" && ${FAKE_SCENARIO:-happy} == manager_preflight_bad ]]; then body='{}'
     elif [[ ! -f "$FAKE_STATE/created" ]]; then body='[]'
     elif [[ ${FAKE_SCENARIO:-happy} == malformed ]]; then body='{bad';
+    elif [[ -f "$FAKE_STATE/manager-cleaned" && ${FAKE_SCENARIO:-happy} == malformed_deletion_list ]]; then body='{}'
     elif [[ -f "$FAKE_STATE/manager-cleaned" ]]; then body='[]'
     elif [[ ${FAKE_SCENARIO:-happy} == failed ]]; then body='[{"name":"smoke-fixed","phase":"failed","lastError":"safe failure"}]'
     elif [[ ${FAKE_SCENARIO:-happy} == timeout ]]; then body='[{"name":"smoke-fixed","phase":"creating"}]'
@@ -368,6 +369,15 @@ test_manager_preflight_schema_is_strict() {
   assert_not_contains "$commands" 'cf <delete> <smoke-fixed>'
 }
 
+test_manager_deletion_list_schema_is_strict() {
+  make_fakes
+  local output commands
+  output=$(FAKE_SCENARIO=malformed_deletion_list run_failure)
+  commands=$(<"$LOG")
+  assert_contains "$output" 'manager sandbox deletion response returned unexpected schema'
+  assert_contains "$commands" 'cf <delete> <smoke-fixed>'
+}
+
 test_route_policy_schema_failures_are_not_absence() {
   local scenario output
   for scenario in policy_empty_object policy_wrong_resources policy_missing_field policy_wrong_relationships; do
@@ -405,6 +415,7 @@ test_create_response_failure_still_cleans_by_name
 test_preexisting_name_aborts_without_cleanup
 test_orphan_manager_record_aborts_without_cleanup
 test_manager_preflight_schema_is_strict
+test_manager_deletion_list_schema_is_strict
 test_route_policy_schema_failures_are_not_absence
 test_cleanup_is_armed_immediately_before_create
 test_cleanup_falls_back_to_direct_cf
