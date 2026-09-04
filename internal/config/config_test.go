@@ -36,6 +36,8 @@ func TestLoadDefaults(t *testing.T) {
 		CollieAddress:     "127.0.0.1:9191",
 		WorkRoot:          "./data/work",
 		RuntimeDir:        "./sandbox/runtime",
+		BunExecutable:     "./sandbox/runtime/bin/bun",
+		CollieExecutable:  "./sandbox/runtime/bin/collie",
 		InstanceCert:      "/etc/cf-instance-credentials/instance.crt",
 		InstanceKey:       "/etc/cf-instance-credentials/instance.key",
 	}
@@ -113,6 +115,8 @@ func TestLoadOverrides(t *testing.T) {
 		"MANAGER_COLLIE_ADDRESS":     " 127.0.0.1:9191 ",
 		"MANAGER_WORK_ROOT":          " /tmp/work ",
 		"MANAGER_RUNTIME_DIR":        " /tmp/runtime ",
+		"MANAGER_BUN_EXECUTABLE":     " /tmp/bun ",
+		"MANAGER_COLLIE_EXECUTABLE":  " /tmp/collie-bin ",
 		"CF_INSTANCE_CERT":           " /tmp/cert ",
 		"CF_INSTANCE_KEY":            " /tmp/key ",
 	}))
@@ -123,7 +127,7 @@ func TestLoadOverrides(t *testing.T) {
 	if got.StatePath != "/tmp/state.json" || got.WebDir != "/tmp/web" || got.CollieDir != "/tmp/collie" ||
 		got.ManagerAppName != "manager" || got.ManagerAppGUID != "app-guid" || got.ManagerPackHost != "pack.apps.identity" ||
 		got.ReconcileInterval != 5*time.Second || got.APIToken != "operator-secret" || got.CollieAddress != "127.0.0.1:9191" ||
-		got.WorkRoot != "/tmp/work" || got.RuntimeDir != "/tmp/runtime" || got.InstanceCert != "/tmp/cert" || got.InstanceKey != "/tmp/key" {
+		got.WorkRoot != "/tmp/work" || got.RuntimeDir != "/tmp/runtime" || got.BunExecutable != "/tmp/bun" || got.CollieExecutable != "/tmp/collie-bin" || got.InstanceCert != "/tmp/cert" || got.InstanceKey != "/tmp/key" {
 		t.Fatalf("Load() overrides = %#v", got)
 	}
 }

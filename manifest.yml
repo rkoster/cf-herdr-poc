@@ -1,0 +1,16 @@
+---
+applications:
+- name: cf-herdr-manager
+  path: dist
+  buildpacks:
+  - binary_buildpack
+  command: ./manager
+  no-route: true
+  health-check-type: http
+  health-check-http-endpoint: /manager/healthz
+  env:
+    MANAGER_WEB_DIR: ./web
+    MANAGER_COLLIE_DIR: ./sandbox/runtime/collie
+    MANAGER_RUNTIME_DIR: ./sandbox/runtime
+    MANAGER_BUN_EXECUTABLE: ./sandbox/runtime/bin/bun
+    MANAGER_COLLIE_EXECUTABLE: ./sandbox/runtime/bin/collie

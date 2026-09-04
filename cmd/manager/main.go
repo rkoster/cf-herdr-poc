@@ -69,8 +69,8 @@ func run() error {
 	configDir := filepath.Join(filepath.Dir(cfg.StatePath), "collie-config")
 	stateDir := filepath.Join(filepath.Dir(cfg.StatePath), "collie-state")
 	socketPath := filepath.Join(stateDir, "herdr.sock")
-	collie := supervisor.New(supervisor.Config{Dir: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port}, nil, nil)
-	packManager := pack.New(commandRunner, collie, pack.Config{Executable: "bun", TempDir: filepath.Join(filepath.Dir(cfg.StatePath), "tokens"), ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, TokenLifetime: 10 * time.Minute})
+	collie := supervisor.New(supervisor.Config{Executable: cfg.BunExecutable, Dir: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port}, nil, nil)
+	packManager := pack.New(commandRunner, collie, pack.Config{Executable: cfg.CollieExecutable, TempDir: filepath.Join(filepath.Dir(cfg.StatePath), "tokens"), ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, TokenLifetime: 10 * time.Minute})
 	builder := runtimebundle.Builder{Run: commandRunner, RuntimeDir: cfg.RuntimeDir, WorkRoot: cfg.WorkRoot}
 	cloud := cf.Provider{Run: commandRunner, Buildpacks: cfg.Buildpacks, WorkRoot: cfg.WorkRoot}
 	probe := identity.New(identity.Config{CertPath: cfg.InstanceCert, KeyPath: cfg.InstanceKey, Timeout: 10 * time.Second, MaxBodyBytes: 64 << 10})

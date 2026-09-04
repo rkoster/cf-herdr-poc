@@ -23,6 +23,8 @@ type Config struct {
 	CollieAddress     string
 	WorkRoot          string
 	RuntimeDir        string
+	BunExecutable     string
+	CollieExecutable  string
 	InstanceCert      string
 	InstanceKey       string
 }
@@ -74,6 +76,7 @@ func Load(getenv func(string) string) (Config, error) {
 		reconcileInterval = parsed
 	}
 
+	runtimeDir := valueOrDefault("MANAGER_RUNTIME_DIR", "./sandbox/runtime")
 	return Config{
 		Address:           address,
 		StatePath:         valueOrDefault("MANAGER_STATE_PATH", "./data/sandboxes.json"),
@@ -88,7 +91,9 @@ func Load(getenv func(string) string) (Config, error) {
 		APIToken:          value("MANAGER_API_TOKEN"),
 		CollieAddress:     valueOrDefault("MANAGER_COLLIE_ADDRESS", "127.0.0.1:9191"),
 		WorkRoot:          valueOrDefault("MANAGER_WORK_ROOT", "./data/work"),
-		RuntimeDir:        valueOrDefault("MANAGER_RUNTIME_DIR", "./sandbox/runtime"),
+		RuntimeDir:        runtimeDir,
+		BunExecutable:     valueOrDefault("MANAGER_BUN_EXECUTABLE", runtimeDir+"/bin/bun"),
+		CollieExecutable:  valueOrDefault("MANAGER_COLLIE_EXECUTABLE", runtimeDir+"/bin/collie"),
 		InstanceCert:      valueOrDefault("CF_INSTANCE_CERT", "/etc/cf-instance-credentials/instance.crt"),
 		InstanceKey:       valueOrDefault("CF_INSTANCE_KEY", "/etc/cf-instance-credentials/instance.key"),
 	}, nil

@@ -3,7 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 COLLIE_DIR="$ROOT/collie"
-RUNTIME_DIR="$ROOT/sandbox/runtime"
+RUNTIME_DIR="${RUNTIME_DIR:-$ROOT/sandbox/runtime}"
+GOOS="${GOOS:-linux}"
+GOARCH="${GOARCH:-amd64}"
 
 require_tool() {
   local name=$1
@@ -74,7 +76,7 @@ collie_bin="$(validate_runtime_binary COLLIE_RUNTIME_BIN "$COLLIE_DIR/bin/collie
 
 rm -rf "$RUNTIME_DIR"
 mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie"
-CGO_ENABLED=0 go build -o "$RUNTIME_DIR/bin/sandbox-bootstrap" ./cmd/sandbox-bootstrap
+CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o "$RUNTIME_DIR/bin/sandbox-bootstrap" ./cmd/sandbox-bootstrap
 test -x "$RUNTIME_DIR/bin/sandbox-bootstrap"
 install -m 0755 "$bun_bin" "$RUNTIME_DIR/bin/bun"
 install -m 0755 "$herdr_bin" "$RUNTIME_DIR/bin/herdr"
