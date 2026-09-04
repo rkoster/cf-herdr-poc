@@ -194,10 +194,15 @@ done
 sandbox_guid=$(app_guid "$SANDBOX_NAME") || { printf 'smoke: sandbox app not found\n' >&2; exit 1; }
 [[ $sandbox_guid != "$actual_manager_guid" && $sandbox_guid != "$wrong_guid" ]] || { printf 'smoke: sandbox app identity is not distinct\n' >&2; exit 1; }
 routes_json=$(cf curl "/v3/apps/$sandbox_guid/routes")
+if ! route_rows=$(jq -er '.resources | if type=="array" then . else error("resources") end | .[] | [.host,.relationships.domain.data.guid] | @tsv' <<<"$routes_json"); then
+  printf 'smoke: invalid sandbox route JSON\n' >&2
+  exit 1
+fi
 while IFS=$'\t' read -r host domain_guid; do
+  [[ -n $host && -n $domain_guid ]] || { printf 'smoke: invalid sandbox route JSON\n' >&2; exit 1; }
   domain=$(cf curl "/v3/domains/$domain_guid" | jq -er '.name')
   [[ $host == "$SANDBOX_NAME" && $domain == "$IDENTITY_DOMAIN" ]] || { printf 'smoke: ordinary public sandbox route is mapped\n' >&2; exit 1; }
-done < <(jq -r '.resources[]|[.host,.relationships.domain.data.guid]|@tsv' <<<"$routes_json")
+done <<<"$route_rows"
 
 status=$(plain_status "$IDENTITY_URL/pack/v1/hello")
 case $status in 2??) printf 'smoke: identity route accepted request without instance certificate\n' >&2; exit 1 ;; esac
@@ -219,6 +224,38 @@ status=$(gateway_status GET "$MANAGER_URL/collie/api/snapshot?host=$member_id")
 jq -e --arg member "$member_id" '.servers[]|select(.id==$member and .reachable==true)' "$RESPONSE_JSON" >/dev/null || { printf 'smoke: merged snapshot lacks member\n' >&2; exit 1; }
 status=$(gateway_status POST "$MANAGER_URL/collie/api/workspace?host=$member_id" "$WORKSPACE_JSON")
 [[ $status == 200 ]] && valid_json "$RESPONSE_JSON" && jq -e '.ok==true and (.pane.paneId|type=="string" and length>0)' "$RESPONSE_JSON" >/dev/null || { printf 'smoke: Collie workspace creation failed\n' >&2; exit 1; }
+pane_id=$(jq -er '.pane.paneId' "$RESPONSE_JSON")
+workspace_id=$(jq -er '.pane.workspaceId' "$RESPONSE_JSON")
+encoded_pane=$(jq -rn --arg value "$pane_id" '$value|@uri')
+
+deadline=$((SECONDS + SMOKE_TIMEOUT))
+workspace_visible=0
+while (( SECONDS < deadline )); do
+  status=$(gateway_status GET "$MANAGER_URL/collie/api/snapshot?host=$member_id")
+  [[ $status == 200 ]] && valid_json "$RESPONSE_JSON" || { api_error "$status"; exit 1; }
+  if jq -e --arg member "$member_id" --arg workspace "$workspace_id" --arg pane "$pane_id" '
+    any(.workspaces[]?; .workspaceId==$workspace and .host==$member)
+    and any((.agents[]?,.shellPanes[]?); .paneId==$pane and .host==$member)
+  ' "$RESPONSE_JSON" >/dev/null; then workspace_visible=1; break; fi
+  sleep "$SMOKE_POLL_INTERVAL"
+done
+(( workspace_visible )) || { printf 'smoke: created Collie workspace did not appear\n' >&2; exit 1; }
+
+ACTION_JSON="$WORK_DIR/action.json"
+jq -n --arg text "printf 'smoke-ready\\n'" '{text:$text,submit:true}' >"$ACTION_JSON"
+chmod 600 "$ACTION_JSON"
+status=$(gateway_status POST "$MANAGER_URL/collie/api/pane/$encoded_pane/reply?host=$member_id" "$ACTION_JSON")
+[[ $status == 200 ]] && valid_json "$RESPONSE_JSON" && jq -e '.ok==true' "$RESPONSE_JSON" >/dev/null || { printf 'smoke: Collie pane action failed\n' >&2; exit 1; }
+
+deadline=$((SECONDS + SMOKE_TIMEOUT))
+marker_visible=0
+while (( SECONDS < deadline )); do
+  status=$(gateway_status GET "$MANAGER_URL/collie/api/pane/$encoded_pane?host=$member_id")
+  [[ $status == 200 ]] && valid_json "$RESPONSE_JSON" || { api_error "$status"; exit 1; }
+  if jq -e --arg pane "$pane_id" '.paneId==$pane and any(.text|split("\n")[]; .=="smoke-ready")' "$RESPONSE_JSON" >/dev/null; then marker_visible=1; break; fi
+  sleep "$SMOKE_POLL_INTERVAL"
+done
+(( marker_visible )) || { printf 'smoke: pane action marker did not appear\n' >&2; exit 1; }
 
 printf 'Timing\n'
 printf '%-20s %s\n' metric seconds

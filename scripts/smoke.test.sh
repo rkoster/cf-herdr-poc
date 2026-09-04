@@ -12,6 +12,17 @@ trap cleanup_test_dir EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_contains() { case "$1" in *"$2"*) ;; *) fail "expected: $2" ;; esac; }
 assert_not_contains() { case "$1" in *"$2"*) fail "forbidden output: $2" ;; *) ;; esac; }
+assert_ordered() {
+  local text=$1 needle position=0 next
+  shift
+  for needle in "$@"; do
+    next=$(printf '%s\n' "$text" | jq -Rrs --arg needle "$needle" --argjson position "$position" '
+      [splits("\n")]|to_entries|map(select(.key >= $position and (.value|contains($needle))))|.[0].key//-1
+    ')
+    (( next >= position )) || fail "command sequence missing or out of order: $needle"
+    position=$((next + 1))
+  done
+}
 
 make_fakes() {
   cleanup_test_dir
@@ -61,6 +72,7 @@ case "$url $method" in
     ;;
   */collie/api/snapshot?host=smoke-fixed\ GET)
     if [[ -f "$FAKE_STATE/manager-cleaned" ]]; then body='{"servers":[{"id":"lead","reachable":true}],"workspaces":[],"agents":[],"shellPanes":[],"tabs":[],"sessions":[],"bridge":{},"ts":1}'
+    elif [[ -f "$FAKE_STATE/workspace-created" ]]; then body='{"servers":[{"id":"lead","reachable":true},{"id":"smoke-fixed","reachable":true,"protocol":"ok"}],"workspaces":[{"workspaceId":"w2","label":"smoke","host":"smoke-fixed"}],"agents":[],"shellPanes":[{"paneId":"w2:t1:p1","workspaceId":"w2","host":"smoke-fixed"}],"tabs":[],"sessions":[],"bridge":{},"ts":1}'
     else body='{"servers":[{"id":"lead","reachable":true},{"id":"smoke-fixed","reachable":true,"protocol":"ok"}],"workspaces":[],"agents":[],"shellPanes":[],"tabs":[],"sessions":[],"bridge":{},"ts":1}'
     fi
     ;;
@@ -69,6 +81,16 @@ case "$url $method" in
     jq -e '. == {cwd:"/home/vcap/app",label:"smoke"}' "$data_file" >/dev/null || exit 93
     touch "$FAKE_STATE/workspace-created"
     body='{"ok":true,"pane":{"paneId":"w2:t1:p1","workspaceId":"w2","workspaceLabel":"smoke","tabId":"w2:t1","cwd":"/home/vcap/app"}}'
+    ;;
+  */collie/api/pane/w2%3At1%3Ap1/reply?host=smoke-fixed\ POST)
+    [[ -n $data_file ]] || exit 92
+    jq -e '. == {text:"printf '\''smoke-ready\\n'\''",submit:true}' "$data_file" >/dev/null || exit 93
+    touch "$FAKE_STATE/pane-action"
+    body='{"ok":true}'
+    ;;
+  */collie/api/pane/w2%3At1%3Ap1?host=smoke-fixed\ GET)
+    [[ -f "$FAKE_STATE/pane-action" ]] || { status=409; body='{"error":"action not sent"}'; }
+    [[ $status == 409 ]] || body='{"paneId":"w2:t1:p1","text":"$ printf '\''smoke-ready\\n'\''\nsmoke-ready\n","truncated":false,"revision":"2"}'
     ;;
   */collie/api/pack\ GET)
     if [[ -f "$FAKE_STATE/manager-cleaned" ]]; then body='{"members":[]}'
@@ -112,7 +134,10 @@ case "${1:-}" in
         if [[ -f "$FAKE_STATE/manager-cleaned" || -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[]}'
         else printf '{"resources":[{"guid":"sandbox-guid","name":"smoke-fixed"}]}'
         fi ;;
-      /v3/apps/sandbox-guid/routes) printf '{"resources":[{"guid":"route-guid","host":"smoke-fixed","relationships":{"domain":{"data":{"guid":"domain-guid"}}}}]}' ;;
+      /v3/apps/sandbox-guid/routes)
+        if [[ ${FAKE_SCENARIO:-happy} == malformed_routes ]]; then printf '{bad'
+        else printf '{"resources":[{"guid":"route-guid","host":"smoke-fixed","relationships":{"domain":{"data":{"guid":"domain-guid"}}}}]}'
+        fi ;;
       /v3/domains/domain-guid) printf '{"guid":"domain-guid","name":"identity.invalid"}' ;;
       '/v3/routes?hosts=smoke-fixed')
         if [[ ${FAKE_SCENARIO:-happy} == leaked_route && ! -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[{"guid":"leak"}]}'
@@ -181,8 +206,25 @@ test_full_flow_and_exact_identity_checks() {
   assert_contains "$commands" 'cf <ssh> <manager-app>'
   assert_contains "$commands" '<https://manager.invalid/collie/api/snapshot?host=smoke-fixed>'
   assert_contains "$commands" '<https://manager.invalid/collie/api/workspace?host=smoke-fixed>'
+  assert_contains "$commands" '<https://manager.invalid/collie/api/pane/w2%3At1%3Ap1/reply?host=smoke-fixed>'
+  assert_contains "$commands" '<https://manager.invalid/collie/api/pane/w2%3At1%3Ap1?host=smoke-fixed>'
   assert_contains "$commands" '<https://manager.invalid/collie/api/pack>'
   [[ -f "$STATE/workspace-created" ]] || fail 'workspace was not created'
+  [[ -f "$STATE/pane-action" ]] || fail 'pane action was not sent'
+  assert_ordered "$commands" \
+    '/manager/api/sandboxes>' \
+    '/manager/api/sandboxes>' \
+    'cf <ssh> <wrong-app>' \
+    'cf <ssh> <manager-app>' \
+    '/collie/api/snapshot?host=smoke-fixed>' \
+    '/collie/api/workspace?host=smoke-fixed>' \
+    '/collie/api/snapshot?host=smoke-fixed>' \
+    '/collie/api/pane/w2%3At1%3Ap1/reply?host=smoke-fixed>' \
+    '/collie/api/pane/w2%3At1%3Ap1?host=smoke-fixed>' \
+    '/manager/api/sandboxes/smoke-fixed>' \
+    '/collie/api/snapshot?host=smoke-fixed>' \
+    '/collie/api/pack>' \
+    'cf <curl> </v3/apps?names=smoke-fixed>'
   if [[ $commands == *'cf <map-route>'* ]]; then fail 'mapped public route'; fi
 }
 
@@ -206,13 +248,14 @@ test_identity_status_must_be_exact() {
 
 test_bad_lifecycle_and_security_responses_fail_closed() {
   local scenario output
-  for scenario in malformed failed api_leak policy_query_failure leaked_route; do
+  for scenario in malformed failed api_leak malformed_routes policy_query_failure leaked_route; do
     make_fakes
     output=$(FAKE_SCENARIO=$scenario run_failure)
     case $scenario in
       malformed) assert_contains "$output" 'invalid manager JSON' ;;
       failed) assert_contains "$output" 'lifecycle failed' ;;
       api_leak) assert_contains "$output" 'forbidden key' ;;
+      malformed_routes) assert_contains "$output" 'invalid sandbox route JSON' ;;
       policy_query_failure) assert_contains "$output" 'route-policy query failed' ;;
       leaked_route) assert_contains "$output" 'route remains after deletion' ;;
     esac

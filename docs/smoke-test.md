@@ -47,6 +47,7 @@ bash scripts/smoke.sh
 - `cf ssh $MANAGER_APP_NAME` performs an authenticated `GET /pack/v1/hello` after readiness and receives HTTP 200 JSON with numeric `protocol` and the expected `member`.
 - Authenticated `GET /collie/api/snapshot?host=<member>` through the public manager gateway reports the reachable member.
 - Authenticated POST `/collie/api/workspace?host=<member>` with `{cwd:<configured path>,label:"smoke"}` succeeds and returns a pane ID.
+- The host-scoped snapshot reports that workspace and pane. The harness sends `printf 'smoke-ready\n'` through the pane reply route and confirms the marker through a host-scoped pane read.
 - Deletion removes the manager record. Authenticated Pack and snapshot reads then omit the member, while CAPI reports no app, route, or route policy.
 - Any malformed response, timeout, lifecycle failure, identity mismatch, failed leak query, or residual resource fails the run. The armed trap requests manager deletion and directly removes residual policy, route, and app resources when reconciliation does not.
 
