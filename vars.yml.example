@@ -2,4 +2,4 @@ manager_app_name: cf-herdr-manager
 public_domain: apps.example.com
 manager_public_host: cf-herdr-manager
 cf_identity_domain: apps.internal
-manager_pack_host: cf-herdr-manager-pack
+manager_pack_host: cf-herdr-manager-pack.apps.internal

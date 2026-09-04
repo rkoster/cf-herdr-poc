@@ -439,6 +439,8 @@ func TestCollieAndPackProxyRouting(t *testing.T) {
 		want       int
 	}{
 		{"pack.identity.example", "/pack/v1/hello", http.StatusCreated},
+		{"PACK.IDENTITY.EXAMPLE.", "/pack/v1/hello", http.StatusCreated},
+		{"pack.identity.example.identity.example", "/pack/v1/hello", http.StatusNotFound},
 		{"pack.identity.example:443", "/other", http.StatusNotFound},
 		{"public.example", "/pack/v1/hello", http.StatusNotFound},
 		{"public.example", "/collie/pack/v1/hello", http.StatusUnauthorized},

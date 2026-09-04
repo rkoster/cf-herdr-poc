@@ -45,7 +45,7 @@ Required at startup:
 | `SANDBOX_BUILDPACKS` | Comma-separated allow-list, for example `binary_buildpack,nodejs_buildpack`. |
 | `MANAGER_APP_NAME` | Manager CF app name. |
 | `MANAGER_APP_GUID` | Manager app GUID. |
-| `MANAGER_PACK_HOST` | Hostname, without domain, for the manager identity route. |
+| `MANAGER_PACK_HOST` | Full direct-child FQDN for the manager identity route, for example `cf-herdr-manager-pack.apps.internal`. |
 | `MANAGER_API_TOKEN` | Operator API bearer token; set out of band and never commit it. |
 
 The manifest supplies nonsecret packaged paths: `MANAGER_WEB_DIR=./web`, `MANAGER_COLLIE_DIR=./sandbox/runtime/collie`, `MANAGER_RUNTIME_DIR=./sandbox/runtime`, `MANAGER_BUN_EXECUTABLE=./sandbox/runtime/bin/bun`, and `MANAGER_COLLIE_EXECUTABLE=./sandbox/runtime/bin/collie`. State defaults under `./data`; Collie listens only on `127.0.0.1:9191`.
@@ -59,7 +59,8 @@ export MANAGER_APP_NAME=cf-herdr-manager
 export PUBLIC_DOMAIN=apps.example.com
 export MANAGER_PUBLIC_HOST=cf-herdr-manager
 export CF_IDENTITY_DOMAIN=apps.internal
-export MANAGER_PACK_HOST=cf-herdr-manager-pack
+export MANAGER_PACK_HOST=cf-herdr-manager-pack.apps.internal
+export MANAGER_ROUTE_HOST="${MANAGER_PACK_HOST%.$CF_IDENTITY_DOMAIN}"
 export SANDBOX_BUILDPACKS=binary_buildpack,nodejs_buildpack
 export MANAGER_API_TOKEN="$(openssl rand -hex 32)"
 
@@ -74,7 +75,7 @@ export SANDBOX_APP_NAME=replace-with-sandbox-name
 export SANDBOX_HOST="$SANDBOX_APP_NAME"
 export SANDBOX_GUID="$(cf app "$SANDBOX_APP_NAME" --guid)"
 cf add-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_HOST" --source "cf:app:$MANAGER_APP_GUID"
-cf add-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_PACK_HOST" --source "cf:app:$SANDBOX_GUID"
+cf add-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$SANDBOX_GUID"
 ```
 
 Confirm the binary buildpack and every sandbox buildpack are allow-listed by platform operators before pushing. The manifest's `binary_buildpack` is required because the manager Go binary is prebuilt.
@@ -85,12 +86,12 @@ Remove policies before deleting routes and apps:
 
 ```bash
 cf remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_HOST" --source "cf:app:$MANAGER_APP_GUID"
-cf remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_PACK_HOST" --source "cf:app:$SANDBOX_GUID"
+cf remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$SANDBOX_GUID"
 cf delete "$SANDBOX_APP_NAME" -f -r
 cf unmap-route "$MANAGER_APP_NAME" "$PUBLIC_DOMAIN" --hostname "$MANAGER_PUBLIC_HOST"
-cf unmap-route "$MANAGER_APP_NAME" "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_PACK_HOST"
+cf unmap-route "$MANAGER_APP_NAME" "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"
 cf delete-route "$PUBLIC_DOMAIN" --hostname "$MANAGER_PUBLIC_HOST" -f
-cf delete-route "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_PACK_HOST" -f
+cf delete-route "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" -f
 cf delete "$MANAGER_APP_NAME" -f
 rm -rf dist
 ```
@@ -108,7 +109,7 @@ Artifact tests use fake executable fixtures only; they do not establish that any
 
 ## POC Friction
 
-- The original design and implementation task log are in `docs/superpowers/specs/2026-09-03-cf-herdr-sandbox-manager-design.md` and `docs/superpowers/plans/2026-09-03-cf-herdr-sandbox-manager.md`.
+- Deferred runtime and identity spike procedures are in [`docs/spikes/cf-buildpack-runtime.md`](docs/spikes/cf-buildpack-runtime.md) and [`docs/spikes/cf-pack-identity.md`](docs/spikes/cf-pack-identity.md). The original design and task log remain in `docs/superpowers/`.
 - The nested Collie checkout is intentionally a fork with POC changes and may be dirty; packaging must not modify its source or `.envrc`.
 - The source runtime requires a large copied Collie dependency tree, and portable Bun/Herdr acquisition is deliberately outside this repository.
 - The current CF target lacks an identity domain. Live route-policy, instance-identity, manager health, sandbox lifecycle, and browser-through-lead spikes are deferred and no successful result is claimed.

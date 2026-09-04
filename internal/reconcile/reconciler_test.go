@@ -121,12 +121,14 @@ func (e *fakeEnrollment) Cleanup() error {
 
 type fakePack struct {
 	calls   *[]string
+	host    string
 	present bool
 	failAt  string
 	expiry  time.Time
 }
 
-func (p *fakePack) PrepareEnrollment(context.Context, string, string) (Enrollment, error) {
+func (p *fakePack) PrepareEnrollment(_ context.Context, host, _ string) (Enrollment, error) {
+	p.host = host
 	*p.calls = append(*p.calls, "prepare-invite")
 	if p.failAt == "prepare-invite" {
 		return nil, errors.New("invite token=secret failed")
@@ -161,6 +163,8 @@ type fakeCF struct {
 	failAt    string
 	operation model.Operation
 	guidErr   error
+	policy    cf.RoutePolicyRequest
+	leadURL   string
 }
 
 func (f *fakeCF) Stage(_ context.Context, _ cf.PushRequest) (model.Operation, error) {
@@ -195,11 +199,13 @@ func (f *fakeCF) SecureRoute(context.Context, cf.RouteRequest) (model.Operation,
 	}
 	return operation("secure-route", true), nil
 }
-func (f *fakeCF) AddRoutePolicy(context.Context, cf.RoutePolicyRequest) (model.Operation, error) {
+func (f *fakeCF) AddRoutePolicy(_ context.Context, request cf.RoutePolicyRequest) (model.Operation, error) {
+	f.policy = request
 	*f.calls = append(*f.calls, "secure-manager-route")
 	return operation("secure-manager-route", true), nil
 }
-func (f *fakeCF) ConfigureEnrollment(context.Context, string, string, string) (model.Operation, error) {
+func (f *fakeCF) ConfigureEnrollment(_ context.Context, _, _, leadURL string) (model.Operation, error) {
+	f.leadURL = leadURL
 	*f.calls = append(*f.calls, "configure-enrollment")
 	return operation("configure-enrollment", true), nil
 }
@@ -312,6 +318,22 @@ func TestCreationPersistsBeforeEveryEffectInExactOrder(t *testing.T) {
 	}
 	if len(got.Operations) != 7 {
 		t.Fatalf("operations = %#v, want CF operations", got.Operations)
+	}
+}
+
+func TestManagerIdentityRouteUsesLabelWhileEnrollmentUsesFQDN(t *testing.T) {
+	r, _, _, cloud, pack, _, _, _ := fixture(model.PhaseSecuringManagerRoute)
+	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if cloud.policy.Domain != "identity.example" || cloud.policy.Host != "manager" {
+		t.Fatalf("route policy = %#v", cloud.policy)
+	}
+	if cloud.leadURL != "https://manager.identity.example" {
+		t.Fatalf("lead URL = %q", cloud.leadURL)
+	}
+	if pack.host != "manager.identity.example" {
+		t.Fatalf("Pack host = %q", pack.host)
 	}
 }
 

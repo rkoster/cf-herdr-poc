@@ -125,10 +125,25 @@ func TestLoadOverrides(t *testing.T) {
 	}
 
 	if got.StatePath != "/tmp/state.json" || got.WebDir != "/tmp/web" || got.CollieDir != "/tmp/collie" ||
-		got.ManagerAppName != "manager" || got.ManagerAppGUID != "app-guid" || got.ManagerPackHost != "pack.apps.identity" ||
+		got.ManagerAppName != "manager" || got.ManagerAppGUID != "app-guid" || got.ManagerPackHost != "pack.apps.identity" || got.ManagerRouteHost != "pack" ||
 		got.ReconcileInterval != 5*time.Second || got.APIToken != "operator-secret" || got.CollieAddress != "127.0.0.1:9191" ||
 		got.WorkRoot != "/tmp/work" || got.RuntimeDir != "/tmp/runtime" || got.BunExecutable != "/tmp/bun" || got.CollieExecutable != "/tmp/collie-bin" || got.InstanceCert != "/tmp/cert" || got.InstanceKey != "/tmp/key" {
 		t.Fatalf("Load() overrides = %#v", got)
+	}
+}
+
+func TestLoadRejectsManagerPackHostOutsideIdentityDomain(t *testing.T) {
+	for _, host := range []string{"pack", "pack.example.com", "nested.pack.apps.identity", "pack.apps.identity.apps.identity", "PACK.apps.identity", ".apps.identity"} {
+		t.Run(host, func(t *testing.T) {
+			_, err := Load(env(map[string]string{
+				"CF_IDENTITY_DOMAIN": "apps.identity",
+				"SANDBOX_BUILDPACKS": "ruby_buildpack",
+				"MANAGER_PACK_HOST":  host,
+			}))
+			if err == nil || !strings.Contains(err.Error(), "MANAGER_PACK_HOST must be a direct child of CF_IDENTITY_DOMAIN") {
+				t.Fatalf("Load() error = %v", err)
+			}
+		})
 	}
 }
 

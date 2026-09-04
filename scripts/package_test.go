@@ -82,6 +82,29 @@ func TestDeploymentMapsOnlyManagerPublicAndIdentityRoutes(t *testing.T) {
 	if strings.Contains(deploy, "sandbox") {
 		t.Fatal("deploy.sh must not create or map sandbox routes")
 	}
+	for _, required := range []string{`MANAGER_ROUTE_HOST="${MANAGER_PACK_HOST%.$CF_IDENTITY_DOMAIN}"`, `"$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"`} {
+		if !strings.Contains(deploy, required) {
+			t.Errorf("deploy.sh does not derive identity route label: missing %q", required)
+		}
+	}
+}
+
+func TestDeferredSpikeDocumentsRecordCommandsWithoutObservations(t *testing.T) {
+	readme := readPackageFile(t, "README.md")
+	for _, name := range []string{"cf-buildpack-runtime.md", "cf-pack-identity.md"} {
+		if !strings.Contains(readme, "docs/spikes/"+name) {
+			t.Errorf("README does not link %s", name)
+		}
+		doc := readPackageFile(t, "docs/spikes/"+name)
+		for _, required := range []string{"Status: Deferred", "2026-09-04", "Commands", "Assertions", "Capture"} {
+			if !strings.Contains(doc, required) {
+				t.Errorf("%s missing %q", name, required)
+			}
+		}
+		if strings.Contains(doc, "Status: Complete") || strings.Contains(doc, "Observed:") {
+			t.Errorf("%s fabricates completed observations", name)
+		}
+	}
 }
 
 func TestProcfileStartsPackagedManager(t *testing.T) {

@@ -17,6 +17,7 @@ type Config struct {
 	ManagerAppName    string
 	ManagerAppGUID    string
 	ManagerPackHost   string
+	ManagerRouteHost  string
 	Buildpacks        []string
 	ReconcileInterval time.Duration
 	APIToken          string
@@ -41,6 +42,15 @@ func Load(getenv func(string) string) (Config, error) {
 	identityDomain := value("CF_IDENTITY_DOMAIN")
 	if identityDomain == "" {
 		return Config{}, fmt.Errorf("CF_IDENTITY_DOMAIN is required")
+	}
+	managerPackHost := value("MANAGER_PACK_HOST")
+	managerRouteHost := ""
+	if managerPackHost != "" {
+		suffix := "." + identityDomain
+		managerRouteHost = strings.TrimSuffix(managerPackHost, suffix)
+		if managerRouteHost == managerPackHost || managerRouteHost == "" || strings.Contains(managerRouteHost, ".") || !validDNSName(managerPackHost) || managerRouteHost+suffix != managerPackHost {
+			return Config{}, fmt.Errorf("MANAGER_PACK_HOST must be a direct child of CF_IDENTITY_DOMAIN")
+		}
 	}
 
 	buildpackValue := value("SANDBOX_BUILDPACKS")
@@ -85,7 +95,8 @@ func Load(getenv func(string) string) (Config, error) {
 		IdentityDomain:    identityDomain,
 		ManagerAppName:    value("MANAGER_APP_NAME"),
 		ManagerAppGUID:    value("MANAGER_APP_GUID"),
-		ManagerPackHost:   value("MANAGER_PACK_HOST"),
+		ManagerPackHost:   managerPackHost,
+		ManagerRouteHost:  managerRouteHost,
 		Buildpacks:        buildpacks,
 		ReconcileInterval: reconcileInterval,
 		APIToken:          value("MANAGER_API_TOKEN"),
@@ -97,6 +108,23 @@ func Load(getenv func(string) string) (Config, error) {
 		InstanceCert:      valueOrDefault("CF_INSTANCE_CERT", "/etc/cf-instance-credentials/instance.crt"),
 		InstanceKey:       valueOrDefault("CF_INSTANCE_KEY", "/etc/cf-instance-credentials/instance.key"),
 	}, nil
+}
+
+func validDNSName(value string) bool {
+	if len(value) > 253 || value == "" {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, character := range label {
+			if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (c Config) ValidateProduction() error {
