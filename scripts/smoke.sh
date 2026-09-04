@@ -68,6 +68,36 @@ valid_json() {
   jq -e . "$1" >/dev/null 2>&1 || { printf 'smoke: invalid manager JSON\n' >&2; return 1; }
 }
 
+valid_sandbox_collection() {
+  jq -e '
+    type=="array" and all(.[];
+      type=="object"
+      and ((keys_unsorted)-["name","repository","revision","buildpack","desired","phase","resumePhase","packMemberId","lastError","operations","createdAt","updatedAt"]|length)==0
+      and (.name|type=="string" and length>0)
+      and (.repository|type=="string")
+      and (.buildpack|type=="string" and length>0)
+      and (.desired=="present" or .desired=="deleted")
+      and (.phase|type=="string" and length>0)
+      and (.createdAt|type=="string" and length>0)
+      and (.updatedAt|type=="string" and length>0)
+      and (.revision==null or (.revision|type=="string"))
+      and (.resumePhase==null or (.resumePhase|type=="string"))
+      and (.packMemberId==null or (.packMemberId|type=="string"))
+      and (.lastError==null or (.lastError|type=="string"))
+      and (.operations==null or ((.operations|type=="array") and all(.operations[];
+        type=="object"
+        and ((keys_unsorted)-["name","summary","startedAt","duration","success","error"]|length)==0
+        and (.name|type=="string")
+        and (.startedAt|type=="string")
+        and (.duration|type=="number")
+        and (.success|type=="boolean")
+        and (.summary==null or (.summary|type=="string"))
+        and (.error==null or (.error|type=="string"))
+      )))
+    )
+  ' "$1" >/dev/null 2>&1
+}
+
 api_error() {
   local status=$1
   printf 'smoke: manager request failed (HTTP %s): %s\n' "$status" \
@@ -198,6 +228,13 @@ fi
 status=$(gateway_status POST "$MANAGER_URL/manager/api/session" "$TOKEN_JSON")
 [[ $status == 204 ]] || { api_error "$status"; exit 1; }
 rm -f "$TOKEN_JSON"
+status=$(gateway_status GET "$MANAGER_URL/manager/api/sandboxes")
+[[ $status == 200 ]] || { api_error "$status"; exit 1; }
+valid_sandbox_collection "$RESPONSE_JSON" || { printf 'smoke: manager sandbox preflight returned unexpected schema\n' >&2; exit 1; }
+if jq -e --arg name "$SANDBOX_NAME" '.[]|select(.name==$name)' "$RESPONSE_JSON" >/dev/null; then
+  printf 'smoke: sandbox name already has a manager record\n' >&2
+  exit 1
+fi
 cleanup_armed=1
 trap managed_cleanup EXIT INT TERM
 status=$(gateway_status POST "$MANAGER_URL/manager/api/sandboxes" "$CREATE_JSON")

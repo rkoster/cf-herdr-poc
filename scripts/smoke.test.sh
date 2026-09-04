@@ -67,7 +67,10 @@ case "$url $method" in
     [[ $status == 202 ]] && touch "$FAKE_STATE/manager-cleaned"
     ;;
   */manager/api/sandboxes\ GET)
-    if [[ ${FAKE_SCENARIO:-happy} == malformed ]]; then body='{bad';
+    if [[ ! -f "$FAKE_STATE/created" && ${FAKE_SCENARIO:-happy} == orphan_manager ]]; then body='[{"name":"smoke-fixed","repository":"https://example.invalid/orphan.git","buildpack":"binary_buildpack","desired":"present","phase":"failed","lastError":"orphan","createdAt":"2026-09-03T00:00:00Z","updatedAt":"2026-09-03T00:01:00Z"}]'
+    elif [[ ! -f "$FAKE_STATE/created" && ${FAKE_SCENARIO:-happy} == manager_preflight_bad ]]; then body='{}'
+    elif [[ ! -f "$FAKE_STATE/created" ]]; then body='[]'
+    elif [[ ${FAKE_SCENARIO:-happy} == malformed ]]; then body='{bad';
     elif [[ -f "$FAKE_STATE/manager-cleaned" ]]; then body='[]'
     elif [[ ${FAKE_SCENARIO:-happy} == failed ]]; then body='[{"name":"smoke-fixed","phase":"failed","lastError":"safe failure"}]'
     elif [[ ${FAKE_SCENARIO:-happy} == timeout ]]; then body='[{"name":"smoke-fixed","phase":"creating"}]'
@@ -342,6 +345,29 @@ test_preexisting_name_aborts_without_cleanup() {
   done
 }
 
+test_orphan_manager_record_aborts_without_cleanup() {
+  make_fakes
+  local output commands
+  output=$(FAKE_SCENARIO=orphan_manager run_failure no)
+  commands=$(<"$LOG")
+  assert_contains "$output" 'sandbox name already has a manager record'
+  assert_contains "$commands" '<--request> <GET>'
+  assert_not_contains "$commands" '<--request> <DELETE>'
+  assert_not_contains "$commands" 'cf <remove-route-policy>'
+  assert_not_contains "$commands" 'cf <delete-route>'
+  assert_not_contains "$commands" 'cf <delete> <smoke-fixed>'
+}
+
+test_manager_preflight_schema_is_strict() {
+  make_fakes
+  local output commands
+  output=$(FAKE_SCENARIO=manager_preflight_bad run_failure no)
+  commands=$(<"$LOG")
+  assert_contains "$output" 'manager sandbox preflight returned unexpected schema'
+  assert_not_contains "$commands" '<--request> <DELETE>'
+  assert_not_contains "$commands" 'cf <delete> <smoke-fixed>'
+}
+
 test_route_policy_schema_failures_are_not_absence() {
   local scenario output
   for scenario in policy_empty_object policy_wrong_resources policy_missing_field policy_wrong_relationships; do
@@ -377,6 +403,8 @@ test_identity_status_must_be_exact
 test_bad_lifecycle_and_security_responses_fail_closed
 test_create_response_failure_still_cleans_by_name
 test_preexisting_name_aborts_without_cleanup
+test_orphan_manager_record_aborts_without_cleanup
+test_manager_preflight_schema_is_strict
 test_route_policy_schema_failures_are_not_absence
 test_cleanup_is_armed_immediately_before_create
 test_cleanup_falls_back_to_direct_cf
