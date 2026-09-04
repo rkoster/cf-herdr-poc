@@ -8,7 +8,7 @@
 
 - A targeted, authenticated CF CLI v8 session with an org and space selected.
 - Permission to inspect apps, domains, routes, and route policies; SSH access to the manager and probe apps; and permission to remove sandbox resources.
-- An identity-routing domain visible through CAPI and route-policy commands available in the CLI.
+- An identity-routing domain and CAPI `GET /v3/route_policies` support. The currently targeted foundation lacks that endpoint, so live execution remains deferred.
 - A deployed manager whose `MANAGER_APP_NAME`, `MANAGER_APP_GUID`, and identity-route `MANAGER_ROUTE_HOST` are known.
 - A pre-provisioned `WRONG_IDENTITY_APP` in the same target. It must be SSH-enabled, include curl, and have a GUID distinct from the manager and generated sandbox app.
 - Portable Bun, Herdr, and Collie runtime binaries in the manager package.
@@ -50,7 +50,7 @@ Before arming destructive cleanup, the harness verifies that no app or identity-
 - Authenticated `GET /collie/api/snapshot?host=<member>` through the public manager gateway reports the reachable member.
 - Authenticated POST `/collie/api/workspace?host=<member>` with `{cwd:<configured path>,label:"smoke"}` succeeds and returns a pane ID.
 - The host-scoped snapshot reports that workspace and pane. The harness sends `printf 'smoke-ready\n'` through the pane reply route and confirms the marker through a host-scoped pane read.
-- Deletion removes the manager record. Authenticated Pack and snapshot reads then omit the member, while CAPI reports no app or route. The full identity-domain policy set must omit both the manager-to-sandbox destination tuple and the sandbox-to-manager enrollment tuple.
+- Deletion removes the manager record. Authenticated Pack and snapshot reads then omit the member, while CAPI reports no app or route. The harness resolves both route GUIDs, then uses filtered `GET /v3/route_policies?route_guids=<guid>&sources=cf%3Aapp%3A<guid>` requests to verify that the manager-to-sandbox and sandbox-to-manager tuples are absent.
 - Any malformed response, timeout, lifecycle failure, identity mismatch, failed leak query, or residual resource fails the run. The armed trap requests manager deletion and directly removes residual policy, route, and app resources when reconciliation does not.
 
 ## Timing Output

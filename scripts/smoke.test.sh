@@ -158,20 +158,32 @@ case "${1:-}" in
         fi ;;
       '/v3/routes?hosts=smoke-fixed&domain_guids=domain-guid')
         if [[ ${FAKE_SCENARIO:-happy} == preexisting_route ]]; then printf '{"resources":[{"guid":"old-route"}]}'
+        elif [[ -f "$FAKE_STATE/cf-resource-created" && ! -f "$FAKE_STATE/manager-cleaned" && ! -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[{"guid":"route-guid","host":"smoke-fixed"}]}'
         else printf '{"resources":[]}'
         fi ;;
-      '/routing/v1/route_policies')
+      '/v3/routes?hosts=manager-pack&domain_guids=domain-guid') printf '{"resources":[{"guid":"manager-route-guid","host":"manager-pack","relationships":{"domain":{"data":{"guid":"domain-guid"}}}}]}' ;;
+      '/v3/route_policies?route_guids=route-guid&sources=cf%3Aapp%3Amanager-guid')
         [[ ${FAKE_SCENARIO:-happy} != policy_query_failure ]] || exit 1
         if [[ ${FAKE_SCENARIO:-happy} == policy_empty_object ]]; then printf '{}'
         elif [[ ${FAKE_SCENARIO:-happy} == policy_wrong_resources ]]; then printf '{"resources":{}}'
-        elif [[ ${FAKE_SCENARIO:-happy} == policy_missing_field ]]; then printf '{"resources":[{"source":{"type":"cf-app","id":"manager-guid"},"destination":{"route":{"host":"smoke-fixed"}}}]}'
+        elif [[ ${FAKE_SCENARIO:-happy} == policy_missing_field ]]; then printf '{"resources":[{"source":"cf:app:manager-guid","relationships":{"route":{"data":{}}}}]}'
+        elif [[ ${FAKE_SCENARIO:-happy} == policy_wrong_relationships ]]; then printf '{"resources":[{"source":"cf:app:manager-guid","relationships":{}}]}'
         elif [[ ${FAKE_SCENARIO:-happy} == leak_sandbox_policy && ! -f "$FAKE_STATE/direct-cleaned" ]]; then
-          printf '{"resources":[{"source":{"type":"cf-app","id":"manager-guid"},"destination":{"route":{"domain":"identity.invalid","host":"smoke-fixed"}}}]}'
-        elif [[ ${FAKE_SCENARIO:-happy} == leak_manager_policy && ! -f "$FAKE_STATE/direct-cleaned" ]]; then
-          printf '{"resources":[{"source":{"type":"cf-app","id":"sandbox-guid"},"destination":{"route":{"domain":"identity.invalid","host":"manager-pack"}}}]}'
+          printf '{"resources":[{"source":"cf:app:manager-guid","relationships":{"route":{"data":{"guid":"route-guid"}}}}]}'
         elif [[ -f "$FAKE_STATE/manager-cleaned" || -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[]}'
-        else printf '{"resources":[{"source":{"type":"cf-app","id":"manager-guid"},"destination":{"route":{"domain":"identity.invalid","host":"smoke-fixed"}}},{"source":{"type":"cf-app","id":"sandbox-guid"},"destination":{"route":{"domain":"identity.invalid","host":"manager-pack"}}}]}'
+        else printf '{"resources":[{"source":"cf:app:manager-guid","relationships":{"route":{"data":{"guid":"route-guid"}}}}]}'
         fi ;;
+      '/v3/route_policies?route_guids=manager-route-guid&sources=cf%3Aapp%3Asandbox-guid')
+        [[ ${FAKE_SCENARIO:-happy} != policy_query_failure ]] || exit 1
+        if [[ ${FAKE_SCENARIO:-happy} == policy_empty_object ]]; then printf '{}'
+        elif [[ ${FAKE_SCENARIO:-happy} == policy_wrong_resources ]]; then printf '{"resources":{}}'
+        elif [[ ${FAKE_SCENARIO:-happy} == policy_missing_field ]]; then printf '{"resources":[{"source":"cf:app:sandbox-guid","relationships":{"route":{"data":{}}}}]}'
+        elif [[ ${FAKE_SCENARIO:-happy} == policy_wrong_relationships ]]; then printf '{"resources":[{"source":"cf:app:sandbox-guid"}]}'
+        elif [[ ${FAKE_SCENARIO:-happy} == leak_manager_policy && ! -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[{"source":"cf:app:sandbox-guid","relationships":{"route":{"data":{"guid":"manager-route-guid"}}}}]}'
+        elif [[ -f "$FAKE_STATE/manager-cleaned" || -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[]}'
+        else printf '{"resources":[{"source":"cf:app:sandbox-guid","relationships":{"route":{"data":{"guid":"manager-route-guid"}}}}]}'
+        fi ;;
+      /routing/v1/route_policies|/v3/route_policies) exit 97 ;;
       *) printf '{"resources":[]}' ;;
     esac ;;
   remove-route-policy|unmap-route|delete-route|delete) touch "$FAKE_STATE/direct-cleaned" ;;
@@ -234,6 +246,9 @@ test_full_flow_and_exact_identity_checks() {
   assert_contains "$commands" '<https://manager.invalid/collie/api/pane/w2%3At1%3Ap1/reply?host=smoke-fixed>'
   assert_contains "$commands" '<https://manager.invalid/collie/api/pane/w2%3At1%3Ap1?host=smoke-fixed>'
   assert_contains "$commands" '<https://manager.invalid/collie/api/pack>'
+  assert_contains "$commands" 'cf <curl> </v3/route_policies?route_guids=route-guid&sources=cf%3Aapp%3Amanager-guid>'
+  assert_contains "$commands" 'cf <curl> </v3/route_policies?route_guids=manager-route-guid&sources=cf%3Aapp%3Asandbox-guid>'
+  assert_not_contains "$commands" '/routing/v1/route_policies'
   [[ -f "$STATE/workspace-created" ]] || fail 'workspace was not created'
   [[ -f "$STATE/pane-action" ]] || fail 'pane action was not sent'
   assert_ordered "$commands" \
@@ -329,7 +344,7 @@ test_preexisting_name_aborts_without_cleanup() {
 
 test_route_policy_schema_failures_are_not_absence() {
   local scenario output
-  for scenario in policy_empty_object policy_wrong_resources policy_missing_field; do
+  for scenario in policy_empty_object policy_wrong_resources policy_missing_field policy_wrong_relationships; do
     make_fakes
     output=$(FAKE_SCENARIO=$scenario run_failure)
     assert_contains "$output" 'route-policy query returned unexpected schema'

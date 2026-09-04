@@ -74,19 +74,32 @@ api_error() {
     "$(jq -r 'if type=="object" then (.error//.message//"request failed") else "request failed" end | gsub("(?i)(bearer|token|password|secret)[=: ]+[^ ]+";"[redacted]")' "$RESPONSE_JSON" 2>/dev/null || printf 'request failed')" >&2
 }
 
+route_collection() {
+  local path=$1 expected_host=$2 expected_domain_guid=$3 output
+  output=$(cf curl "$path") || return 1
+  jq -e --arg host "$expected_host" --arg domain "$expected_domain_guid" '
+    type=="object" and (.resources|type=="array")
+    and all(.resources[];
+      (.guid|type=="string" and length>0)
+      and .host==$host
+      and .relationships.domain.data.guid==$domain
+    )
+  ' <<<"$output" >/dev/null 2>&1 || return 1
+  printf '%s' "$output"
+}
+
 policy_json() {
-  local output
-  if ! output=$(cf curl "/routing/v1/route_policies" 2>/dev/null); then
+  local route_guid=$1 source_guid=$2 encoded_source output
+  encoded_source=$(jq -rn --arg value "cf:app:$source_guid" '$value|@uri')
+  if ! output=$(cf curl "/v3/route_policies?route_guids=$route_guid&sources=$encoded_source" 2>/dev/null); then
     printf 'smoke: route-policy query failed\n' >&2
     return 1
   fi
   jq -e '
     type=="object" and (.resources|type=="array")
     and all(.resources[];
-      .source.type=="cf-app"
-      and (.source.id|type=="string" and length>0)
-      and (.destination.route.domain|type=="string" and length>0)
-      and (.destination.route.host|type=="string" and length>0)
+      (.source|type=="string" and length>0)
+      and (.relationships.route.data.guid|type=="string" and length>0)
     )
   ' <<<"$output" >/dev/null 2>&1 || { printf 'smoke: route-policy query returned unexpected schema\n' >&2; return 1; }
   printf '%s' "$output"
@@ -109,23 +122,21 @@ manager_absent() {
 }
 
 cf_resources_absent() {
-  local apps routes policies
+  local apps routes sandbox_policies manager_policies
   apps=$(cf curl "/v3/apps?names=$SANDBOX_NAME") || return 1
   routes=$(cf curl "/v3/routes?hosts=$SANDBOX_NAME") || return 1
-  policies=$(policy_json) || return 1
+  [[ -n ${sandbox_route_guid:-} && -n ${manager_route_guid:-} && -n ${sandbox_guid:-} ]] || return 1
+  sandbox_policies=$(policy_json "$sandbox_route_guid" "$MANAGER_APP_GUID") || return 1
+  manager_policies=$(policy_json "$manager_route_guid" "$sandbox_guid") || return 1
   [[ $(jq -r '.resources|length' <<<"$apps") == 0 && $(jq -r '.resources|length' <<<"$routes") == 0 ]] || return 1
-  ! matching_policy sandbox "$policies" && ! matching_policy manager "$policies"
+  ! matching_policy "$sandbox_policies" "$sandbox_route_guid" "$MANAGER_APP_GUID" && ! matching_policy "$manager_policies" "$manager_route_guid" "$sandbox_guid"
 }
 
 matching_policy() {
-  local direction=$1 body=$2 source destination
-  if [[ $direction == sandbox ]]; then source=$MANAGER_APP_GUID; destination=$IDENTITY_HOST
-  else [[ -n ${sandbox_guid:-} ]] || return 1; source=$sandbox_guid; destination="$MANAGER_ROUTE_HOST.$IDENTITY_DOMAIN"
-  fi
-  jq -e --arg source "$source" --arg destination "$destination" '
+  local body=$1 route_guid=$2 source_guid=$3
+  jq -e --arg source "cf:app:$source_guid" --arg route "$route_guid" '
     .resources[]
-    | select(.source.type=="cf-app" and .source.id==$source)
-    | select((.destination.route.host+"."+.destination.route.domain)==$destination)
+    | select(.source==$source and .relationships.route.data.guid==$route)
   ' <<<"$body" >/dev/null
 }
 
@@ -158,10 +169,12 @@ for field in user org space; do
   value=$(printf '%s\n' "$target" | jq -Rrs --arg field "$field" 'split("\n") | map(select(test("^"+$field+":";"i"))) | first // "" | sub("^[^:]+:[ ]*";"")')
   [[ -n $value ]] || { printf 'smoke: cf target has no authenticated %s\n' "$field" >&2; exit 1; }
 done
-cf help route-policies >/dev/null 2>&1 || { printf 'smoke: cf route-policy commands unavailable\n' >&2; exit 1; }
 domain_json=$(cf curl "/v3/domains?names=$IDENTITY_DOMAIN")
 [[ $(jq -r '.resources|length' <<<"$domain_json") == 1 ]] || { printf 'smoke: identity domain not found or ambiguous\n' >&2; exit 1; }
 identity_domain_guid=$(jq -er '.resources[0].guid' <<<"$domain_json") || { printf 'smoke: identity domain response invalid\n' >&2; exit 1; }
+manager_routes=$(route_collection "/v3/routes?hosts=$MANAGER_ROUTE_HOST&domain_guids=$identity_domain_guid" "$MANAGER_ROUTE_HOST" "$identity_domain_guid") || { printf 'smoke: manager enrollment route response invalid\n' >&2; exit 1; }
+[[ $(jq -r '.resources|length' <<<"$manager_routes") == 1 ]] || { printf 'smoke: manager enrollment route not found or ambiguous\n' >&2; exit 1; }
+manager_route_guid=$(jq -er '.resources[0].guid' <<<"$manager_routes")
 
 app_guid() {
   local name=$1 body
@@ -228,15 +241,17 @@ done
 sandbox_guid=$(app_guid "$SANDBOX_NAME") || { printf 'smoke: sandbox app not found\n' >&2; exit 1; }
 [[ $sandbox_guid != "$actual_manager_guid" && $sandbox_guid != "$wrong_guid" ]] || { printf 'smoke: sandbox app identity is not distinct\n' >&2; exit 1; }
 routes_json=$(cf curl "/v3/apps/$sandbox_guid/routes")
-if ! route_rows=$(jq -er '.resources | if type=="array" then . else error("resources") end | .[] | [.host,.relationships.domain.data.guid] | @tsv' <<<"$routes_json"); then
+if ! route_rows=$(jq -er '.resources | if type=="array" then . else error("resources") end | .[] | [.guid,.host,.relationships.domain.data.guid] | @tsv' <<<"$routes_json"); then
   printf 'smoke: invalid sandbox route JSON\n' >&2
   exit 1
 fi
-while IFS=$'\t' read -r host domain_guid; do
-  [[ -n $host && -n $domain_guid ]] || { printf 'smoke: invalid sandbox route JSON\n' >&2; exit 1; }
+while IFS=$'\t' read -r route_guid host domain_guid; do
+  [[ -n $route_guid && -n $host && -n $domain_guid ]] || { printf 'smoke: invalid sandbox route JSON\n' >&2; exit 1; }
   domain=$(cf curl "/v3/domains/$domain_guid" | jq -er '.name')
   [[ $host == "$SANDBOX_NAME" && $domain == "$IDENTITY_DOMAIN" ]] || { printf 'smoke: ordinary public sandbox route is mapped\n' >&2; exit 1; }
+  sandbox_route_guid=$route_guid
 done <<<"$route_rows"
+[[ -n ${sandbox_route_guid:-} ]] || { printf 'smoke: sandbox identity route missing\n' >&2; exit 1; }
 
 status=$(plain_status "$IDENTITY_URL/pack/v1/hello")
 case $status in 2??) printf 'smoke: identity route accepted request without instance certificate\n' >&2; exit 1 ;; esac
@@ -325,11 +340,12 @@ status=$(gateway_status GET "$MANAGER_URL/collie/api/pack")
 
 apps=$(cf curl "/v3/apps?names=$SANDBOX_NAME") || { printf 'smoke: app query failed after deletion\n' >&2; exit 1; }
 routes=$(cf curl "/v3/routes?hosts=$SANDBOX_NAME") || { printf 'smoke: route query failed after deletion\n' >&2; exit 1; }
-policies=$(policy_json)
+sandbox_policies=$(policy_json "$sandbox_route_guid" "$MANAGER_APP_GUID")
+manager_policies=$(policy_json "$manager_route_guid" "$sandbox_guid")
 [[ $(jq -r '.resources|length' <<<"$apps") == 0 ]] || { printf 'smoke: app remains after deletion\n' >&2; exit 1; }
 [[ $(jq -r '.resources|length' <<<"$routes") == 0 ]] || { printf 'smoke: route remains after deletion\n' >&2; exit 1; }
-! matching_policy sandbox "$policies" || { printf 'smoke: sandbox route policy remains after deletion\n' >&2; exit 1; }
-! matching_policy manager "$policies" || { printf 'smoke: manager enrollment policy remains after deletion\n' >&2; exit 1; }
+! matching_policy "$sandbox_policies" "$sandbox_route_guid" "$MANAGER_APP_GUID" || { printf 'smoke: sandbox route policy remains after deletion\n' >&2; exit 1; }
+! matching_policy "$manager_policies" "$manager_route_guid" "$sandbox_guid" || { printf 'smoke: manager enrollment policy remains after deletion\n' >&2; exit 1; }
 printf '%-20s %s\n' delete "$((absent_observed-delete_submitted))"
 
 cleanup_armed=0
