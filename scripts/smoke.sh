@@ -17,28 +17,9 @@ SMOKE_TIMEOUT=${SMOKE_TIMEOUT:-1200}
 SMOKE_POLL_INTERVAL=${SMOKE_POLL_INTERVAL:-5}
 SMOKE_WORKSPACE_CWD=${SMOKE_WORKSPACE_CWD:-/home/vcap/app}
 
-early_cleanup() {
-  local exit_status=$? base=${MANAGER_URL%/} guid=
-  trap - EXIT INT TERM
-  if [[ -n ${COOKIE_JAR:-} && -f ${COOKIE_JAR:-} ]]; then
-    curl --silent --output /dev/null --request DELETE --cookie "$COOKIE_JAR" "$base/manager/api/sandboxes/$SANDBOX_NAME" || true
-  else
-    curl --silent --output /dev/null --request DELETE "$base/manager/api/sandboxes/$SANDBOX_NAME" || true
-  fi
-  guid=$(cf curl "/v3/apps?names=$SANDBOX_NAME" 2>/dev/null | jq -r '.resources[0].guid//empty' 2>/dev/null) || true
-  cf remove-route-policy "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" --source "cf:app:$MANAGER_APP_GUID" >/dev/null 2>&1 || true
-  [[ -z $guid ]] || cf remove-route-policy "$IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$guid" >/dev/null 2>&1 || true
-  cf unmap-route "$SANDBOX_NAME" "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" >/dev/null 2>&1 || true
-  cf delete-route "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" -f >/dev/null 2>&1 || true
-  cf delete "$SANDBOX_NAME" -f -r >/dev/null 2>&1 || true
-  [[ -z ${WORK_DIR:-} ]] || rm -rf "$WORK_DIR"
-  exit "$exit_status"
-}
-
 SANDBOX_NAME=${SMOKE_NAME:-smoke-$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM}
-trap early_cleanup EXIT INT TERM
 [[ $SANDBOX_NAME =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || { printf 'smoke: invalid sandbox name\n' >&2; exit 2; }
-cleanup_armed=1
+cleanup_armed=0
 [[ $IDENTITY_DOMAIN =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && $IDENTITY_DOMAIN == *.* ]] || { printf 'smoke: invalid identity domain\n' >&2; exit 2; }
 [[ $SMOKE_TIMEOUT =~ ^[1-9][0-9]*$ && $SMOKE_POLL_INTERVAL =~ ^[0-9]+$ ]] || { printf 'smoke: invalid timeout or poll interval\n' >&2; exit 2; }
 
@@ -47,6 +28,7 @@ IDENTITY_HOST="$SANDBOX_NAME.$IDENTITY_DOMAIN"
 IDENTITY_URL="https://$IDENTITY_HOST"
 WORK_DIR=$(mktemp -d)
 chmod 700 "$WORK_DIR"
+trap 'rm -rf "$WORK_DIR"' EXIT INT TERM
 TOKEN_JSON="$WORK_DIR/login.json"
 COOKIE_JAR="$WORK_DIR/cookies"
 CREATE_JSON="$WORK_DIR/create.json"
@@ -98,7 +80,15 @@ policy_json() {
     printf 'smoke: route-policy query failed\n' >&2
     return 1
   fi
-  jq -e . <<<"$output" >/dev/null 2>&1 || { printf 'smoke: route-policy query returned invalid JSON\n' >&2; return 1; }
+  jq -e '
+    type=="object" and (.resources|type=="array")
+    and all(.resources[];
+      .source.type=="cf-app"
+      and (.source.id|type=="string" and length>0)
+      and (.destination.route.domain|type=="string" and length>0)
+      and (.destination.route.host|type=="string" and length>0)
+    )
+  ' <<<"$output" >/dev/null 2>&1 || { printf 'smoke: route-policy query returned unexpected schema\n' >&2; return 1; }
   printf '%s' "$output"
 }
 
@@ -133,12 +123,9 @@ matching_policy() {
   else [[ -n ${sandbox_guid:-} ]] || return 1; source=$sandbox_guid; destination="$MANAGER_ROUTE_HOST.$IDENTITY_DOMAIN"
   fi
   jq -e --arg source "$source" --arg destination "$destination" '
-    (.policies//.resources//[])[]
-    | select(
-        (.source.type=="app" or .source.type=="cf-app")
-        and (.source.value//.source.id)==$source
-        and (.destination.host//.destination.route.host)==$destination
-      )
+    .resources[]
+    | select(.source.type=="cf-app" and .source.id==$source)
+    | select((.destination.route.host+"."+.destination.route.domain)==$destination)
   ' <<<"$body" >/dev/null
 }
 
@@ -174,6 +161,7 @@ done
 cf help route-policies >/dev/null 2>&1 || { printf 'smoke: cf route-policy commands unavailable\n' >&2; exit 1; }
 domain_json=$(cf curl "/v3/domains?names=$IDENTITY_DOMAIN")
 [[ $(jq -r '.resources|length' <<<"$domain_json") == 1 ]] || { printf 'smoke: identity domain not found or ambiguous\n' >&2; exit 1; }
+identity_domain_guid=$(jq -er '.resources[0].guid' <<<"$domain_json") || { printf 'smoke: identity domain response invalid\n' >&2; exit 1; }
 
 app_guid() {
   local name=$1 body
@@ -185,9 +173,20 @@ wrong_guid=$(app_guid "$WRONG_IDENTITY_APP") || { printf 'smoke: wrong-identity 
 [[ $actual_manager_guid == "$MANAGER_APP_GUID" ]] || { printf 'smoke: manager app GUID does not match MANAGER_APP_GUID\n' >&2; exit 1; }
 [[ $wrong_guid != "$actual_manager_guid" ]] || { printf 'smoke: wrong-identity app must differ from manager\n' >&2; exit 1; }
 
+existing_apps=$(cf curl "/v3/apps?names=$SANDBOX_NAME") || { printf 'smoke: sandbox name preflight app query failed\n' >&2; exit 1; }
+existing_routes=$(cf curl "/v3/routes?hosts=$SANDBOX_NAME&domain_guids=$identity_domain_guid") || { printf 'smoke: sandbox name preflight route query failed\n' >&2; exit 1; }
+jq -e '.resources|type=="array"' <<<"$existing_apps" >/dev/null 2>&1 || { printf 'smoke: sandbox name preflight app response invalid\n' >&2; exit 1; }
+jq -e '.resources|type=="array"' <<<"$existing_routes" >/dev/null 2>&1 || { printf 'smoke: sandbox name preflight route response invalid\n' >&2; exit 1; }
+if [[ $(jq -r '.resources|length' <<<"$existing_apps") != 0 || $(jq -r '.resources|length' <<<"$existing_routes") != 0 ]]; then
+  printf 'smoke: sandbox name already has CF resources\n' >&2
+  exit 1
+fi
+
 status=$(gateway_status POST "$MANAGER_URL/manager/api/session" "$TOKEN_JSON")
 [[ $status == 204 ]] || { api_error "$status"; exit 1; }
 rm -f "$TOKEN_JSON"
+cleanup_armed=1
+trap managed_cleanup EXIT INT TERM
 status=$(gateway_status POST "$MANAGER_URL/manager/api/sandboxes" "$CREATE_JSON")
 [[ $status == 202 ]] || { api_error "$status"; exit 1; }
 valid_json "$RESPONSE_JSON"

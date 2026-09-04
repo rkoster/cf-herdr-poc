@@ -140,8 +140,10 @@ case "${1:-}" in
         else printf '{"resources":[{"guid":"wrong-guid","name":"wrong-app"}]}'
         fi ;;
       '/v3/apps?names=smoke-fixed')
-        if [[ -f "$FAKE_STATE/manager-cleaned" || -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[]}'
-        else printf '{"resources":[{"guid":"sandbox-guid","name":"smoke-fixed"}]}'
+        if [[ ${FAKE_SCENARIO:-happy} == preexisting_app ]]; then printf '{"resources":[{"guid":"old-guid","name":"smoke-fixed"}]}'
+        elif [[ -f "$FAKE_STATE/manager-cleaned" || -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[]}'
+        elif [[ -f "$FAKE_STATE/cf-resource-created" ]]; then printf '{"resources":[{"guid":"sandbox-guid","name":"smoke-fixed"}]}'
+        else printf '{"resources":[]}'
         fi ;;
       /v3/apps/sandbox-guid/routes)
         if [[ ${FAKE_SCENARIO:-happy} == malformed_routes ]]; then printf '{bad'
@@ -149,18 +151,26 @@ case "${1:-}" in
         fi ;;
       /v3/domains/domain-guid) printf '{"guid":"domain-guid","name":"identity.invalid"}' ;;
       '/v3/routes?hosts=smoke-fixed')
-        if [[ ${FAKE_SCENARIO:-happy} == leaked_route && ! -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[{"guid":"leak"}]}'
+        if [[ ${FAKE_SCENARIO:-happy} == preexisting_route ]]; then printf '{"resources":[{"guid":"old-route","host":"smoke-fixed","relationships":{"domain":{"data":{"guid":"domain-guid"}}}}]}'
+        elif [[ ${FAKE_SCENARIO:-happy} == leaked_route && ! -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[{"guid":"leak"}]}'
         elif [[ -f "$FAKE_STATE/manager-cleaned" || -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[]}'
         else printf '{"resources":[{"guid":"route-guid"}]}'
         fi ;;
+      '/v3/routes?hosts=smoke-fixed&domain_guids=domain-guid')
+        if [[ ${FAKE_SCENARIO:-happy} == preexisting_route ]]; then printf '{"resources":[{"guid":"old-route"}]}'
+        else printf '{"resources":[]}'
+        fi ;;
       '/routing/v1/route_policies')
         [[ ${FAKE_SCENARIO:-happy} != policy_query_failure ]] || exit 1
-        if [[ ${FAKE_SCENARIO:-happy} == leak_sandbox_policy && ! -f "$FAKE_STATE/direct-cleaned" ]]; then
-          printf '{"policies":[{"source":{"type":"cf-app","id":"manager-guid"},"destination":{"route":{"host":"smoke-fixed.identity.invalid"}}}]}'
+        if [[ ${FAKE_SCENARIO:-happy} == policy_empty_object ]]; then printf '{}'
+        elif [[ ${FAKE_SCENARIO:-happy} == policy_wrong_resources ]]; then printf '{"resources":{}}'
+        elif [[ ${FAKE_SCENARIO:-happy} == policy_missing_field ]]; then printf '{"resources":[{"source":{"type":"cf-app","id":"manager-guid"},"destination":{"route":{"host":"smoke-fixed"}}}]}'
+        elif [[ ${FAKE_SCENARIO:-happy} == leak_sandbox_policy && ! -f "$FAKE_STATE/direct-cleaned" ]]; then
+          printf '{"resources":[{"source":{"type":"cf-app","id":"manager-guid"},"destination":{"route":{"domain":"identity.invalid","host":"smoke-fixed"}}}]}'
         elif [[ ${FAKE_SCENARIO:-happy} == leak_manager_policy && ! -f "$FAKE_STATE/direct-cleaned" ]]; then
-          printf '{"policies":[{"source":{"type":"cf-app","id":"sandbox-guid"},"destination":{"route":{"host":"manager-pack.identity.invalid"}}}]}'
-        elif [[ -f "$FAKE_STATE/manager-cleaned" || -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"policies":[]}'
-        else printf '{"policies":[{"source":{"type":"cf-app","id":"manager-guid"},"destination":{"route":{"host":"smoke-fixed.identity.invalid"}}},{"source":{"type":"cf-app","id":"sandbox-guid"},"destination":{"route":{"host":"manager-pack.identity.invalid"}}}]}'
+          printf '{"resources":[{"source":{"type":"cf-app","id":"sandbox-guid"},"destination":{"route":{"domain":"identity.invalid","host":"manager-pack"}}}]}'
+        elif [[ -f "$FAKE_STATE/manager-cleaned" || -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[]}'
+        else printf '{"resources":[{"source":{"type":"cf-app","id":"manager-guid"},"destination":{"route":{"domain":"identity.invalid","host":"smoke-fixed"}}},{"source":{"type":"cf-app","id":"sandbox-guid"},"destination":{"route":{"domain":"identity.invalid","host":"manager-pack"}}}]}'
         fi ;;
       *) printf '{"resources":[]}' ;;
     esac ;;
@@ -303,12 +313,35 @@ test_create_response_failure_still_cleans_by_name() {
   done
 }
 
-test_cleanup_trap_is_installed_immediately_after_name() {
-  local script name_line trap_line
+test_preexisting_name_aborts_without_cleanup() {
+  local scenario output commands
+  for scenario in preexisting_app preexisting_route; do
+    make_fakes
+    output=$(FAKE_SCENARIO=$scenario run_failure no)
+    commands=$(<"$LOG")
+    assert_contains "$output" 'sandbox name already has CF resources'
+    assert_not_contains "$commands" '/manager/api/sandboxes/smoke-fixed>'
+    assert_not_contains "$commands" 'cf <remove-route-policy>'
+    assert_not_contains "$commands" 'cf <delete-route>'
+    assert_not_contains "$commands" 'cf <delete> <smoke-fixed>'
+  done
+}
+
+test_route_policy_schema_failures_are_not_absence() {
+  local scenario output
+  for scenario in policy_empty_object policy_wrong_resources policy_missing_field; do
+    make_fakes
+    output=$(FAKE_SCENARIO=$scenario run_failure)
+    assert_contains "$output" 'route-policy query returned unexpected schema'
+  done
+}
+
+test_cleanup_is_armed_immediately_before_create() {
+  local script arm_line post_line
   script=$(<"$SCRIPT")
-  name_line=$(jq -Rrs 'split("\n")|to_entries|map(select(.value|startswith("SANDBOX_NAME=")))|.[0].key' <<<"$script")
-  trap_line=$(jq -Rrs 'split("\n")|to_entries|map(select(.value=="trap early_cleanup EXIT INT TERM"))|.[0].key' <<<"$script")
-  (( trap_line > name_line && trap_line - name_line <= 3 )) || fail 'cleanup trap is not installed immediately after sandbox naming'
+  arm_line=$(jq -Rrs 'split("\n")|to_entries|map(select(.value=="cleanup_armed=1"))|.[0].key' <<<"$script")
+  post_line=$(jq -Rrs 'split("\n")|to_entries|map(select(.value|contains("gateway_status POST") and contains("/manager/api/sandboxes")))|.[0].key' <<<"$script")
+  (( post_line > arm_line && post_line - arm_line <= 3 )) || fail 'cleanup is not armed immediately before create POST'
 }
 
 test_cleanup_falls_back_to_direct_cf() {
@@ -328,6 +361,8 @@ test_docs_require_complete_live_prerequisites
 test_identity_status_must_be_exact
 test_bad_lifecycle_and_security_responses_fail_closed
 test_create_response_failure_still_cleans_by_name
-test_cleanup_trap_is_installed_immediately_after_name
+test_preexisting_name_aborts_without_cleanup
+test_route_policy_schema_failures_are_not_absence
+test_cleanup_is_armed_immediately_before_create
 test_cleanup_falls_back_to_direct_cf
 printf 'PASS smoke script tests\n'

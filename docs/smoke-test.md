@@ -36,6 +36,8 @@ bash scripts/smoke.sh
 
 `SMOKE_NAME` may override the generated unique name. The script refuses to invoke CF or curl unless `SMOKE_LIVE=1` is present. It sends the manager token from an owner-only temporary JSON file, obtains an owner-only session cookie jar, and removes both through the cleanup trap. Credentials and certificate/key contents are never printed or placed in curl process arguments.
 
+Before arming destructive cleanup, the harness verifies that no app or identity-domain route already uses the stable sandbox name. It then arms cleanup immediately before creation. A concurrent creator can still race this check; that limitation is accepted for this POC.
+
 ## Exact Assertions
 
 - `cf target` names an authenticated user, org, and space; the identity domain exists; route-policy commands are available.
