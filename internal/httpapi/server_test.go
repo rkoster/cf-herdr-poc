@@ -10,12 +10,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"cf-herdr-poc/internal/cf"
 	"cf-herdr-poc/internal/model"
+	"cf-herdr-poc/internal/reconcile"
 )
 
 type memoryStore struct {
@@ -58,6 +62,12 @@ func (s *memoryStore) Update(name string, fn func(*model.Sandbox) error) error {
 		return err
 	}
 	s.items[name] = v
+	return nil
+}
+func (s *memoryStore) Delete(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.items, name)
 	return nil
 }
 
@@ -350,6 +360,117 @@ func TestSandboxLifecycleAPI(t *testing.T) {
 	if stored.Desired != model.DesiredDeleted || stored.Phase != model.PhaseDeleting {
 		t.Fatalf("delete was not persisted first: %#v", stored)
 	}
+}
+
+type ownershipRunner struct {
+	mu       sync.Mutex
+	commands [][]string
+}
+
+func (r *ownershipRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.commands = append(r.commands, append([]string{name}, args...))
+	if len(args) == 3 && args[0] == "app" && args[2] == "--guid" {
+		return []byte("22222222-2222-4222-8222-222222222222"), nil
+	}
+	return nil, errors.New("unexpected CF mutation")
+}
+
+type ownershipRuntime struct{ path string }
+
+func (r ownershipRuntime) Prepare(context.Context, string, string) (reconcile.Prepared, error) {
+	return reconcile.Prepared{Path: r.path, Revision: "revision"}, nil
+}
+func (ownershipRuntime) Prepared(string) (bool, error)          { return true, nil }
+func (ownershipRuntime) InstallEnrollment(string, string) error { return nil }
+func (ownershipRuntime) Cleanup(string) error                   { return nil }
+
+type ownershipEnrollment struct{ path string }
+
+func (e ownershipEnrollment) Path() string       { return e.path }
+func (ownershipEnrollment) ExpiresAt() time.Time { return time.Time{} }
+func (ownershipEnrollment) Cleanup() error       { return nil }
+
+type ownershipPack struct{ enrollment ownershipEnrollment }
+
+func (p ownershipPack) PrepareEnrollment(context.Context, string, string) (reconcile.Enrollment, error) {
+	return p.enrollment, nil
+}
+func (ownershipPack) MemberPresent(context.Context, string) (bool, error) { return false, nil }
+func (ownershipPack) RemoveMember(context.Context, string) error          { return nil }
+
+type ownershipProbe struct{}
+
+func (ownershipProbe) Reachable(context.Context, string) (bool, error) { return false, nil }
+func (ownershipProbe) TriggerEnrollment(context.Context, string) (model.Operation, error) {
+	return model.Operation{}, nil
+}
+
+type ownershipClock struct{}
+
+func (ownershipClock) Now() time.Time                            { return time.Unix(100, 0).UTC() }
+func (ownershipClock) Wait(context.Context, time.Duration) error { return nil }
+
+func TestExistingCFAppBlocksCreatePushAndSurvivesDelete(t *testing.T) {
+	collie := httptest.NewServer(http.NotFoundHandler())
+	defer collie.Close()
+	workRoot := t.TempDir()
+	bitsPath := filepath.Join(workRoot, "demo")
+	if err := os.Mkdir(bitsPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	invitePath := filepath.Join(workRoot, "invite")
+	if err := os.WriteFile(invitePath, []byte("invite"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := &memoryStore{items: map[string]model.Sandbox{}}
+	run := &ownershipRunner{}
+	provider := cf.Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}
+	r := reconcile.New(
+		reconcile.Config{WorkRoot: workRoot, IdentityDomain: "identity.example", ManagerRouteHost: "manager", ManagerPackHost: "manager.identity.example", ManagerAppGUID: "11111111-1111-4111-8111-111111111111"},
+		store, ownershipRuntime{path: bitsPath}, provider, ownershipPack{ownershipEnrollment{path: invitePath}}, ownershipProbe{}, ownershipClock{},
+	)
+	h := newTestHandler(t, store, r, collie)
+	defer func() { _ = h.Close(context.Background()) }()
+
+	created := request(t, h, http.MethodPost, "/manager/api/sandboxes", `{"name":"demo","repository":"https://git.example/demo.git","buildpack":"ruby_buildpack"}`, "public.example", true)
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d: %s", created.Code, created.Body.String())
+	}
+	waitForSandbox(t, store, "demo", func(s model.Sandbox) bool { return s.Phase == model.PhaseFailed })
+
+	deleted := request(t, h, http.MethodDelete, "/manager/api/sandboxes/demo", "", "public.example", true)
+	if deleted.Code != http.StatusAccepted {
+		t.Fatalf("delete status = %d", deleted.Code)
+	}
+	got := waitForSandbox(t, store, "demo", func(s model.Sandbox) bool {
+		return s.Phase == model.PhaseFailed && strings.Contains(s.LastError, "ownership unknown")
+	})
+	if got.AppGUID != "" {
+		t.Fatalf("preexisting app GUID was adopted: %#v", got)
+	}
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	for _, command := range run.commands {
+		if len(command) > 1 && (command[1] == "push" || command[1] == "delete" || command[1] == "unmap-route") {
+			t.Fatalf("preexisting app was mutated: %#v", run.commands)
+		}
+	}
+}
+
+func waitForSandbox(t *testing.T, store *memoryStore, name string, ready func(model.Sandbox) bool) model.Sandbox {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if value, ok := store.Get(name); ok && ready(value) {
+			return value
+		}
+		time.Sleep(time.Millisecond)
+	}
+	value, _ := store.Get(name)
+	t.Fatalf("sandbox did not reach expected state: %#v", value)
+	return model.Sandbox{}
 }
 
 func TestAPIValidationAndSortedGET(t *testing.T) {

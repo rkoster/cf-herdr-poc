@@ -64,6 +64,7 @@ type App struct {
 
 type CloudFoundry interface {
 	Stage(context.Context, PushRequest) (model.Operation, error)
+	EnsureAppAbsent(context.Context, string) (model.Operation, error)
 	AppGUID(context.Context, string) (string, model.Operation, error)
 	ConfigureEnrollment(context.Context, string, string, string) (model.Operation, error)
 	StartApp(context.Context, string) (model.Operation, error)
@@ -88,6 +89,9 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
+	if e.Operation == "stage" && e.Kind == "already_exists" {
+		return "stage app name already exists"
+	}
 	return e.Operation + " " + e.Kind
 }
 
@@ -109,8 +113,43 @@ func (p Provider) Stage(ctx context.Context, request PushRequest) (model.Operati
 	if err := validateBitsPath(p.WorkRoot, request.BitsPath); err != nil {
 		return model.Operation{}, err
 	}
+	observation, err := p.EnsureAppAbsent(ctx, request.Name)
+	if err != nil {
+		if observation.Success {
+			observation.Success = false
+		}
+		if isProviderAlreadyExists(err) {
+			observation.Name = "stage"
+			observation.Error = "stage app name already exists"
+			return observation, &Error{Operation: "stage", Kind: "already_exists", Cause: err}
+		}
+		return observation, err
+	}
 	operation, _, err := p.execute(ctx, "stage", "push", request.Name, "--no-route", "--no-start", "-b", request.Buildpack, "-p", request.BitsPath, "-c", "./.sandbox/start.sh")
 	return operation, err
+}
+
+func (p Provider) EnsureAppAbsent(ctx context.Context, name string) (model.Operation, error) {
+	if err := validateName("app", name); err != nil {
+		return model.Operation{}, err
+	}
+	operation, output, err := p.execute(ctx, "app-absence", "app", name, "--guid")
+	if err != nil {
+		if isProviderAbsent(err) {
+			operation.Success = true
+			operation.Error = ""
+			return operation, nil
+		}
+		return operation, err
+	}
+	if err := validateGUID(strings.TrimSpace(string(output))); err != nil {
+		operation.Success = false
+		operation.Error = "cf app returned an invalid GUID"
+		return operation, errors.New(operation.Error)
+	}
+	operation.Success = false
+	operation.Error = "app name already exists"
+	return operation, &Error{Operation: "app-absence", Kind: "already_exists"}
 }
 
 func (p Provider) ConfigureEnrollment(ctx context.Context, name, tokenAppPath, leadAddress string) (model.Operation, error) {
@@ -183,6 +222,10 @@ func (p Provider) RemoveRoute(ctx context.Context, request RouteRequest) (model.
 	result, err := p.executeMany(ctx, "remove-route", [][]string{{"remove-route-policy", request.Domain, "--hostname", request.Host, "--source", "cf:app:" + request.SourceAppGUID}})
 	if err != nil {
 		return result, err
+	}
+	if request.AppGUID == "" {
+		cleanup, cleanupErr := p.executeMany(ctx, "remove-route", [][]string{{"delete-route", request.Domain, "--hostname", request.Host, "-f"}})
+		return mergeOperations(result, cleanup), cleanupErr
 	}
 	identity, output, identityErr := p.execute(ctx, "remove-route", "app", request.AppName, "--guid")
 	result = mergeOperations(result, identity)
@@ -341,6 +384,11 @@ func isProviderAbsent(err error) bool {
 	return errors.As(err, &providerErr) && providerErr.Absent()
 }
 
+func isProviderAlreadyExists(err error) bool {
+	var classified interface{ AlreadyExists() bool }
+	return errors.As(err, &classified) && classified.AlreadyExists()
+}
+
 func (p Provider) execute(ctx context.Context, operationName string, args ...string) (model.Operation, []byte, error) {
 	started := time.Now().UTC()
 	operation := model.Operation{Name: operationName, StartedAt: started, Command: commandDisplay("cf", args)}
@@ -372,7 +420,7 @@ func classifyError(operation, output string) string {
 			return "already_exists"
 		}
 	}
-	if operation == "delete-app" || operation == "remove-route" || operation == "remove-route-policy" || operation == "app-guid" {
+	if operation == "delete-app" || operation == "remove-route" || operation == "remove-route-policy" || operation == "app-guid" || operation == "app-absence" {
 		if strings.Contains(value, "not found") || strings.Contains(value, "does not exist") {
 			return "not_found"
 		}
@@ -456,8 +504,10 @@ func validateRouteRequest(request RouteRequest) error {
 	if err := validateName("app", request.AppName); err != nil {
 		return err
 	}
-	if err := validateGUID(request.AppGUID); err != nil {
-		return err
+	if request.AppGUID != "" {
+		if err := validateGUID(request.AppGUID); err != nil {
+			return err
+		}
 	}
 	return validateRoutePolicy(RoutePolicyRequest{Domain: request.Domain, Host: request.Host, SourceAppGUID: request.SourceAppGUID})
 }

@@ -42,7 +42,7 @@ func (r *recordingRunner) Run(_ context.Context, name string, args ...string) ([
 	return output, err
 }
 
-func TestStageUsesExactArgvWithoutStartingOrDiscoveringGUID(t *testing.T) {
+func TestStageUsesExactArgvWithoutStartingOrAdoptingGUID(t *testing.T) {
 	_, statErr := os.Stat("/tmp/work/demo")
 	if errors.Is(statErr, os.ErrNotExist) {
 		if err := os.MkdirAll("/tmp/work/demo", 0o755); err != nil {
@@ -52,7 +52,7 @@ func TestStageUsesExactArgvWithoutStartingOrDiscoveringGUID(t *testing.T) {
 	} else if statErr != nil {
 		t.Fatal(statErr)
 	}
-	run := &recordingRunner{}
+	run := &recordingRunner{outputs: [][]byte{[]byte("App 'demo' not found"), nil}, errors: []error{errors.New("exit status 1"), nil}}
 	provider := Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: "/tmp/work"}
 
 	operation, err := provider.Stage(context.Background(), PushRequest{
@@ -61,12 +61,55 @@ func TestStageUsesExactArgvWithoutStartingOrDiscoveringGUID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []command{{name: "cf", args: []string{"push", "demo", "--no-route", "--no-start", "-b", "ruby_buildpack", "-p", "/tmp/work/demo", "-c", "./.sandbox/start.sh"}}}
+	want := []command{{name: "cf", args: []string{"app", "demo", "--guid"}}, {name: "cf", args: []string{"push", "demo", "--no-route", "--no-start", "-b", "ruby_buildpack", "-p", "/tmp/work/demo", "-c", "./.sandbox/start.sh"}}}
 	if !reflect.DeepEqual(run.commands, want) {
 		t.Fatalf("commands = %#v, want %#v", run.commands, want)
 	}
 	if !operation.Success || operation.Name != "stage" {
 		t.Fatalf("Stage() = %#v, want successful stage operation", operation)
+	}
+}
+
+func TestStageRefusesExistingAppNameWithoutPush(t *testing.T) {
+	bitsPath := t.TempDir()
+	run := &recordingRunner{outputs: [][]byte{[]byte(appGUID)}}
+
+	operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Stage(
+		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath},
+	)
+
+	var providerErr *Error
+	if !errors.As(err, &providerErr) || !providerErr.AlreadyExists() {
+		t.Fatalf("Stage() error = %T %v, want typed existing-app conflict", err, err)
+	}
+	if err.Error() != "stage app name already exists" {
+		t.Fatalf("Stage() error = %q", err)
+	}
+	if operation.Success || len(run.commands) != 1 || !reflect.DeepEqual(run.commands[0].args, []string{"app", "demo", "--guid"}) {
+		t.Fatalf("Stage() = %#v, commands = %#v", operation, run.commands)
+	}
+}
+
+func TestStagePushesWhenAppNameIsAbsent(t *testing.T) {
+	bitsPath := t.TempDir()
+	run := &recordingRunner{
+		outputs: [][]byte{[]byte("App 'demo' not found"), nil},
+		errors:  []error{errors.New("exit status 1"), nil},
+	}
+
+	operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Stage(
+		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath},
+	)
+
+	if err != nil || !operation.Success {
+		t.Fatalf("Stage() = (%#v, %v)", operation, err)
+	}
+	want := []command{
+		{name: "cf", args: []string{"app", "demo", "--guid"}},
+		{name: "cf", args: []string{"push", "demo", "--no-route", "--no-start", "-b", "ruby_buildpack", "-p", bitsPath, "-c", "./.sandbox/start.sh"}},
+	}
+	if !reflect.DeepEqual(run.commands, want) {
+		t.Fatalf("commands = %#v, want %#v", run.commands, want)
 	}
 }
 
@@ -137,7 +180,7 @@ func TestRemoveRouteContinuesAfterResourcesAreAbsent(t *testing.T) {
 
 func TestStageRetainsSanitizedDiagnostics(t *testing.T) {
 	bitsPath := t.TempDir()
-	run := &recordingRunner{outputs: [][]byte{[]byte("stage diagnostic")}}
+	run := &recordingRunner{outputs: [][]byte{[]byte("App 'demo' not found"), []byte("stage diagnostic")}, errors: []error{errors.New("exit status 1"), nil}}
 	operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Stage(
 		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath},
 	)
@@ -155,8 +198,8 @@ func TestStageRetainsSanitizedDiagnostics(t *testing.T) {
 func TestStageRetainsSanitizedFailureDiagnostic(t *testing.T) {
 	bitsPath := t.TempDir()
 	run := &recordingRunner{
-		outputs: [][]byte{[]byte("stage failed\nAuthorization: Bearer secret-value")},
-		errors:  []error{errors.New("exit status 1")},
+		outputs: [][]byte{[]byte("App 'demo' not found"), []byte("stage failed\nAuthorization: Bearer secret-value")},
+		errors:  []error{errors.New("exit status 1"), errors.New("exit status 1")},
 	}
 	operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Stage(
 		context.Background(), PushRequest{Name: "demo", Buildpack: "ruby_buildpack", BitsPath: bitsPath},
@@ -654,7 +697,7 @@ func TestOperationSummaryHasSmallExplicitCap(t *testing.T) {
 }
 
 func TestCommandDisplayIsBoundedAndSanitized(t *testing.T) {
-	run := &recordingRunner{outputs: [][]byte{nil, []byte(appGUID)}}
+	run := &recordingRunner{outputs: [][]byte{[]byte("App 'demo' not found"), nil}, errors: []error{errors.New("exit status 1"), nil}}
 	bitsPath := t.TempDir()
 	for i := 0; i < 6; i++ {
 		bitsPath = filepath.Join(bitsPath, strings.Repeat("x", 200)+"\nforged")
@@ -671,8 +714,8 @@ func TestCommandDisplayIsBoundedAndSanitized(t *testing.T) {
 	if len(operation.Command) > 1024 || strings.ContainsAny(operation.Command, "\r\n") {
 		t.Fatalf("unsafe command display length/content: %q", operation.Command)
 	}
-	if run.commands[0].args[7] != bitsPath {
-		t.Fatalf("bits argv = %q, want original discrete value", run.commands[0].args[7])
+	if run.commands[1].args[7] != bitsPath {
+		t.Fatalf("bits argv = %q, want original discrete value", run.commands[1].args[7])
 	}
 }
 

@@ -38,6 +38,7 @@ type Runtime interface {
 
 type CFProvider interface {
 	Stage(context.Context, cf.PushRequest) (model.Operation, error)
+	EnsureAppAbsent(context.Context, string) (model.Operation, error)
 	AppGUID(context.Context, string) (string, model.Operation, error)
 	ConfigureEnrollment(context.Context, string, string, string) (model.Operation, error)
 	StartApp(context.Context, string) (model.Operation, error)
@@ -453,24 +454,15 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sandbox model.Sandbox)
 		if err := r.persistPhase(sandbox.Name, model.PhaseDeleting, nil); err != nil {
 			return err
 		}
-		var op model.Operation
-		var err error
-		appGUID, op, err = r.effectGUID(ctx, sandbox.Name)
+		op, err := r.effectAppAbsent(ctx, sandbox.Name)
 		if save := r.appendOperation(sandbox.Name, op); save != nil {
 			return save
 		}
-		if err != nil && !isAbsent(err) {
-			return r.fail(sandbox.Name, model.PhaseDeleting, err)
-		}
-		appExists = err == nil
-		if appExists {
-			if err := r.store.Update(sandbox.Name, func(s *model.Sandbox) error {
-				s.AppGUID = appGUID
-				s.UpdatedAt = r.clock.Now()
-				return nil
-			}); err != nil {
-				return err
+		if err != nil {
+			if isAlreadyExists(err) {
+				return r.fail(sandbox.Name, model.PhaseDeleting, errors.New("app ownership unknown: persisted GUID is missing and app name already exists"))
 			}
+			return r.fail(sandbox.Name, model.PhaseDeleting, err)
 		}
 	}
 	if appExists {
@@ -669,6 +661,11 @@ func (r *Reconciler) effectTriggerEnrollment(ctx context.Context, host string) (
 func (r *Reconciler) effectGUID(ctx context.Context, name string) (string, model.Operation, error) {
 	r.effect("discover-guid")
 	return r.cf.AppGUID(ctx, name)
+}
+
+func (r *Reconciler) effectAppAbsent(ctx context.Context, name string) (model.Operation, error) {
+	r.effect("observe-app-absence")
+	return r.cf.EnsureAppAbsent(ctx, name)
 }
 func (r *Reconciler) effectSecureRoute(ctx context.Context, q cf.RouteRequest) (model.Operation, error) {
 	r.effect("secure-route")

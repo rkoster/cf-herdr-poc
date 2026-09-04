@@ -117,3 +117,5 @@ Artifact tests use fake executable fixtures only; they do not establish that any
 - The nested Collie checkout is intentionally a fork with POC changes and may be dirty; packaging must not modify its source or `.envrc`.
 - The source runtime requires a large copied Collie dependency tree, and portable Bun/Herdr acquisition is deliberately outside this repository.
 - The current CF target lacks an identity domain. Live route-policy, instance-identity, manager health, sandbox lifecycle, and browser-through-lead spikes are deferred and no successful result is claimed.
+- Sandbox staging checks `cf app NAME --guid` immediately before `cf push`, but separate CLI calls cannot make name reservation atomic. Another actor can still create the app in that lookup/push window; eliminating this race requires an atomic CAPI creation strategy.
+- Deletion never adopts an app GUID discovered by name. If a sandbox record has no persisted app GUID and that CF app name exists, stable manager-owned Pack state may be cleaned but the record remains failed with `ownership unknown`; an operator must investigate the potential orphan rather than risk deleting an unrelated app.

@@ -168,6 +168,7 @@ type fakeCF struct {
 	removedRoute cf.RouteRequest
 	deletedGUID  string
 	leadURL      string
+	appAbsent    bool
 }
 
 func (f *fakeCF) Stage(_ context.Context, _ cf.PushRequest) (model.Operation, error) {
@@ -187,6 +188,13 @@ func (f *fakeCF) AppGUID(context.Context, string) (string, model.Operation, erro
 		return f.guid, operation("app-guid", true), nil
 	}
 	return sandboxGUID, operation("app-guid", true), nil
+}
+func (f *fakeCF) EnsureAppAbsent(context.Context, string) (model.Operation, error) {
+	*f.calls = append(*f.calls, "observe-app-absence")
+	if f.appAbsent || f.guidErr != nil {
+		return operation("app-absence", true), nil
+	}
+	return operation("app-absence", false), &cf.Error{Operation: "app-absence", Kind: "already_exists"}
 }
 func (f *fakeCF) InspectApp(context.Context, string) (cf.App, error) {
 	*f.calls = append(*f.calls, "inspect-app")
@@ -799,7 +807,7 @@ func TestDeletionOrderRetainsFailuresForRetry(t *testing.T) {
 	}
 }
 
-func TestDeletionDiscoversAndCleansResourcesMissingFromPersistedState(t *testing.T) {
+func TestDeletionWithoutPersistedGUIDRetainsUnknownOwnershipRecordAndNeverMutatesApp(t *testing.T) {
 	r, s, _, _, pack, _, _, calls := fixture(model.PhaseCreating)
 	current, _ := s.Get("demo")
 	current.Desired = model.DesiredDeleted
@@ -808,13 +816,21 @@ func TestDeletionDiscoversAndCleansResourcesMissingFromPersistedState(t *testing
 	current.PackMemberID = ""
 	s.items["demo"] = current
 	pack.present = true
-	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
-		t.Fatal(err)
+	if err := r.ReconcileOne(context.Background(), "demo"); err == nil || !strings.Contains(err.Error(), "ownership unknown") {
+		t.Fatalf("ReconcileOne() error = %v, want ownership unknown", err)
 	}
-	if _, ok := s.Get("demo"); ok {
-		t.Fatal("record retained")
+	got, ok := s.Get("demo")
+	if !ok || got.Phase != model.PhaseFailed || !strings.Contains(got.LastError, "ownership unknown") || got.AppGUID != "" {
+		t.Fatalf("retained record = %#v, %v", got, ok)
 	}
-	assertSubsequence(t, *calls, []string{"observe-member", "remove-member", "discover-guid", "remove-manager-policy", "remove-route", "delete-app", "cleanup-bits", "delete-record"})
+	if count(*calls, "remove-member") != 1 || count(*calls, "observe-app-absence") != 1 {
+		t.Fatalf("stable cleanup calls = %#v", *calls)
+	}
+	for _, forbidden := range []string{"discover-guid", "remove-manager-policy", "remove-route", "delete-app", "delete-record"} {
+		if count(*calls, forbidden) != 0 {
+			t.Fatalf("unowned app mutation %q in calls %#v", forbidden, *calls)
+		}
+	}
 }
 
 func TestDeletionWithConfirmedMissingAppStillCleansStablePackAndRoute(t *testing.T) {
@@ -823,16 +839,16 @@ func TestDeletionWithConfirmedMissingAppStillCleansStablePackAndRoute(t *testing
 	current.Desired = model.DesiredDeleted
 	s.items["demo"] = current
 	pack.present = true
-	cloud.guidErr = &cf.Error{Kind: "not_found"}
+	cloud.appAbsent = true
 	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
 	}
-	if count(*calls, "remove-member") != 1 || count(*calls, "remove-route") != 1 || count(*calls, "remove-manager-policy") != 0 || count(*calls, "delete-app") != 0 {
+	if count(*calls, "remove-member") != 1 || count(*calls, "remove-route") != 1 || count(*calls, "remove-manager-policy") != 0 || count(*calls, "delete-app") != 0 || count(*calls, "discover-guid") != 0 {
 		t.Fatalf("calls=%#v", *calls)
 	}
 }
 
-func TestAmbiguousCreationPersistenceThenDeletionCleansAllExternalState(t *testing.T) {
+func TestAmbiguousCreationPersistenceThenDeletionRefusesAppMutation(t *testing.T) {
 	for _, phase := range []model.Phase{model.PhaseJoiningPack, model.PhaseSecuringManagerRoute, model.PhaseSecuringRoute, model.PhaseDiscoveringApp} {
 		t.Run(string(phase), func(t *testing.T) {
 			r, s, _, _, pack, _, _, calls := fixture(phase)
@@ -843,10 +859,15 @@ func TestAmbiguousCreationPersistenceThenDeletionCleansAllExternalState(t *testi
 			current.PackMemberID = ""
 			s.items["demo"] = current
 			pack.present = true
-			if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
-				t.Fatal(err)
+			if err := r.ReconcileOne(context.Background(), "demo"); err == nil || !strings.Contains(err.Error(), "ownership unknown") {
+				t.Fatalf("ReconcileOne() error = %v", err)
 			}
-			assertSubsequence(t, *calls, []string{"remove-member", "discover-guid", "remove-manager-policy", "remove-route", "delete-app", "delete-record"})
+			assertSubsequence(t, *calls, []string{"remove-member", "observe-app-absence"})
+			for _, forbidden := range []string{"discover-guid", "remove-manager-policy", "remove-route", "delete-app", "delete-record"} {
+				if count(*calls, forbidden) != 0 {
+					t.Fatalf("unowned mutation %q in %#v", forbidden, *calls)
+				}
+			}
 		})
 	}
 }
@@ -883,6 +904,7 @@ func TestStartScansImmediatelyAndStopIsLeakFree(t *testing.T) {
 	r, s, _, _, _, _, _, _ := fixture(model.PhaseReady)
 	current, _ := s.Get("demo")
 	current.Desired = model.DesiredDeleted
+	current.AppGUID = sandboxGUID
 	s.items["demo"] = current
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
