@@ -80,6 +80,51 @@ test("confirms delete, retries failures, and opens the enrolled agent", async ()
   expect(screen.queryByRole("link", { name: "Open Agents for demo-ruby" })).not.toBeInTheDocument();
 });
 
+test("opens the exact encoded enrolled agent link only when ready", async () => {
+  server.use(http.get("/manager/api/sandboxes", () => HttpResponse.json([{ ...existingSandbox, packMemberId: "demo ruby/1" }])));
+  renderManager();
+  expect(await screen.findByRole("link", { name: "Open Agents for demo-ruby" })).toHaveAttribute("href", "/collie/?h=demo%20ruby%2F1");
+});
+
+test("shows a create failure and allows retry without losing form state", async () => {
+  const user = userEvent.setup();
+  let attempts = 0;
+  server.use(http.post("/manager/api/sandboxes", () => {
+    attempts++;
+    return attempts === 1 ? HttpResponse.json({ error: "sandbox already exists" }, { status: 409 }) : HttpResponse.json(existingSandbox, { status: 202 });
+  }));
+  renderManager();
+  await screen.findByLabelText("Buildpack");
+  await user.type(screen.getByLabelText("Name"), "new-app");
+  await user.type(screen.getByLabelText("Git repository"), "https://git.example/new.git");
+  await user.click(screen.getByRole("button", { name: "Create sandbox" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("sandbox already exists");
+  expect(screen.getByLabelText("Name")).toHaveValue("new-app");
+  expect(screen.getByRole("button", { name: "Create sandbox" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Create sandbox" }));
+  await waitFor(() => expect(attempts).toBe(2));
+});
+
+test.each([
+  ["retry", "Retry demo-ruby", http.post, "/manager/api/sandboxes/demo-ruby/retry"],
+  ["delete", "Confirm delete demo-ruby", http.delete, "/manager/api/sandboxes/demo-ruby"],
+] as const)("shows a non-401 %s failure and leaves the action retryable", async (_, buttonName, method, path) => {
+  const user = userEvent.setup();
+  let attempts = 0;
+  server.use(
+    http.get("/manager/api/sandboxes", () => HttpResponse.json([{ ...existingSandbox, phase: "failed", resumePhase: "waiting-for-route" }])),
+    method(path, () => { attempts++; return HttpResponse.json({ error: "operation unavailable" }, { status: 503 }); }),
+  );
+  renderManager();
+  await screen.findByRole("button", { name: "Retry demo-ruby" });
+  if (buttonName.startsWith("Confirm")) await user.click(screen.getByRole("button", { name: "Delete demo-ruby" }));
+  await user.click(screen.getByRole("button", { name: buttonName }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("operation unavailable");
+  expect(screen.getByRole("button", { name: buttonName })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: buttonName }));
+  await waitFor(() => expect(attempts).toBe(2));
+});
+
 test("logs in without retaining or rendering the token and logs out", async () => {
   const user = userEvent.setup();
   let tokenBody: unknown;

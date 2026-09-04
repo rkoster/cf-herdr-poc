@@ -3,24 +3,27 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { SandboxPhase, SandboxView } from "@/lib/types";
 
-const steps = ["Requested", "Built", "Started", "Secured", "Enrolled", "Ready"];
-const phaseStep: Record<SandboxPhase, number> = {
-  creating: 0,
-  "preparing-invite": 0,
-  staging: 1,
-  "discovering-app": 1,
-  starting: 2,
-  "securing-route": 3,
-  "securing-manager-route": 3,
-  "configuring-enrollment": 4,
-  "waiting-for-app": 4,
-  "waiting-for-route": 4,
-  "triggering-enrollment": 4,
-  "joining-pack": 4,
-  ready: 5,
-  deleting: 0,
-  failed: 0,
-};
+const creationPhases = [
+  ["creating", "Creating record"],
+  ["preparing-invite", "Preparing invite"],
+  ["staging", "Staging application"],
+  ["discovering-app", "Discovering application"],
+  ["starting", "Starting application"],
+  ["securing-route", "Securing sandbox route"],
+  ["securing-manager-route", "Securing manager route"],
+  ["configuring-enrollment", "Configuring enrollment"],
+  ["waiting-for-app", "Waiting for application"],
+  ["waiting-for-route", "Waiting for route"],
+  ["triggering-enrollment", "Triggering enrollment"],
+  ["joining-pack", "Joining Pack"],
+  ["ready", "Ready"],
+] as const satisfies ReadonlyArray<readonly [Exclude<SandboxPhase, "deleting" | "failed">, string]>;
+
+const phaseLabels: Record<SandboxPhase, string> = {
+  ...Object.fromEntries(creationPhases),
+  deleting: "Teardown in progress",
+  failed: "Failed",
+} as Record<SandboxPhase, string>;
 
 function age(from: string) {
   const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(from)) / 1000));
@@ -36,27 +39,28 @@ function duration(nanoseconds: number) {
 
 interface Props {
   sandbox: SandboxView;
-  onRetry: () => Promise<void>;
-  onDelete: () => Promise<void>;
+  onRetry: () => Promise<unknown>;
+  onDelete: () => Promise<unknown>;
 }
 
 export function SandboxCard({ sandbox, onRetry, onDelete }: Props) {
   const [confirming, setConfirming] = useState(false);
-  const current = sandbox.phase === "failed" && sandbox.resumePhase ? phaseStep[sandbox.resumePhase] : phaseStep[sandbox.phase];
+  const shownPhase = sandbox.phase === "failed" ? sandbox.resumePhase : sandbox.phase;
+  const current = creationPhases.findIndex(([phase]) => phase === shownPhase);
   return (
     <article className={`sandbox-card status-${sandbox.phase}`}>
       <header className="card-header">
         <div><span className="eyebrow">Sandbox</span><h3>{sandbox.name}</h3></div>
-        <span className="status"><i />{sandbox.phase.replaceAll("-", " ")}</span>
+        <span className="status"><i />{sandbox.phase === "failed" && sandbox.resumePhase ? `Failed; retry resumes at ${phaseLabels[sandbox.resumePhase]}` : phaseLabels[sandbox.phase]}</span>
       </header>
       <dl className="facts">
         <div><dt>Buildpack</dt><dd>{sandbox.buildpack}</dd></div>
         <div><dt>Source</dt><dd>{sandbox.repository}{sandbox.revision && <small> @ {sandbox.revision}</small>}</dd></div>
         <div><dt>Elapsed</dt><dd>{age(sandbox.updatedAt)} phase / created {age(sandbox.createdAt)} ago</dd></div>
       </dl>
-      <ol className="phase-rail" aria-label={`Lifecycle for ${sandbox.name}`}>
-        {steps.map((step, index) => <li key={step} className={index < current ? "complete" : index === current ? "current" : ""}><i /><span>{step}</span></li>)}
-      </ol>
+      {sandbox.phase === "deleting" ? <p className="teardown">Teardown in progress</p> : <ol className="phase-rail" aria-label={`Lifecycle for ${sandbox.name}`}>
+        {creationPhases.map(([phase, label], index) => <li key={phase} className={`${index < current ? "complete" : index === current ? "current" : ""}${sandbox.phase === "failed" && index === current ? " failed" : ""}`}><i /><span>{label}</span></li>)}
+      </ol>}
       {sandbox.operations && sandbox.operations.length > 0 && <section className="operations" aria-label={`Operation timings for ${sandbox.name}`}>
         <span className="eyebrow">Timing / friction summary</span>
         <ul>{sandbox.operations.map((operation) => <li key={`${operation.name}-${operation.startedAt}`} className={operation.success ? "" : "failed"}><span>{operation.summary ?? operation.name}</span><time>{duration(operation.duration)}</time>{operation.error && <small>{operation.error}</small>}</li>)}</ul>

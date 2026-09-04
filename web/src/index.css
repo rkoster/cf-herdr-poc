@@ -64,13 +64,16 @@ label { display: grid; gap: 7px; font-size: .78rem; font-weight: 700; }
 .facts div { display: grid; grid-template-columns: 90px 1fr; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--edge); }
 dd { margin: 0; overflow-wrap: anywhere; font: .76rem/1.45 ui-monospace, monospace; }
 dd small { color: var(--quiet); }
-.phase-rail { display: grid; grid-template-columns: repeat(6, 1fr); list-style: none; margin: 10px 20px 20px; padding: 0; }
+.phase-rail { display: grid; grid-template-columns: repeat(13, minmax(76px, 1fr)); list-style: none; margin: 10px 20px 20px; padding: 0 0 8px; overflow-x: auto; }
 .phase-rail li { position: relative; color: var(--quiet); font: .58rem ui-monospace, monospace; padding-top: 18px; }
 .phase-rail li::before { content: ""; position: absolute; top: 5px; left: 0; right: 0; height: 1px; background: var(--line); }
 .phase-rail i { position: absolute; top: 1px; left: 0; width: 9px; height: 9px; border: 2px solid var(--line); background: var(--card); border-radius: 50%; z-index: 1; }
 .phase-rail .complete i, .phase-rail .current i { border-color: var(--done); background: var(--done); }
 .phase-rail .current { color: var(--ink); font-weight: 800; }
 .phase-rail .current i { box-shadow: 0 0 0 3px color-mix(in srgb, var(--done) 25%, transparent); }
+.phase-rail .failed { color: var(--blocked); }
+.phase-rail .failed i { border-color: var(--blocked); background: var(--blocked); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blocked) 25%, transparent); }
+.teardown { margin: 10px 20px 20px; padding: 14px; border: 1px solid var(--working); color: var(--working); font: 700 .72rem ui-monospace, monospace; text-transform: uppercase; letter-spacing: .08em; }
 .operations { margin: 0 20px 20px; border-top: 1px solid var(--edge); padding-top: 12px; }
 .operations ul { list-style: none; margin: 8px 0 0; padding: 0; }
 .operations li { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 7px 0; border-top: 1px solid var(--edge); font: .72rem/1.4 ui-monospace, monospace; }
@@ -95,6 +98,5 @@ dd small { color: var(--quiet); }
   .form-grid, .card-grid { grid-template-columns: 1fr; }
   .repository-field { grid-column: auto; }
   .create-form { padding: 16px; }
-  .phase-rail span { writing-mode: vertical-rl; height: 58px; }
   .card-actions { flex-wrap: wrap; }
 }

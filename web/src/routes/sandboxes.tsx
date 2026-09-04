@@ -31,9 +31,11 @@ export function SandboxesRoute() {
     try {
       await run();
       revalidator.revalidate();
+      return true;
     } catch (reason) {
       if (reason instanceof APIError && reason.status === 401) data.expire?.();
       else setError(reason instanceof Error ? reason.message : "Request failed");
+      return false;
     }
   }
 

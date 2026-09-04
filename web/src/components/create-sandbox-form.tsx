@@ -7,7 +7,7 @@ import type { CreateSandboxInput } from "@/lib/types";
 
 interface Props {
   buildpacks: string[];
-  onCreate: (input: CreateSandboxInput) => Promise<void>;
+  onCreate: (input: CreateSandboxInput) => Promise<boolean>;
 }
 
 export function CreateSandboxForm({ buildpacks, onCreate }: Props) {
@@ -34,8 +34,7 @@ export function CreateSandboxForm({ buildpacks, onCreate }: Props) {
     setError("");
     setBusy(true);
     try {
-      await onCreate(input);
-      element.reset();
+      if (await onCreate(input)) element.reset();
     } finally {
       setBusy(false);
     }
