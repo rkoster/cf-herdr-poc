@@ -2,65 +2,91 @@
 set -euo pipefail
 
 if [[ ${SMOKE_LIVE:-0} != 1 ]]; then
-  printf 'smoke: live execution deferred; set SMOKE_LIVE=1 only on the identity-routing CF with portable runtime binaries\n' >&2
+  printf 'smoke: live execution deferred; set SMOKE_LIVE=1 only on the approved identity-routing CF\n' >&2
   exit 2
 fi
 
 for command in curl cf jq; do
   command -v "$command" >/dev/null 2>&1 || { printf 'smoke: required command not found: %s\n' "$command" >&2; exit 2; }
 done
-for variable in MANAGER_URL MANAGER_API_TOKEN SMOKE_REPOSITORY SMOKE_BUILDPACK IDENTITY_DOMAIN MANAGER_APP_GUID; do
+for variable in MANAGER_URL MANAGER_API_TOKEN MANAGER_APP_NAME MANAGER_APP_GUID MANAGER_ROUTE_HOST WRONG_IDENTITY_APP SMOKE_REPOSITORY SMOKE_BUILDPACK IDENTITY_DOMAIN; do
   [[ -n ${!variable:-} ]] || { printf 'smoke: %s is required\n' "$variable" >&2; exit 2; }
 done
 
 SMOKE_TIMEOUT=${SMOKE_TIMEOUT:-1200}
 SMOKE_POLL_INTERVAL=${SMOKE_POLL_INTERVAL:-5}
-if [[ -n ${SMOKE_NAME:-} ]]; then
-  SANDBOX_NAME=$SMOKE_NAME
-else
-  SANDBOX_NAME="smoke-$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM"
-fi
-[[ $SANDBOX_NAME =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || { printf 'smoke: invalid generated sandbox name\n' >&2; exit 2; }
+SMOKE_WORKSPACE_CWD=${SMOKE_WORKSPACE_CWD:-/home/vcap/app}
+SANDBOX_NAME=${SMOKE_NAME:-smoke-$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM}
+[[ $SANDBOX_NAME =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || { printf 'smoke: invalid sandbox name\n' >&2; exit 2; }
+[[ $IDENTITY_DOMAIN =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && $IDENTITY_DOMAIN == *.* ]] || { printf 'smoke: invalid identity domain\n' >&2; exit 2; }
+[[ $SMOKE_TIMEOUT =~ ^[1-9][0-9]*$ && $SMOKE_POLL_INTERVAL =~ ^[0-9]+$ ]] || { printf 'smoke: invalid timeout or poll interval\n' >&2; exit 2; }
 
 MANAGER_URL=${MANAGER_URL%/}
-IDENTITY_URL="https://${SANDBOX_NAME}.${IDENTITY_DOMAIN}"
+IDENTITY_HOST="$SANDBOX_NAME.$IDENTITY_DOMAIN"
+IDENTITY_URL="https://$IDENTITY_HOST"
 WORK_DIR=$(mktemp -d)
 chmod 700 "$WORK_DIR"
 TOKEN_JSON="$WORK_DIR/login.json"
 COOKIE_JAR="$WORK_DIR/cookies"
-REQUEST_JSON="$WORK_DIR/create.json"
+CREATE_JSON="$WORK_DIR/create.json"
+WORKSPACE_JSON="$WORK_DIR/workspace.json"
 RESPONSE_JSON="$WORK_DIR/response.json"
 READY_JSON="$WORK_DIR/ready.json"
+touch "$COOKIE_JAR" "$RESPONSE_JSON" "$READY_JSON"
 printf '%s' "$MANAGER_API_TOKEN" | jq -Rs '{token:.}' >"$TOKEN_JSON"
 jq -n --arg name "$SANDBOX_NAME" --arg repository "$SMOKE_REPOSITORY" --arg buildpack "$SMOKE_BUILDPACK" \
-  '{name:$name,repository:$repository,buildpack:$buildpack}' >"$REQUEST_JSON"
-touch "$COOKIE_JAR" "$RESPONSE_JSON" "$READY_JSON"
-chmod 600 "$TOKEN_JSON" "$COOKIE_JAR" "$REQUEST_JSON" "$RESPONSE_JSON" "$READY_JSON"
+  '{name:$name,repository:$repository,buildpack:$buildpack}' >"$CREATE_JSON"
+jq -n --arg cwd "$SMOKE_WORKSPACE_CWD" '{cwd:$cwd,label:"smoke"}' >"$WORKSPACE_JSON"
+chmod 600 "$TOKEN_JSON" "$COOKIE_JAR" "$CREATE_JSON" "$WORKSPACE_JSON" "$RESPONSE_JSON" "$READY_JSON"
 
 created=0
 deleted=0
 member_id=
+create_submitted=
+ready_observed=
+delete_submitted=
+absent_observed=
+declare -A phase_observed=()
 
-curl_status() {
+gateway_status() {
   local method=$1 url=$2 data_file=${3:-} status
   local args=(--silent --show-error --output "$RESPONSE_JSON" --write-out '%{http_code}' --request "$method" --cookie "$COOKIE_JAR" --cookie-jar "$COOKIE_JAR")
-  if [[ -n $data_file ]]; then args+=(--header 'Content-Type: application/json' --data-binary "@$data_file"); fi
+  [[ -z $data_file ]] || args+=(--header 'Content-Type: application/json' --data-binary "@$data_file")
   status=$(curl "${args[@]}" "$url") || true
   printf '%s' "$status"
+}
+
+plain_status() {
+  local url=$1 status
+  status=$(curl --silent --show-error --output "$RESPONSE_JSON" --write-out '%{http_code}' "$url") || true
+  printf '%s' "$status"
+}
+
+valid_json() {
+  jq -e . "$1" >/dev/null 2>&1 || { printf 'smoke: invalid manager JSON\n' >&2; return 1; }
 }
 
 api_error() {
   local status=$1
   printf 'smoke: manager request failed (HTTP %s): %s\n' "$status" \
-    "$(jq -r '
-      if type == "object" then (.error // .message // "request failed") else "request failed" end
-      | gsub("-----BEGIN [^-]+-----.*"; "[redacted]")
-      | gsub("(?i)(bearer|token|password|secret)[=: ]+[^ ]+"; "[redacted]")
-    ' "$RESPONSE_JSON" 2>/dev/null || printf 'request failed')" >&2
+    "$(jq -r 'if type=="object" then (.error//.message//"request failed") else "request failed" end | gsub("(?i)(bearer|token|password|secret)[=: ]+[^ ]+";"[redacted]")' "$RESPONSE_JSON" 2>/dev/null || printf 'request failed')" >&2
+}
+
+policy_json() {
+  local output
+  if ! output=$(cf curl "/routing/v1/route_policies?host=$IDENTITY_HOST" 2>/dev/null); then
+    printf 'smoke: route-policy query failed\n' >&2
+    return 1
+  fi
+  jq -e . <<<"$output" >/dev/null 2>&1 || { printf 'smoke: route-policy query returned invalid JSON\n' >&2; return 1; }
+  printf '%s' "$output"
 }
 
 direct_cleanup() {
   cf remove-route-policy "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" --source "cf:app:$MANAGER_APP_GUID" >/dev/null 2>&1 || true
+  if [[ -n ${sandbox_guid:-} ]]; then
+    cf remove-route-policy "$IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$sandbox_guid" >/dev/null 2>&1 || true
+  fi
   cf unmap-route "$SANDBOX_NAME" "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" >/dev/null 2>&1 || true
   cf delete-route "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" -f >/dev/null 2>&1 || true
   cf delete "$SANDBOX_NAME" -f -r >/dev/null 2>&1 || true
@@ -68,8 +94,16 @@ direct_cleanup() {
 
 manager_absent() {
   local status
-  status=$(curl_status GET "$MANAGER_URL/manager/api/sandboxes")
-  [[ $status == 200 ]] && ! jq -e --arg name "$SANDBOX_NAME" '.[] | select(.name == $name)' "$RESPONSE_JSON" >/dev/null
+  status=$(gateway_status GET "$MANAGER_URL/manager/api/sandboxes")
+  [[ $status == 200 ]] && valid_json "$RESPONSE_JSON" && ! jq -e --arg name "$SANDBOX_NAME" '.[] | select(.name==$name)' "$RESPONSE_JSON" >/dev/null
+}
+
+cf_resources_absent() {
+  local apps routes policies
+  apps=$(cf curl "/v3/apps?names=$SANDBOX_NAME") || return 1
+  routes=$(cf curl "/v3/routes?hosts=$SANDBOX_NAME") || return 1
+  policies=$(policy_json) || return 1
+  [[ $(jq -r '.resources|length' <<<"$apps") == 0 && $(jq -r '.resources|length' <<<"$routes") == 0 && $(jq -r '(.policies//.resources//[])|length' <<<"$policies") == 0 ]]
 }
 
 cleanup() {
@@ -77,122 +111,147 @@ cleanup() {
   trap - EXIT INT TERM
   if (( created )); then
     local status deadline
-    status=$(curl_status DELETE "$MANAGER_URL/manager/api/sandboxes/$SANDBOX_NAME")
-    deadline=$((SECONDS + 60))
+    status=$(gateway_status DELETE "$MANAGER_URL/manager/api/sandboxes/$SANDBOX_NAME")
+    deadline=$((SECONDS + SMOKE_TIMEOUT))
     while [[ $status == 202 ]] && (( SECONDS < deadline )); do
-      if manager_absent; then deleted=1; break; fi
+      if manager_absent; then
+        if cf_resources_absent; then deleted=1; else direct_cleanup; fi
+        break
+      fi
       sleep "$SMOKE_POLL_INTERVAL"
     done
-    (( deleted )) || direct_cleanup
+    if (( ! deleted )); then
+      direct_cleanup
+      cf_resources_absent >/dev/null 2>&1 || true
+    fi
   fi
   rm -rf "$WORK_DIR"
   exit "$exit_status"
 }
 trap cleanup EXIT INT TERM
 
-status=$(curl_status POST "$MANAGER_URL/manager/api/session" "$TOKEN_JSON")
-if [[ $status != 204 ]]; then api_error "$status"; exit 1; fi
-rm -f "$TOKEN_JSON"
+target=$(cf target)
+for field in user org space; do
+  value=$(printf '%s\n' "$target" | jq -Rrs --arg field "$field" 'split("\n") | map(select(test("^"+$field+":";"i"))) | first // "" | sub("^[^:]+:[ ]*";"")')
+  [[ -n $value ]] || { printf 'smoke: cf target has no authenticated %s\n' "$field" >&2; exit 1; }
+done
+cf help route-policies >/dev/null 2>&1 || { printf 'smoke: cf route-policy commands unavailable\n' >&2; exit 1; }
+domain_json=$(cf curl "/v3/domains?names=$IDENTITY_DOMAIN")
+[[ $(jq -r '.resources|length' <<<"$domain_json") == 1 ]] || { printf 'smoke: identity domain not found or ambiguous\n' >&2; exit 1; }
 
-status=$(curl_status POST "$MANAGER_URL/manager/api/sandboxes" "$REQUEST_JSON")
-if [[ $status != 202 ]]; then api_error "$status"; exit 1; fi
+app_guid() {
+  local name=$1 body
+  body=$(cf curl "/v3/apps?names=$name") || return 1
+  jq -er --arg name "$name" '.resources | map(select(.name==$name)) | if length==1 then .[0].guid else empty end' <<<"$body"
+}
+actual_manager_guid=$(app_guid "$MANAGER_APP_NAME") || { printf 'smoke: manager app identity unavailable\n' >&2; exit 1; }
+wrong_guid=$(app_guid "$WRONG_IDENTITY_APP") || { printf 'smoke: wrong-identity app unavailable\n' >&2; exit 1; }
+[[ $actual_manager_guid == "$MANAGER_APP_GUID" ]] || { printf 'smoke: manager app GUID does not match MANAGER_APP_GUID\n' >&2; exit 1; }
+[[ $wrong_guid != "$actual_manager_guid" ]] || { printf 'smoke: wrong-identity app must differ from manager\n' >&2; exit 1; }
+
+status=$(gateway_status POST "$MANAGER_URL/manager/api/session" "$TOKEN_JSON")
+[[ $status == 204 ]] || { api_error "$status"; exit 1; }
+rm -f "$TOKEN_JSON"
+status=$(gateway_status POST "$MANAGER_URL/manager/api/sandboxes" "$CREATE_JSON")
+[[ $status == 202 ]] || { api_error "$status"; exit 1; }
+valid_json "$RESPONSE_JSON"
 created=1
+create_submitted=$SECONDS
 
 assert_public_api_safe() {
-  if jq -e '
-    paths as $p
-    | (($p[-1] | strings | ascii_downcase) as $key
-      | select($key | test("appguid|internalhost|certificate|certpath|keypath|secret|token|password")))
-  ' "$RESPONSE_JSON" >/dev/null; then
-    printf 'smoke: manager API exposed a forbidden key\n' >&2
-    return 1
+  if jq -e 'paths as $p | ($p[-1]|strings|ascii_downcase) as $k | select($k|test("appguid|internalhost|certificate|certpath|keypath|secret|token|password"))' "$RESPONSE_JSON" >/dev/null; then
+    printf 'smoke: manager API exposed a forbidden key\n' >&2; return 1
   fi
-  if jq -e --arg domain "$IDENTITY_DOMAIN" '.. | strings | select(endswith("." + $domain))' "$RESPONSE_JSON" >/dev/null; then
-    printf 'smoke: manager API exposed an internal identity hostname\n' >&2
-    return 1
-  fi
-  if jq -e '.. | strings | select(test("-----BEGIN |(^|/)(cert|certificate|key)(/|$)|join[_ -]?token"; "i"))' "$RESPONSE_JSON" >/dev/null; then
-    printf 'smoke: manager API exposed certificate, key, or secret material\n' >&2
-    return 1
+  if jq -e --arg domain "$IDENTITY_DOMAIN" '..|strings|select(endswith("."+$domain) or test("-----BEGIN |(?i)(bearer|token|password|secret)[=: ]+|(^|/)(cert|certificate|key)(/|$)|join[_ -]?token";"i"))' "$RESPONSE_JSON" >/dev/null; then
+    printf 'smoke: manager API exposed identity or secret material\n' >&2; return 1
   fi
 }
-
 assert_public_api_safe
+
 deadline=$((SECONDS + SMOKE_TIMEOUT))
 while (( SECONDS < deadline )); do
-  status=$(curl_status GET "$MANAGER_URL/manager/api/sandboxes")
-  if [[ $status != 200 ]]; then api_error "$status"; exit 1; fi
+  status=$(gateway_status GET "$MANAGER_URL/manager/api/sandboxes")
+  [[ $status == 200 ]] || { api_error "$status"; exit 1; }
+  valid_json "$RESPONSE_JSON"
   assert_public_api_safe
-  phase=$(jq -r --arg name "$SANDBOX_NAME" '.[] | select(.name == $name) | .phase' "$RESPONSE_JSON")
-  case "$phase" in
+  phase=$(jq -er --arg name "$SANDBOX_NAME" '.[]|select(.name==$name)|.phase' "$RESPONSE_JSON") || { printf 'smoke: sandbox record missing\n' >&2; exit 1; }
+  [[ -n ${phase_observed[$phase]:-} ]] || phase_observed[$phase]=$SECONDS
+  case $phase in
     ready)
-      member_id=$(jq -r --arg name "$SANDBOX_NAME" '.[] | select(.name == $name) | .packMemberId // empty' "$RESPONSE_JSON")
+      member_id=$(jq -r --arg name "$SANDBOX_NAME" '.[]|select(.name==$name)|.packMemberId//empty' "$RESPONSE_JSON")
       [[ -n $member_id ]] || { printf 'smoke: ready sandbox has no Pack member ID\n' >&2; exit 1; }
+      ready_observed=$SECONDS
       cp "$RESPONSE_JSON" "$READY_JSON"
-      break
-      ;;
+      break ;;
     failed)
-      printf 'smoke: lifecycle failed: %s\n' "$(jq -r --arg name "$SANDBOX_NAME" '.[] | select(.name == $name) | .lastError // "unspecified error"' "$RESPONSE_JSON")" >&2
-      exit 1
-      ;;
+      printf 'smoke: lifecycle failed: %s\n' "$(jq -r --arg name "$SANDBOX_NAME" '.[]|select(.name==$name)|.lastError//"unspecified error"' "$RESPONSE_JSON")" >&2
+      exit 1 ;;
   esac
   sleep "$SMOKE_POLL_INTERVAL"
 done
 [[ -n $member_id ]] || { printf 'smoke: lifecycle deadline exceeded\n' >&2; exit 1; }
 
-app_json=$(cf curl "/v3/apps?names=$SANDBOX_NAME")
-app_guid=$(jq -r '.resources[0].guid // empty' <<<"$app_json")
-[[ -n $app_guid ]] || { printf 'smoke: sandbox app not found\n' >&2; exit 1; }
-routes_json=$(cf curl "/v3/apps/$app_guid/routes")
+sandbox_guid=$(app_guid "$SANDBOX_NAME") || { printf 'smoke: sandbox app not found\n' >&2; exit 1; }
+[[ $sandbox_guid != "$actual_manager_guid" && $sandbox_guid != "$wrong_guid" ]] || { printf 'smoke: sandbox app identity is not distinct\n' >&2; exit 1; }
+routes_json=$(cf curl "/v3/apps/$sandbox_guid/routes")
 while IFS=$'\t' read -r host domain_guid; do
-  [[ -n $domain_guid ]] || continue
-  domain=$(cf curl "/v3/domains/$domain_guid" | jq -r '.name')
+  domain=$(cf curl "/v3/domains/$domain_guid" | jq -er '.name')
   [[ $host == "$SANDBOX_NAME" && $domain == "$IDENTITY_DOMAIN" ]] || { printf 'smoke: ordinary public sandbox route is mapped\n' >&2; exit 1; }
-done < <(jq -r '.resources[] | [.host, .relationships.domain.data.guid] | @tsv' <<<"$routes_json")
+done < <(jq -r '.resources[]|[.host,.relationships.domain.data.guid]|@tsv' <<<"$routes_json")
 
-status=$(curl_status GET "$IDENTITY_URL/pack/v1/hello")
-case "$status" in 2??) printf 'smoke: identity route accepted a request without an instance certificate\n' >&2; exit 1 ;; esac
+status=$(plain_status "$IDENTITY_URL/pack/v1/hello")
+case $status in 2??) printf 'smoke: identity route accepted request without instance certificate\n' >&2; exit 1 ;; esac
 
-if [[ ${SMOKE_SKIP_WRONG_IDENTITY:-0} == 1 ]]; then
-  printf 'SKIP wrong app identity (SMOKE_SKIP_WRONG_IDENTITY=1)\n'
-elif [[ -n ${WRONG_IDENTITY_PROBE_CMD:-} ]]; then
-  SMOKE_IDENTITY_URL="$IDENTITY_URL" "$WRONG_IDENTITY_PROBE_CMD"
-else
-  printf 'smoke: WRONG_IDENTITY_PROBE_CMD is required (or explicitly set SMOKE_SKIP_WRONG_IDENTITY=1)\n' >&2
-  exit 1
-fi
+remote_probe='code=$(curl --silent --output /dev/null --write-out "%{http_code}" --cert "$CF_INSTANCE_CERT" --key "$CF_INSTANCE_KEY" "'"$IDENTITY_URL"'/pack/v1/hello"); printf "%s\n" "$code"'
+wrong_status=$(cf ssh "$WRONG_IDENTITY_APP" -c "$remote_probe" | jq -Rrs 'split("\n")|map(select(test("^[0-9]{3}$")))|last//""')
+[[ $wrong_status == 403 ]] || { printf 'smoke: wrong identity expected HTTP 403, got %s\n' "${wrong_status:-no status}" >&2; exit 1; }
 
-status=$(curl_status GET "$MANAGER_URL/collie/api/snapshot?sessions=all")
-[[ $status == 200 ]] || { api_error "$status"; exit 1; }
-jq -e --arg member "$member_id" '.servers[] | select(.id == $member and .reachable == true and .protocol == "ok")' "$RESPONSE_JSON" >/dev/null || {
-  printf 'smoke: Pack snapshot lacks a reachable sandbox member\n' >&2; exit 1;
-}
-status=$(curl_status GET "$MANAGER_URL/collie/api/pack")
-[[ $status == 200 ]] || { api_error "$status"; exit 1; }
-jq -e --arg member "$member_id" '.members[] | select(.id == $member and .health == "reachable")' "$RESPONSE_JSON" >/dev/null || {
-  printf 'smoke: Pack status lacks a reachable sandbox member\n' >&2; exit 1;
+manager_probe='file=$(mktemp); code=$(curl --silent --max-time 20 --output "$file" --write-out "%{http_code}" --cert "$CF_INSTANCE_CERT" --key "$CF_INSTANCE_KEY" "'"$IDENTITY_URL"'/pack/v1/hello"); printf "%s " "$code"; head -c 4096 "$file"; rm -f "$file"'
+hello=$(cf ssh "$MANAGER_APP_NAME" -c "$manager_probe")
+hello_status=${hello%% *}
+hello_body=${hello#* }
+[[ $hello_status == 200 ]] && jq -e --arg member "$member_id" '.protocol|type=="number"' <<<"$hello_body" >/dev/null && jq -e --arg member "$member_id" '.member==$member' <<<"$hello_body" >/dev/null || {
+  printf 'smoke: manager hello response invalid\n' >&2; exit 1;
 }
 
-printf 'Timing (manager-reported)\n'
-printf '%-24s %s\n' phase seconds
-jq -r --arg name "$SANDBOX_NAME" '.[] | select(.name == $name) | .operations[]? | [.name, ((.duration / 1000000000) | tostring)] | @tsv' "$READY_JSON" 2>/dev/null || true
+status=$(gateway_status GET "$MANAGER_URL/collie/api/snapshot?host=$member_id")
+[[ $status == 200 ]] && valid_json "$RESPONSE_JSON" || { api_error "$status"; exit 1; }
+jq -e --arg member "$member_id" '.servers[]|select(.id==$member and .reachable==true)' "$RESPONSE_JSON" >/dev/null || { printf 'smoke: merged snapshot lacks member\n' >&2; exit 1; }
+status=$(gateway_status POST "$MANAGER_URL/collie/api/workspace?host=$member_id" "$WORKSPACE_JSON")
+[[ $status == 200 ]] && valid_json "$RESPONSE_JSON" && jq -e '.ok==true and (.pane.paneId|type=="string" and length>0)' "$RESPONSE_JSON" >/dev/null || { printf 'smoke: Collie workspace creation failed\n' >&2; exit 1; }
 
-status=$(curl_status DELETE "$MANAGER_URL/manager/api/sandboxes/$SANDBOX_NAME")
-[[ $status == 202 ]] || { api_error "$status"; exit 1; }
-deadline=$((SECONDS + SMOKE_TIMEOUT))
-while (( SECONDS < deadline )); do
-  if manager_absent; then deleted=1; break; fi
-  sleep "$SMOKE_POLL_INTERVAL"
+printf 'Timing\n'
+printf '%-20s %s\n' metric seconds
+for spec in 'clone:clone' 'upload:upload' 'stage:stage' 'start:start-app' 'policy:secure-route' 'Pack:trigger-enrollment'; do
+  label=${spec%%:*}; operation=${spec#*:}
+  duration=$(jq -r --arg name "$SANDBOX_NAME" --arg operation "$operation" '.[]|select(.name==$name)|[.operations[]?|select(.name==$operation and .success==true)][0].duration//empty' "$READY_JSON")
+  if [[ -n $duration ]]; then printf '%-20s %.3f\n' "$label" "$(jq -n "$duration/1000000000")"; else printf '%-20s unavailable\n' "$label"; fi
 done
+printf '%-20s %s\n' ready "$((ready_observed-create_submitted))"
+
+status=$(gateway_status DELETE "$MANAGER_URL/manager/api/sandboxes/$SANDBOX_NAME")
+[[ $status == 202 ]] || { api_error "$status"; exit 1; }
+delete_submitted=$SECONDS
+deadline=$((SECONDS + SMOKE_TIMEOUT))
+while (( SECONDS < deadline )); do manager_absent && { deleted=1; absent_observed=$SECONDS; break; }; sleep "$SMOKE_POLL_INTERVAL"; done
 (( deleted )) || { printf 'smoke: deletion deadline exceeded\n' >&2; exit 1; }
+
+status=$(gateway_status GET "$MANAGER_URL/collie/api/snapshot?host=$member_id")
+[[ $status == 200 ]] && valid_json "$RESPONSE_JSON" || { api_error "$status"; exit 1; }
+! jq -e --arg member "$member_id" '.servers[]?|select(.id==$member)' "$RESPONSE_JSON" >/dev/null || { printf 'smoke: member remains in snapshot after deletion\n' >&2; exit 1; }
+status=$(gateway_status GET "$MANAGER_URL/collie/api/pack")
+[[ $status == 200 ]] && valid_json "$RESPONSE_JSON" || { api_error "$status"; exit 1; }
+! jq -e --arg member "$member_id" '.members[]?|select(.id==$member)' "$RESPONSE_JSON" >/dev/null || { printf 'smoke: member remains in Pack after deletion\n' >&2; exit 1; }
+
+apps=$(cf curl "/v3/apps?names=$SANDBOX_NAME") || { printf 'smoke: app query failed after deletion\n' >&2; exit 1; }
+routes=$(cf curl "/v3/routes?hosts=$SANDBOX_NAME") || { printf 'smoke: route query failed after deletion\n' >&2; exit 1; }
+policies=$(policy_json)
+[[ $(jq -r '.resources|length' <<<"$apps") == 0 ]] || { printf 'smoke: app remains after deletion\n' >&2; exit 1; }
+[[ $(jq -r '.resources|length' <<<"$routes") == 0 ]] || { printf 'smoke: route remains after deletion\n' >&2; exit 1; }
+[[ $(jq -r '(.policies//.resources//[])|length' <<<"$policies") == 0 ]] || { printf 'smoke: route policy remains after deletion\n' >&2; exit 1; }
+printf '%-20s %s\n' delete "$((absent_observed-delete_submitted))"
+
 created=0
-
-status=$(curl_status GET "$MANAGER_URL/collie/api/snapshot?sessions=all")
-[[ $status == 200 ]] || { api_error "$status"; exit 1; }
-! jq -e --arg member "$member_id" '.servers[]? | select(.id == $member)' "$RESPONSE_JSON" >/dev/null || { printf 'smoke: Pack member remains after deletion\n' >&2; exit 1; }
-[[ $(cf curl "/v3/apps?names=$SANDBOX_NAME" | jq '.resources | length') == 0 ]] || { printf 'smoke: app remains after deletion\n' >&2; exit 1; }
-[[ $(cf curl "/v3/routes?hosts=$SANDBOX_NAME" | jq '.resources | length') == 0 ]] || { printf 'smoke: route remains after deletion\n' >&2; exit 1; }
-policy_json=$(cf curl "/routing/v1/route_policies?host=$SANDBOX_NAME.$IDENTITY_DOMAIN" 2>/dev/null || printf '{"policies":[]}')
-[[ $(jq '(.policies // .resources // []) | length' <<<"$policy_json") == 0 ]] || { printf 'smoke: route policy remains after deletion\n' >&2; exit 1; }
-
+trap - EXIT INT TERM
+rm -rf "$WORK_DIR"
 printf 'PASS %s\n' "$SANDBOX_NAME"
