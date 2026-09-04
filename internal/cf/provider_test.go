@@ -113,6 +113,57 @@ func TestStagePushesWhenAppNameIsAbsent(t *testing.T) {
 	}
 }
 
+func TestStageRestagesAppWithExpectedGUID(t *testing.T) {
+	bitsPath := t.TempDir()
+	run := &recordingRunner{outputs: [][]byte{[]byte(appGUID), nil}}
+
+	operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Stage(
+		context.Background(), PushRequest{Name: "demo", ExpectedAppGUID: appGUID, Buildpack: "ruby_buildpack", BitsPath: bitsPath},
+	)
+
+	if err != nil || !operation.Success {
+		t.Fatalf("Stage() = (%#v, %v)", operation, err)
+	}
+	if len(run.commands) != 2 || run.commands[1].args[0] != "push" {
+		t.Fatalf("commands = %#v, want identity lookup then push", run.commands)
+	}
+}
+
+func TestStageRefusesToRecreateMissingExpectedApp(t *testing.T) {
+	bitsPath := t.TempDir()
+	run := &recordingRunner{outputs: [][]byte{[]byte("App 'demo' not found")}, errors: []error{errors.New("exit status 1")}}
+
+	operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Stage(
+		context.Background(), PushRequest{Name: "demo", ExpectedAppGUID: appGUID, Buildpack: "ruby_buildpack", BitsPath: bitsPath},
+	)
+
+	var providerErr *Error
+	if !errors.As(err, &providerErr) || !providerErr.IdentityMismatch() || !strings.Contains(err.Error(), "ownership lost") {
+		t.Fatalf("Stage() error = %T %v, want ownership-lost identity error", err, err)
+	}
+	if operation.Success || len(run.commands) != 1 {
+		t.Fatalf("Stage() = %#v, commands = %#v; want no push", operation, run.commands)
+	}
+}
+
+func TestStageRefusesReplacementForExpectedApp(t *testing.T) {
+	bitsPath := t.TempDir()
+	replacement := "123e4567-e89b-12d3-a456-426614174099"
+	run := &recordingRunner{outputs: [][]byte{[]byte(replacement)}}
+
+	operation, err := (Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}}).Stage(
+		context.Background(), PushRequest{Name: "demo", ExpectedAppGUID: appGUID, Buildpack: "ruby_buildpack", BitsPath: bitsPath},
+	)
+
+	var providerErr *Error
+	if !errors.As(err, &providerErr) || !providerErr.IdentityMismatch() {
+		t.Fatalf("Stage() error = %T %v, want identity conflict", err, err)
+	}
+	if operation.Success || len(run.commands) != 1 {
+		t.Fatalf("Stage() = %#v, commands = %#v; want no push", operation, run.commands)
+	}
+}
+
 func TestConfigureEnrollmentAndStartAppUseSeparateExactCommands(t *testing.T) {
 	run := &recordingRunner{}
 	provider := Provider{Run: run}

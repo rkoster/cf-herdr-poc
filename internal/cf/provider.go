@@ -35,9 +35,10 @@ var (
 )
 
 type PushRequest struct {
-	Name      string
-	Buildpack string
-	BitsPath  string
+	Name            string
+	ExpectedAppGUID string
+	Buildpack       string
+	BitsPath        string
 }
 
 type RouteRequest struct {
@@ -92,6 +93,9 @@ func (e *Error) Error() string {
 	if e.Operation == "stage" && e.Kind == "already_exists" {
 		return "stage app name already exists"
 	}
+	if e.Operation == "stage" && e.Kind == "ownership_lost" {
+		return "stage app ownership lost"
+	}
 	return e.Operation + " " + e.Kind
 }
 
@@ -99,9 +103,11 @@ func (e *Error) Unwrap() error {
 	return e.Cause
 }
 
-func (e *Error) AlreadyExists() bool    { return e.Kind == "already_exists" }
-func (e *Error) Absent() bool           { return e.Kind == "not_found" }
-func (e *Error) IdentityMismatch() bool { return e.Kind == "identity_mismatch" }
+func (e *Error) AlreadyExists() bool { return e.Kind == "already_exists" }
+func (e *Error) Absent() bool        { return e.Kind == "not_found" }
+func (e *Error) IdentityMismatch() bool {
+	return e.Kind == "identity_mismatch" || e.Kind == "ownership_lost"
+}
 
 func (p Provider) Stage(ctx context.Context, request PushRequest) (model.Operation, error) {
 	if err := validateName("app", request.Name); err != nil {
@@ -113,17 +119,44 @@ func (p Provider) Stage(ctx context.Context, request PushRequest) (model.Operati
 	if err := validateBitsPath(p.WorkRoot, request.BitsPath); err != nil {
 		return model.Operation{}, err
 	}
-	observation, err := p.EnsureAppAbsent(ctx, request.Name)
-	if err != nil {
-		if observation.Success {
-			observation.Success = false
+	if request.ExpectedAppGUID != "" {
+		if err := validateGUID(request.ExpectedAppGUID); err != nil {
+			return model.Operation{}, err
 		}
-		if isProviderAlreadyExists(err) {
+	}
+	observation, output, err := p.execute(ctx, "stage-preflight", "app", request.Name, "--guid")
+	if err != nil {
+		if !isProviderAbsent(err) || request.ExpectedAppGUID == "" {
+			if isProviderAbsent(err) {
+				observation.Success = true
+				observation.Error = ""
+			} else {
+				return observation, err
+			}
+		} else {
+			observation.Name = "stage"
+			observation.Error = "stage app ownership lost"
+			return observation, &Error{Operation: "stage", Kind: "ownership_lost", Cause: err}
+		}
+	} else {
+		guid := strings.TrimSpace(string(output))
+		if err := validateGUID(guid); err != nil {
+			observation.Success = false
+			observation.Error = "cf app returned an invalid GUID"
+			return observation, errors.New(observation.Error)
+		}
+		if request.ExpectedAppGUID == "" {
+			observation.Success = false
 			observation.Name = "stage"
 			observation.Error = "stage app name already exists"
-			return observation, &Error{Operation: "stage", Kind: "already_exists", Cause: err}
+			return observation, &Error{Operation: "stage", Kind: "already_exists"}
 		}
-		return observation, err
+		if guid != request.ExpectedAppGUID {
+			observation.Success = false
+			observation.Name = "stage"
+			observation.Error = "stage app identity mismatch"
+			return observation, &Error{Operation: "stage", Kind: "identity_mismatch"}
+		}
 	}
 	operation, _, err := p.execute(ctx, "stage", "push", request.Name, "--no-route", "--no-start", "-b", request.Buildpack, "-p", request.BitsPath, "-c", "./.sandbox/start.sh")
 	return operation, err
@@ -420,7 +453,7 @@ func classifyError(operation, output string) string {
 			return "already_exists"
 		}
 	}
-	if operation == "delete-app" || operation == "remove-route" || operation == "remove-route-policy" || operation == "app-guid" || operation == "app-absence" {
+	if operation == "delete-app" || operation == "remove-route" || operation == "remove-route-policy" || operation == "app-guid" || operation == "app-absence" || operation == "stage-preflight" {
 		if strings.Contains(value, "not found") || strings.Contains(value, "does not exist") {
 			return "not_found"
 		}

@@ -3,6 +3,8 @@ package reconcile
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -169,13 +171,18 @@ type fakeCF struct {
 	deletedGUID  string
 	leadURL      string
 	appAbsent    bool
+	staged       cf.PushRequest
 }
 
-func (f *fakeCF) Stage(_ context.Context, _ cf.PushRequest) (model.Operation, error) {
+func (f *fakeCF) Stage(_ context.Context, request cf.PushRequest) (model.Operation, error) {
+	f.staged = request
 	*f.calls = append(*f.calls, "stage")
 	op := operation("stage", f.failAt != "stage")
 	if f.failAt == "stage" {
 		return op, errors.New("staging Authorization: Bearer secret")
+	}
+	if request.ExpectedAppGUID != "" && request.ExpectedAppGUID != sandboxGUID {
+		return operation("stage", false), &cf.Error{Operation: "stage", Kind: "identity_mismatch"}
 	}
 	return op, nil
 }
@@ -511,7 +518,7 @@ func TestFreshReconcilerRestagesButDoesNotRepeatCompletedPolicies(t *testing.T) 
 }
 
 func TestExpiredPostStageInviteIsRegeneratedAndRestaged(t *testing.T) {
-	r, s, _, _, _, _, clock, calls := fixture(model.PhaseSecuringRoute)
+	r, s, _, cloud, _, _, clock, calls := fixture(model.PhaseSecuringRoute)
 	current, _ := s.Get("demo")
 	current.Revision = "abc"
 	current.AppGUID = sandboxGUID
@@ -520,7 +527,58 @@ func TestExpiredPostStageInviteIsRegeneratedAndRestaged(t *testing.T) {
 	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
 	}
+	if cloud.staged.ExpectedAppGUID != sandboxGUID {
+		t.Fatalf("restage expected GUID = %q, want %q", cloud.staged.ExpectedAppGUID, sandboxGUID)
+	}
 	assertSubsequence(t, *calls, []string{"cleanup-invite", "prepare-invite", "install-invite", "stage", "discover-guid", "secure-route", "configure-enrollment", "start-app"})
+}
+
+func TestFirstStageHasNoExpectedAppGUID(t *testing.T) {
+	r, _, _, cloud, _, _, _, _ := fixture(model.PhaseCreating)
+	if err := r.ReconcileOne(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if cloud.staged.ExpectedAppGUID != "" {
+		t.Fatalf("first stage expected GUID = %q", cloud.staged.ExpectedAppGUID)
+	}
+}
+
+type recoveryRunner struct {
+	commands [][]string
+}
+
+func (r *recoveryRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.commands = append(r.commands, append([]string{name}, args...))
+	if len(args) == 3 && args[0] == "app" && args[2] == "--guid" {
+		return []byte(sandboxGUID), nil
+	}
+	if len(args) > 0 && args[0] == "push" {
+		return nil, nil
+	}
+	return nil, errors.New("unexpected command")
+}
+
+func TestRecoveryRestagesOwnedAppThroughProvider(t *testing.T) {
+	workRoot := t.TempDir()
+	bitsPath := filepath.Join(workRoot, "demo")
+	if err := os.Mkdir(bitsPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := &recoveryRunner{}
+	r, s, _, _, _, _, _, _ := fixture(model.PhaseStaging)
+	r.cf = cf.Provider{Run: run, Buildpacks: []string{"ruby_buildpack"}, WorkRoot: workRoot}
+	current, _ := s.Get("demo")
+	current.AppGUID = sandboxGUID
+	s.items["demo"] = current
+
+	op, err := r.effectStage(context.Background(), current, bitsPath)
+
+	if err != nil || !op.Success {
+		t.Fatalf("effectStage() = (%#v, %v)", op, err)
+	}
+	if len(run.commands) != 2 || run.commands[0][1] != "app" || run.commands[1][1] != "push" {
+		t.Fatalf("provider commands = %#v", run.commands)
+	}
 }
 
 func TestInviteCleanupFailureRemainsRetryable(t *testing.T) {

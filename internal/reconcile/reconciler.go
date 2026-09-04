@@ -644,7 +644,7 @@ func (r *Reconciler) effectPrepareEnrollment(ctx context.Context, name string) (
 }
 func (r *Reconciler) effectStage(ctx context.Context, s model.Sandbox, path string) (model.Operation, error) {
 	r.effect("stage")
-	return r.cf.Stage(ctx, cf.PushRequest{Name: s.Name, Buildpack: s.Buildpack, BitsPath: path})
+	return r.cf.Stage(ctx, cf.PushRequest{Name: s.Name, ExpectedAppGUID: s.AppGUID, Buildpack: s.Buildpack, BitsPath: path})
 }
 func (r *Reconciler) effectConfigureEnrollment(ctx context.Context, name string) (model.Operation, error) {
 	r.effect("configure-enrollment")
