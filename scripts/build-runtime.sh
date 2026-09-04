@@ -6,6 +6,8 @@ COLLIE_DIR="$ROOT/collie"
 RUNTIME_DIR="${RUNTIME_DIR:-$ROOT/sandbox/runtime}"
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
+TOOLS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cf-herdr-tools.XXXXXX")"
+trap 'rm -rf "$TOOLS_DIR"' EXIT
 
 require_tool() {
   local name=$1
@@ -73,6 +75,9 @@ fi
 	"$build_bun" run build
 )
 collie_bin="$(validate_runtime_binary COLLIE_RUNTIME_BIN "$COLLIE_DIR/bin/collie")"
+GOHOSTOS="$(go env GOHOSTOS)"
+GOHOSTARCH="$(go env GOHOSTARCH)"
+CGO_ENABLED=0 GOOS="$GOHOSTOS" GOARCH="$GOHOSTARCH" go build -o "$TOOLS_DIR/copytree" ./cmd/copytree
 
 rm -rf "$RUNTIME_DIR"
 mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie"
@@ -83,10 +88,11 @@ install -m 0755 "$herdr_bin" "$RUNTIME_DIR/bin/herdr"
 install -m 0755 "$collie_bin" "$RUNTIME_DIR/bin/collie"
 install -m 0755 "$ROOT/sandbox/start.sh" "$RUNTIME_DIR/start.sh"
 
-# The source bridge needs the root dependency tree; the built web UI does not need web/node_modules.
-cp -R "$COLLIE_DIR/bridge" "$COLLIE_DIR/package.json" "$RUNTIME_DIR/collie/"
-cp -RL "$COLLIE_DIR/node_modules" "$RUNTIME_DIR/collie/"
+# Materialize only selected runtime assets. The copier rejects broken or escaping symlinks.
+"$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/bridge" "$RUNTIME_DIR/collie/bridge"
+"$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/package.json" "$RUNTIME_DIR/collie/package.json"
+"$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/node_modules" "$RUNTIME_DIR/collie/node_modules"
 mkdir -p "$RUNTIME_DIR/collie/web"
-cp -R "$COLLIE_DIR/web/dist" "$RUNTIME_DIR/collie/web/"
+"$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/web/dist" "$RUNTIME_DIR/collie/web/dist"
 
 printf 'sandbox runtime assembled at %s\n' "$RUNTIME_DIR"

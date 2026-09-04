@@ -31,9 +31,9 @@ export HERDR_RUNTIME_BIN=/absolute/path/to/portable-linux-herdr
 GOOS=linux GOARCH=amd64 bash scripts/build.sh
 ```
 
-The build compiles the manager and sandbox bootstrap with `CGO_ENABLED=0`, builds both frontends, invokes `scripts/build-runtime.sh`, validates every required artifact, and atomically replaces `dist/`. A failed build leaves the prior `dist/` intact. `COLLIE_RUNTIME_BIN` may override the Collie CLI produced by the nested build, but must satisfy the same portable executable checks.
+The build compiles the manager and sandbox bootstrap with `CGO_ENABLED=0`, builds both frontends, invokes `scripts/build-runtime.sh`, validates every required artifact, and transactionally replaces `dist/`. It stages first, renames the old tree to a backup, installs the new tree, and restores the backup on failure or interruption. Directory replacement is not fully atomic: there is a small rename window in which `dist/` is absent. `COLLIE_RUNTIME_BIN` may override the Collie CLI produced by the nested build, but must satisfy the same portable executable checks.
 
-Expected layout includes `dist/manager`, `dist/web/`, `dist/sandbox/runtime/`, the runtime binaries, `collie/bridge`, Collie's root `package.json` and `node_modules`, and Collie's built `web/dist`. Generated `dist/`, `sandbox/runtime/`, and runtime state are ignored by Git.
+Expected layout includes `dist/manager`, `dist/web/`, `dist/sandbox/runtime/`, the runtime binaries, `collie/bridge`, Collie's root `package.json` and `node_modules`, and Collie's built `web/dist`. A constrained copier materializes internal Collie symlinks but rejects broken links and links escaping the Collie asset root. Only explicitly selected runtime trees are copied, excluding `.git`, environment files, credentials, state, and Collie's development-only `web/node_modules`. Generated `dist/`, `sandbox/runtime/`, and runtime state are ignored by Git.
 
 ## Configuration
 

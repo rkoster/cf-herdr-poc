@@ -1,6 +1,7 @@
 package scripts_test
 
 import (
+	"bufio"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,7 +24,7 @@ func TestBuildRequiresPortableRuntimeBinaries(t *testing.T) {
 	}
 }
 
-func TestBuildUsesAtomicStagingAndValidatesArtifactContract(t *testing.T) {
+func TestBuildUsesTransactionalStagingAndValidatesArtifactContract(t *testing.T) {
 	script := readPackageFile(t, "scripts/build.sh")
 	for _, required := range []string{
 		"mktemp -d", "DIST_STAGING", "trap", "mv", "CGO_ENABLED=0", "GOOS=", "GOARCH=",
@@ -66,6 +67,17 @@ func TestFailedBuildPreservesPreviousDist(t *testing.T) {
 	}
 }
 
+func TestFailedDistributionSwapRestoresPreviousDist(t *testing.T) {
+	dist, output, err := runFixtureBuild(t, false, true)
+	if err == nil {
+		t.Fatalf("build.sh succeeded when staging rename failed: %s", output)
+	}
+	contents, readErr := os.ReadFile(filepath.Join(dist, "previous"))
+	if readErr != nil || string(contents) != "keep" {
+		t.Fatalf("previous dist was not restored: contents=%q err=%v", contents, readErr)
+	}
+}
+
 func TestDeploymentMapsOnlyManagerPublicAndIdentityRoutes(t *testing.T) {
 	manifest := readPackageFile(t, "manifest.yml")
 	for _, required := range []string{"binary_buildpack", "no-route: true", "./manager", "/manager/healthz"} {
@@ -85,6 +97,63 @@ func TestDeploymentMapsOnlyManagerPublicAndIdentityRoutes(t *testing.T) {
 	for _, required := range []string{`MANAGER_ROUTE_HOST="${MANAGER_PACK_HOST%.$CF_IDENTITY_DOMAIN}"`, `"$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"`} {
 		if !strings.Contains(deploy, required) {
 			t.Errorf("deploy.sh does not derive identity route label: missing %q", required)
+		}
+	}
+}
+
+func TestDeployUsesExactCFCLISequence(t *testing.T) {
+	temp := t.TempDir()
+	logPath := filepath.Join(temp, "cf.log")
+	writeExecutable(t, filepath.Join(temp, "cf"), `#!/bin/sh
+printf '%s\t' "$@" >> "$CF_LOG"
+printf '\n' >> "$CF_LOG"
+if [ "$1" = app ] && [ "$3" = --guid ]; then printf 'manager-guid\n'; fi
+`)
+	command := exec.Command("bash", filepath.Join(packageRoot(t), "scripts", "deploy.sh"))
+	command.Dir = packageRoot(t)
+	command.Env = []string{
+		"PATH=" + temp + ":" + os.Getenv("PATH"), "CF_LOG=" + logPath,
+		"MANAGER_APP_NAME=manager", "PUBLIC_DOMAIN=apps.example", "MANAGER_PUBLIC_HOST=manager",
+		"CF_IDENTITY_DOMAIN=apps.identity", "MANAGER_PACK_HOST=manager-pack.apps.identity",
+		"SANDBOX_BUILDPACKS=ruby_buildpack", "MANAGER_API_TOKEN=secret",
+	}
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("deploy.sh: %v: %s", err, output)
+	}
+	want := [][]string{
+		{"push", "manager", "-f", "manifest.yml", "--no-route", "--no-start"},
+		{"app", "manager", "--guid"},
+		{"set-env", "manager", "CF_IDENTITY_DOMAIN", "apps.identity"},
+		{"set-env", "manager", "SANDBOX_BUILDPACKS", "ruby_buildpack"},
+		{"set-env", "manager", "MANAGER_APP_NAME", "manager"},
+		{"set-env", "manager", "MANAGER_APP_GUID", "manager-guid"},
+		{"set-env", "manager", "MANAGER_PACK_HOST", "manager-pack.apps.identity"},
+		{"set-env", "manager", "MANAGER_API_TOKEN", "secret"},
+		{"create-route", "apps.example", "--hostname", "manager"},
+		{"map-route", "manager", "apps.example", "--hostname", "manager"},
+		{"create-route", "apps.identity", "--hostname", "manager-pack"},
+		{"map-route", "manager", "apps.identity", "--hostname", "manager-pack"},
+		{"start", "manager"},
+	}
+	file, err := os.Open(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	var got [][]string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		got = append(got, strings.Fields(scanner.Text()))
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("CF calls = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if strings.Join(got[i], "\x00") != strings.Join(want[i], "\x00") {
+			t.Errorf("call %d = %#v, want %#v", i, got[i], want[i])
 		}
 	}
 }
@@ -131,7 +200,7 @@ func readPackageFile(t *testing.T, name string) string {
 	return string(contents)
 }
 
-func runFixtureBuild(t *testing.T, failRuntime bool) (string, string, error) {
+func runFixtureBuild(t *testing.T, failRuntime bool, failSwap ...bool) (string, string, error) {
 	t.Helper()
 	root := packageRoot(t)
 	temp := t.TempDir()
@@ -159,6 +228,14 @@ chmod +x "$out"
 mkdir -p "$FIXTURE_WEB_DIST"
 printf '<html>fixture</html>\n' > "$FIXTURE_WEB_DIST/index.html"
 `)
+	if len(failSwap) > 0 && failSwap[0] {
+		writeExecutable(t, filepath.Join(bin, "mv"), `#!/bin/sh
+case "$1:$2" in
+  *.staging.*:*/dist) exit 29 ;;
+esac
+exec /bin/mv "$@"
+`)
+	}
 	runtimeScript := filepath.Join(temp, "build-runtime.sh")
 	runtimeBody := `#!/bin/sh
 set -eu

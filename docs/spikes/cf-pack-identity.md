@@ -20,9 +20,9 @@ export SANDBOX_APP_NAME=cf-herdr-identity-spike
 export SANDBOX_ROUTE_HOST="$SANDBOX_APP_NAME"
 export SANDBOX_GUID="$(cf app "$SANDBOX_APP_NAME" --guid)"
 
-cf create-route "$(cf target | awk '/org:/ {print $2; exit}')" "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"
+cf create-route "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"
 cf map-route "$MANAGER_APP_NAME" "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"
-cf create-route "$(cf target | awk '/org:/ {print $2; exit}')" "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_ROUTE_HOST"
+cf create-route "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_ROUTE_HOST"
 cf map-route "$SANDBOX_APP_NAME" "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_ROUTE_HOST"
 cf add-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_ROUTE_HOST" --source "cf:app:$MANAGER_APP_GUID"
 cf add-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$SANDBOX_GUID"

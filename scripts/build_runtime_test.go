@@ -55,6 +55,18 @@ func TestBuildRuntimeBuildsStaticSandboxBootstrap(t *testing.T) {
 	}
 }
 
+func TestBuildRuntimeBuildsNativeConstrainedCopier(t *testing.T) {
+	script := readBuildScript(t)
+	for _, required := range []string{"./cmd/copytree", "GOHOSTOS", "GOHOSTARCH", "mktemp -d", "trap", "COLLIE_DIR"} {
+		if !strings.Contains(script, required) {
+			t.Errorf("build-runtime.sh missing native copier contract %q", required)
+		}
+	}
+	if strings.Contains(script, "cp -RL") || strings.Contains(script, "go run ./cmd/copytree") {
+		t.Fatal("build-runtime.sh uses unsafe or target-architecture tree copying")
+	}
+}
+
 func runBuild(t *testing.T, env []string) (string, error) {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)
