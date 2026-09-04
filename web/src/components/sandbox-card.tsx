@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import type { SandboxPhase, SandboxView } from "@/lib/types";
@@ -45,10 +45,34 @@ interface Props {
 
 export function SandboxCard({ sandbox, onRetry, onDelete }: Props) {
   const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState<"retry" | "delete" | null>(null);
+  const pendingRef = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  async function run(action: "retry" | "delete", request: () => Promise<unknown>) {
+    if (pendingRef.current) return;
+    pendingRef.current = true;
+    setPending(action);
+    try {
+      await request();
+    } catch {
+      // The route-level mutation handler owns user-visible API errors.
+    } finally {
+      if (mounted.current) {
+        pendingRef.current = false;
+        setPending(null);
+      }
+    }
+  }
+
   const shownPhase = sandbox.phase === "failed" ? sandbox.resumePhase : sandbox.phase;
   const current = creationPhases.findIndex(([phase]) => phase === shownPhase);
   return (
-    <article className={`sandbox-card status-${sandbox.phase}`}>
+    <article className={`sandbox-card status-${sandbox.phase}`} aria-busy={pending !== null}>
       <header className="card-header">
         <div><span className="eyebrow">Sandbox</span><h3>{sandbox.name}</h3></div>
         <span className="status"><i />{sandbox.phase === "failed" && sandbox.resumePhase ? `Failed; retry resumes at ${phaseLabels[sandbox.resumePhase]}` : phaseLabels[sandbox.phase]}</span>
@@ -66,11 +90,12 @@ export function SandboxCard({ sandbox, onRetry, onDelete }: Props) {
         <ul>{sandbox.operations.map((operation) => <li key={`${operation.name}-${operation.startedAt}`} className={operation.success ? "" : "failed"}><span>{operation.summary ?? operation.name}</span><time>{duration(operation.duration)}</time>{operation.error && <small>{operation.error}</small>}</li>)}</ul>
       </section>}
       {sandbox.lastError && <pre className="friction" role="alert"><span>Friction output</span>{sandbox.lastError}</pre>}
+      {pending && <span className="sr-only" role="status">{pending === "retry" ? `Retrying ${sandbox.name}` : `Deleting ${sandbox.name}`}</span>}
       <footer className="card-actions">
-        {sandbox.phase === "failed" && <Button onClick={() => void onRetry()} aria-label={`Retry ${sandbox.name}`}>Retry failed</Button>}
+        {sandbox.phase === "failed" && <Button disabled={pending !== null} onClick={() => void run("retry", onRetry)} aria-label={`Retry ${sandbox.name}`}>{pending === "retry" ? "Retrying..." : "Retry failed"}</Button>}
         {sandbox.phase === "ready" && sandbox.packMemberId && <a className="button" href={`/collie/?h=${encodeURIComponent(sandbox.packMemberId)}`} aria-label={`Open Agents for ${sandbox.name}`}>Open Agents</a>}
-        {confirming ? <Button className="danger" onClick={() => void onDelete()} aria-label={`Confirm delete ${sandbox.name}`}>Confirm delete</Button> : <Button className="quiet" onClick={() => setConfirming(true)} aria-label={`Delete ${sandbox.name}`}>Delete</Button>}
-        {confirming && <Button className="quiet" onClick={() => setConfirming(false)}>Cancel</Button>}
+        {confirming ? <Button disabled={pending !== null} className="danger" onClick={() => void run("delete", onDelete)} aria-label={`Confirm delete ${sandbox.name}`}>{pending === "delete" ? "Deleting..." : "Confirm delete"}</Button> : <Button disabled={pending !== null} className="quiet" onClick={() => setConfirming(true)} aria-label={`Delete ${sandbox.name}`}>Delete</Button>}
+        {confirming && <Button disabled={pending !== null} className="quiet" onClick={() => setConfirming(false)}>Cancel</Button>}
       </footer>
     </article>
   );
