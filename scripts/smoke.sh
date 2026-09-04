@@ -16,8 +16,29 @@ done
 SMOKE_TIMEOUT=${SMOKE_TIMEOUT:-1200}
 SMOKE_POLL_INTERVAL=${SMOKE_POLL_INTERVAL:-5}
 SMOKE_WORKSPACE_CWD=${SMOKE_WORKSPACE_CWD:-/home/vcap/app}
+
+early_cleanup() {
+  local exit_status=$? base=${MANAGER_URL%/} guid=
+  trap - EXIT INT TERM
+  if [[ -n ${COOKIE_JAR:-} && -f ${COOKIE_JAR:-} ]]; then
+    curl --silent --output /dev/null --request DELETE --cookie "$COOKIE_JAR" "$base/manager/api/sandboxes/$SANDBOX_NAME" || true
+  else
+    curl --silent --output /dev/null --request DELETE "$base/manager/api/sandboxes/$SANDBOX_NAME" || true
+  fi
+  guid=$(cf curl "/v3/apps?names=$SANDBOX_NAME" 2>/dev/null | jq -r '.resources[0].guid//empty' 2>/dev/null) || true
+  cf remove-route-policy "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" --source "cf:app:$MANAGER_APP_GUID" >/dev/null 2>&1 || true
+  [[ -z $guid ]] || cf remove-route-policy "$IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$guid" >/dev/null 2>&1 || true
+  cf unmap-route "$SANDBOX_NAME" "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" >/dev/null 2>&1 || true
+  cf delete-route "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" -f >/dev/null 2>&1 || true
+  cf delete "$SANDBOX_NAME" -f -r >/dev/null 2>&1 || true
+  [[ -z ${WORK_DIR:-} ]] || rm -rf "$WORK_DIR"
+  exit "$exit_status"
+}
+
 SANDBOX_NAME=${SMOKE_NAME:-smoke-$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM}
+trap early_cleanup EXIT INT TERM
 [[ $SANDBOX_NAME =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || { printf 'smoke: invalid sandbox name\n' >&2; exit 2; }
+cleanup_armed=1
 [[ $IDENTITY_DOMAIN =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && $IDENTITY_DOMAIN == *.* ]] || { printf 'smoke: invalid identity domain\n' >&2; exit 2; }
 [[ $SMOKE_TIMEOUT =~ ^[1-9][0-9]*$ && $SMOKE_POLL_INTERVAL =~ ^[0-9]+$ ]] || { printf 'smoke: invalid timeout or poll interval\n' >&2; exit 2; }
 
@@ -39,7 +60,6 @@ jq -n --arg name "$SANDBOX_NAME" --arg repository "$SMOKE_REPOSITORY" --arg buil
 jq -n --arg cwd "$SMOKE_WORKSPACE_CWD" '{cwd:$cwd,label:"smoke"}' >"$WORKSPACE_JSON"
 chmod 600 "$TOKEN_JSON" "$COOKIE_JAR" "$CREATE_JSON" "$WORKSPACE_JSON" "$RESPONSE_JSON" "$READY_JSON"
 
-created=0
 deleted=0
 member_id=
 create_submitted=
@@ -74,7 +94,7 @@ api_error() {
 
 policy_json() {
   local output
-  if ! output=$(cf curl "/routing/v1/route_policies?host=$IDENTITY_HOST" 2>/dev/null); then
+  if ! output=$(cf curl "/routing/v1/route_policies" 2>/dev/null); then
     printf 'smoke: route-policy query failed\n' >&2
     return 1
   fi
@@ -103,13 +123,29 @@ cf_resources_absent() {
   apps=$(cf curl "/v3/apps?names=$SANDBOX_NAME") || return 1
   routes=$(cf curl "/v3/routes?hosts=$SANDBOX_NAME") || return 1
   policies=$(policy_json) || return 1
-  [[ $(jq -r '.resources|length' <<<"$apps") == 0 && $(jq -r '.resources|length' <<<"$routes") == 0 && $(jq -r '(.policies//.resources//[])|length' <<<"$policies") == 0 ]]
+  [[ $(jq -r '.resources|length' <<<"$apps") == 0 && $(jq -r '.resources|length' <<<"$routes") == 0 ]] || return 1
+  ! matching_policy sandbox "$policies" && ! matching_policy manager "$policies"
 }
 
-cleanup() {
+matching_policy() {
+  local direction=$1 body=$2 source destination
+  if [[ $direction == sandbox ]]; then source=$MANAGER_APP_GUID; destination=$IDENTITY_HOST
+  else [[ -n ${sandbox_guid:-} ]] || return 1; source=$sandbox_guid; destination="$MANAGER_ROUTE_HOST.$IDENTITY_DOMAIN"
+  fi
+  jq -e --arg source "$source" --arg destination "$destination" '
+    (.policies//.resources//[])[]
+    | select(
+        (.source.type=="app" or .source.type=="cf-app")
+        and (.source.value//.source.id)==$source
+        and (.destination.host//.destination.route.host)==$destination
+      )
+  ' <<<"$body" >/dev/null
+}
+
+managed_cleanup() {
   local exit_status=$?
   trap - EXIT INT TERM
-  if (( created )); then
+  if (( cleanup_armed )); then
     local status deadline
     status=$(gateway_status DELETE "$MANAGER_URL/manager/api/sandboxes/$SANDBOX_NAME")
     deadline=$((SECONDS + SMOKE_TIMEOUT))
@@ -128,7 +164,7 @@ cleanup() {
   rm -rf "$WORK_DIR"
   exit "$exit_status"
 }
-trap cleanup EXIT INT TERM
+trap managed_cleanup EXIT INT TERM
 
 target=$(cf target)
 for field in user org space; do
@@ -155,7 +191,6 @@ rm -f "$TOKEN_JSON"
 status=$(gateway_status POST "$MANAGER_URL/manager/api/sandboxes" "$CREATE_JSON")
 [[ $status == 202 ]] || { api_error "$status"; exit 1; }
 valid_json "$RESPONSE_JSON"
-created=1
 create_submitted=$SECONDS
 
 assert_public_api_safe() {
@@ -211,13 +246,22 @@ remote_probe='code=$(curl --silent --output /dev/null --write-out "%{http_code}"
 wrong_status=$(cf ssh "$WRONG_IDENTITY_APP" -c "$remote_probe" | jq -Rrs 'split("\n")|map(select(test("^[0-9]{3}$")))|last//""')
 [[ $wrong_status == 403 ]] || { printf 'smoke: wrong identity expected HTTP 403, got %s\n' "${wrong_status:-no status}" >&2; exit 1; }
 
-manager_probe='file=$(mktemp); code=$(curl --silent --max-time 20 --output "$file" --write-out "%{http_code}" --cert "$CF_INSTANCE_CERT" --key "$CF_INSTANCE_KEY" "'"$IDENTITY_URL"'/pack/v1/hello"); printf "%s " "$code"; head -c 4096 "$file"; rm -f "$file"'
-hello=$(cf ssh "$MANAGER_APP_NAME" -c "$manager_probe")
-hello_status=${hello%% *}
-hello_body=${hello#* }
-[[ $hello_status == 200 ]] && jq -e --arg member "$member_id" '.protocol|type=="number"' <<<"$hello_body" >/dev/null && jq -e --arg member "$member_id" '.member==$member' <<<"$hello_body" >/dev/null || {
-  printf 'smoke: manager hello response invalid\n' >&2; exit 1;
-}
+pack_probe='HERDR_PLUGIN_CONFIG_DIR=./data/collie-config HERDR_PLUGIN_STATE_DIR=./data/collie-state COLLIE_STATE_DIR=./data/collie-state HERDR_SOCKET_PATH=./data/collie-state/herdr.sock COLLIE_HOST=127.0.0.1 COLLIE_PORT=9191 ./sandbox/runtime/bin/collie pack status'
+pack_status=$(cf ssh "$MANAGER_APP_NAME" -c "$pack_probe") || { printf 'smoke: authenticated Pack status failed\n' >&2; exit 1; }
+if ! awk -v member="$member_id" '
+  $0 ~ "(^|[[:space:]])" member "([[:space:]]|$)" {
+    found=1
+    if ($0 ~ /unreachable/) exit 1
+    if ($0 ~ /reachable/) { ok=1; exit 0 }
+    next
+  }
+  found && /unreachable/ { exit 1 }
+  found && /reachable/ { ok=1; exit 0 }
+  END { exit !ok }
+' <<<"$pack_status"; then
+  printf 'smoke: authenticated Pack status lacks reachable member\n' >&2
+  exit 1
+fi
 
 status=$(gateway_status GET "$MANAGER_URL/collie/api/snapshot?host=$member_id")
 [[ $status == 200 ]] && valid_json "$RESPONSE_JSON" || { api_error "$status"; exit 1; }
@@ -285,10 +329,11 @@ routes=$(cf curl "/v3/routes?hosts=$SANDBOX_NAME") || { printf 'smoke: route que
 policies=$(policy_json)
 [[ $(jq -r '.resources|length' <<<"$apps") == 0 ]] || { printf 'smoke: app remains after deletion\n' >&2; exit 1; }
 [[ $(jq -r '.resources|length' <<<"$routes") == 0 ]] || { printf 'smoke: route remains after deletion\n' >&2; exit 1; }
-[[ $(jq -r '(.policies//.resources//[])|length' <<<"$policies") == 0 ]] || { printf 'smoke: route policy remains after deletion\n' >&2; exit 1; }
+! matching_policy sandbox "$policies" || { printf 'smoke: sandbox route policy remains after deletion\n' >&2; exit 1; }
+! matching_policy manager "$policies" || { printf 'smoke: manager enrollment policy remains after deletion\n' >&2; exit 1; }
 printf '%-20s %s\n' delete "$((absent_observed-delete_submitted))"
 
-created=0
+cleanup_armed=0
 trap - EXIT INT TERM
 rm -rf "$WORK_DIR"
 printf 'PASS %s\n' "$SANDBOX_NAME"

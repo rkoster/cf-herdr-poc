@@ -53,12 +53,17 @@ case "$url $method" in
   */manager/api/session\ POST) status=204 ;;
   */manager/api/sandboxes\ POST)
     touch "$FAKE_STATE/created"
-    body='{"name":"smoke-fixed","repository":"https://example.invalid/repo.git","buildpack":"binary_buildpack","desired":"present","phase":"creating","createdAt":"2026-09-04T00:00:00Z","updatedAt":"2026-09-04T00:00:00Z"}'
-    status=202
+    touch "$FAKE_STATE/cf-resource-created"
+    if [[ ${FAKE_SCENARIO:-happy} == create_lost ]]; then status=000
+    elif [[ ${FAKE_SCENARIO:-happy} == create_malformed ]]; then body='{bad'; status=202
+    else body='{"name":"smoke-fixed","repository":"https://example.invalid/repo.git","buildpack":"binary_buildpack","desired":"present","phase":"creating","createdAt":"2026-09-04T00:00:00Z","updatedAt":"2026-09-04T00:00:00Z"}'; status=202
+    fi
     ;;
   */manager/api/sandboxes/smoke-fixed\ DELETE)
     touch "$FAKE_STATE/delete-requested"
-    status=${FAKE_MANAGER_DELETE_STATUS:-202}
+    if [[ ${FAKE_SCENARIO:-happy} == create_lost || ${FAKE_SCENARIO:-happy} == create_malformed ]]; then status=404
+    else status=${FAKE_MANAGER_DELETE_STATUS:-202}
+    fi
     [[ $status == 202 ]] && touch "$FAKE_STATE/manager-cleaned"
     ;;
   */manager/api/sandboxes\ GET)
@@ -118,7 +123,11 @@ case "${1:-}" in
   ssh)
     app=$2
     if [[ $app == wrong-app ]]; then printf '%s\n' "${FAKE_WRONG_STATUS:-403}"
-    elif [[ $app == manager-app ]]; then printf '%s\n' "${FAKE_MANAGER_HELLO:-200 {\"protocol\":1,\"member\":\"smoke-fixed\"}}"
+    elif [[ $app == manager-app ]]; then
+      command=${4:-}
+      [[ $command == *'./sandbox/runtime/bin/collie pack status'* ]] || { printf 'plain manager curl forbidden\n' >&2; exit 95; }
+      [[ $command == *'HERDR_PLUGIN_CONFIG_DIR=./data/collie-config'* && $command == *'HERDR_PLUGIN_STATE_DIR=./data/collie-state'* && $command == *'COLLIE_STATE_DIR=./data/collie-state'* ]] || exit 96
+      printf '%s\n' "${FAKE_MANAGER_PACK_STATUS:-mode   lead$'\n'  smoke-fixed  (peer)  link    reachable$'\n'    data    served a snapshot}"
     else exit 1
     fi
     ;;
@@ -144,10 +153,14 @@ case "${1:-}" in
         elif [[ -f "$FAKE_STATE/manager-cleaned" || -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"resources":[]}'
         else printf '{"resources":[{"guid":"route-guid"}]}'
         fi ;;
-      '/routing/v1/route_policies?host=smoke-fixed.identity.invalid')
+      '/routing/v1/route_policies')
         [[ ${FAKE_SCENARIO:-happy} != policy_query_failure ]] || exit 1
-        if [[ -f "$FAKE_STATE/manager-cleaned" || -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"policies":[]}'
-        else printf '{"policies":[{"host":"smoke-fixed.identity.invalid"}]}'
+        if [[ ${FAKE_SCENARIO:-happy} == leak_sandbox_policy && ! -f "$FAKE_STATE/direct-cleaned" ]]; then
+          printf '{"policies":[{"source":{"type":"cf-app","id":"manager-guid"},"destination":{"route":{"host":"smoke-fixed.identity.invalid"}}}]}'
+        elif [[ ${FAKE_SCENARIO:-happy} == leak_manager_policy && ! -f "$FAKE_STATE/direct-cleaned" ]]; then
+          printf '{"policies":[{"source":{"type":"cf-app","id":"sandbox-guid"},"destination":{"route":{"host":"manager-pack.identity.invalid"}}}]}'
+        elif [[ -f "$FAKE_STATE/manager-cleaned" || -f "$FAKE_STATE/direct-cleaned" ]]; then printf '{"policies":[]}'
+        else printf '{"policies":[{"source":{"type":"cf-app","id":"manager-guid"},"destination":{"route":{"host":"smoke-fixed.identity.invalid"}}},{"source":{"type":"cf-app","id":"sandbox-guid"},"destination":{"route":{"host":"manager-pack.identity.invalid"}}}]}'
         fi ;;
       *) printf '{"resources":[]}' ;;
     esac ;;
@@ -204,6 +217,8 @@ test_full_flow_and_exact_identity_checks() {
   assert_not_contains "$commands" "$SECRET"
   assert_contains "$commands" 'cf <ssh> <wrong-app>'
   assert_contains "$commands" 'cf <ssh> <manager-app>'
+  assert_contains "$commands" './sandbox/runtime/bin/collie pack status'
+  assert_not_contains "$commands" 'manager-app> <-c> <file=$(mktemp)'
   assert_contains "$commands" '<https://manager.invalid/collie/api/snapshot?host=smoke-fixed>'
   assert_contains "$commands" '<https://manager.invalid/collie/api/workspace?host=smoke-fixed>'
   assert_contains "$commands" '<https://manager.invalid/collie/api/pane/w2%3At1%3Ap1/reply?host=smoke-fixed>'
@@ -235,7 +250,7 @@ test_docs_require_complete_live_prerequisites() {
   assert_contains "$docs" 'MANAGER_APP_NAME'
   assert_contains "$docs" 'POST `/collie/api/workspace?host=<member>`'
   assert_contains "$docs" 'exactly HTTP 403'
-  assert_contains "$docs" '`GET /pack/v1/hello`'
+  assert_contains "$docs" 'packaged Collie `pack status`'
   assert_not_contains "$docs" 'SMOKE_SKIP_WRONG_IDENTITY'
   assert_not_contains "$docs" 'read-only'
 }
@@ -243,12 +258,15 @@ test_docs_require_complete_live_prerequisites() {
 test_identity_status_must_be_exact() {
   make_fakes; local output
   output=$(FAKE_WRONG_STATUS=404 run_failure); assert_contains "$output" 'wrong identity expected HTTP 403'
-  make_fakes; output=$(FAKE_MANAGER_HELLO='200 {"protocol":1,"member":"other"}' run_failure); assert_contains "$output" 'manager hello response invalid'
+  make_fakes; output=$(FAKE_MANAGER_PACK_STATUS='mode   lead' run_failure); assert_contains "$output" 'authenticated Pack status lacks reachable member'
+  make_fakes
+  output=$(FAKE_MANAGER_PACK_STATUS=$'  smoke-fixed  (peer)  link    unreachable\n  other  (peer)  link    reachable' run_failure)
+  assert_contains "$output" 'authenticated Pack status lacks reachable member'
 }
 
 test_bad_lifecycle_and_security_responses_fail_closed() {
   local scenario output
-  for scenario in malformed failed api_leak malformed_routes policy_query_failure leaked_route; do
+  for scenario in malformed failed api_leak malformed_routes policy_query_failure leaked_route leak_sandbox_policy leak_manager_policy; do
     make_fakes
     output=$(FAKE_SCENARIO=$scenario run_failure)
     case $scenario in
@@ -258,6 +276,8 @@ test_bad_lifecycle_and_security_responses_fail_closed() {
       malformed_routes) assert_contains "$output" 'invalid sandbox route JSON' ;;
       policy_query_failure) assert_contains "$output" 'route-policy query failed' ;;
       leaked_route) assert_contains "$output" 'route remains after deletion' ;;
+      leak_sandbox_policy) assert_contains "$output" 'sandbox route policy remains after deletion' ;;
+      leak_manager_policy) assert_contains "$output" 'manager enrollment policy remains after deletion' ;;
     esac
     if [[ $scenario == leaked_route && ! -f "$STATE/direct-cleaned" ]]; then fail 'leaked route did not trigger direct cleanup'; fi
   done
@@ -268,6 +288,27 @@ test_bad_lifecycle_and_security_responses_fail_closed() {
   make_fakes
   output=$(FAKE_SCENARIO=same_identity run_failure no)
   assert_contains "$output" 'wrong-identity app must differ from manager'
+}
+
+test_create_response_failure_still_cleans_by_name() {
+  local scenario output commands
+  for scenario in create_lost create_malformed; do
+    make_fakes
+    output=$(FAKE_SCENARIO=$scenario run_failure)
+    commands=$(<"$LOG")
+    [[ -f "$STATE/cf-resource-created" ]] || fail 'fake did not create resource before response failure'
+    assert_contains "$commands" '/manager/api/sandboxes/smoke-fixed>'
+    assert_contains "$commands" 'cf <delete> <smoke-fixed>'
+    assert_not_contains "$output" "$SECRET"
+  done
+}
+
+test_cleanup_trap_is_installed_immediately_after_name() {
+  local script name_line trap_line
+  script=$(<"$SCRIPT")
+  name_line=$(jq -Rrs 'split("\n")|to_entries|map(select(.value|startswith("SANDBOX_NAME=")))|.[0].key' <<<"$script")
+  trap_line=$(jq -Rrs 'split("\n")|to_entries|map(select(.value=="trap early_cleanup EXIT INT TERM"))|.[0].key' <<<"$script")
+  (( trap_line > name_line && trap_line - name_line <= 3 )) || fail 'cleanup trap is not installed immediately after sandbox naming'
 }
 
 test_cleanup_falls_back_to_direct_cf() {
@@ -286,5 +327,7 @@ test_full_flow_and_exact_identity_checks
 test_docs_require_complete_live_prerequisites
 test_identity_status_must_be_exact
 test_bad_lifecycle_and_security_responses_fail_closed
+test_create_response_failure_still_cleans_by_name
+test_cleanup_trap_is_installed_immediately_after_name
 test_cleanup_falls_back_to_direct_cf
 printf 'PASS smoke script tests\n'

@@ -44,11 +44,11 @@ bash scripts/smoke.sh
 - The sandbox reaches `ready` with a Pack member ID and has no ordinary public route.
 - A local request without an instance certificate cannot reach the identity route.
 - `cf ssh $WRONG_IDENTITY_APP` calls the identity route with that app's `CF_INSTANCE_CERT` and `CF_INSTANCE_KEY` and receives exactly HTTP 403.
-- `cf ssh $MANAGER_APP_NAME` performs an authenticated `GET /pack/v1/hello` after readiness and receives HTTP 200 JSON with numeric `protocol` and the expected `member`.
+- `cf ssh $MANAGER_APP_NAME` runs the packaged Collie `pack status` command with the manager's explicit config, state, socket, and loopback settings. Its authenticated Pack probe must report the sandbox member reachable without exposing Pack secrets.
 - Authenticated `GET /collie/api/snapshot?host=<member>` through the public manager gateway reports the reachable member.
 - Authenticated POST `/collie/api/workspace?host=<member>` with `{cwd:<configured path>,label:"smoke"}` succeeds and returns a pane ID.
 - The host-scoped snapshot reports that workspace and pane. The harness sends `printf 'smoke-ready\n'` through the pane reply route and confirms the marker through a host-scoped pane read.
-- Deletion removes the manager record. Authenticated Pack and snapshot reads then omit the member, while CAPI reports no app, route, or route policy.
+- Deletion removes the manager record. Authenticated Pack and snapshot reads then omit the member, while CAPI reports no app or route. The full identity-domain policy set must omit both the manager-to-sandbox destination tuple and the sandbox-to-manager enrollment tuple.
 - Any malformed response, timeout, lifecycle failure, identity mismatch, failed leak query, or residual resource fails the run. The armed trap requests manager deletion and directly removes residual policy, route, and app resources when reconciliation does not.
 
 ## Timing Output
