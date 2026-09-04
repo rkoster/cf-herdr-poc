@@ -99,6 +99,10 @@
         }
       }
     },
+    "jq": {
+      "resolved": "github:NixOS/nixpkgs/044bfe75bfe4c7bbe043dc17b5e42ea823b84a09?narHash=sha256-fBJMdnKUTUDtfi%2FBYLr71HLaC9dG382arxLF2Egg2uo%3D#jq",
+      "source": "nixpkg"
+    },
     "nodejs@24": {
       "last_modified": "2025-12-29T16:45:58Z",
       "plugin_version": "0.0.2",
