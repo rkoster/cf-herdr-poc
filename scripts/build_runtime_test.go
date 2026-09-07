@@ -58,6 +58,20 @@ func TestCFLinuxFS5ArtifactManifestHasPerArchitectureBunInputs(t *testing.T) {
 	}
 }
 
+func TestCFLinuxFS5ArtifactSelectorUsesManifestKeysForBothArchitectures(t *testing.T) {
+	root := packageRoot(t)
+	for _, arch := range []string{"amd64", "arm64"} {
+		command := exec.Command("bash", filepath.Join(root, "scripts", "select-cflinuxfs5-artifacts.sh"), arch)
+		output, err := command.CombinedOutput()
+		if err == nil {
+			t.Fatalf("architecture %s unexpectedly succeeded without required Herdr/CF inputs: %s", arch, output)
+		}
+		if !strings.Contains(string(output), "HERDR_URL") || !strings.Contains(string(output), "CF_URL") {
+			t.Fatalf("architecture %s output = %q, want fail-closed Herdr/CF error", arch, output)
+		}
+	}
+}
+
 func TestCFLinuxFS5BuildScriptUsesDockerAndDoesNotPassSecrets(t *testing.T) {
 	script := readFile(t, filepath.Join(packageRoot(t), "scripts", "build-cflinuxfs5.sh"))
 	for _, required := range []string{"docker", "--output", "dist", "BUILD_MODE", "Docker is required"} {

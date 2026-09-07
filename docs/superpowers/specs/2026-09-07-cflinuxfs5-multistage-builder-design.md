@@ -15,9 +15,10 @@ The builder uses multiple stages:
 2. **Build stage**: copies the repository and verified tools, builds the Go manager/bootstrap,
    builds the manager frontend, builds the nested Collie runtime, and assembles the sandbox and
    manager runtime trees.
-3. **Output stage**: starts again from cflinuxfs5 and copies only `dist/` plus required runtime
-   assets. It contains no package manager caches, source checkout, Git metadata, test files, or
-   downloaded archives.
+3. **Output stage**: uses `FROM scratch` and copies only the assembled `dist/` contents. The
+   cflinuxfs5 image is used as the tools/build compatibility base, not exported as the runtime
+   output. The output contains no package manager caches, source checkout, Git metadata, test files,
+   or downloaded archives.
 
 The output stage is used as a local artifact source. Cloud Foundry still deploys `dist/` with the
 binary buildpack; the runtime image is a build compatibility and validation boundary, not a Docker
