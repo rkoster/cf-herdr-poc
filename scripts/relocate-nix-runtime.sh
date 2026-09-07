@@ -13,7 +13,7 @@ fi
 source_path=$1
 destination=$2
 target_arch="${TARGET_ARCH:-${GOARCH:-amd64}}"
-for tool in readlink readelf ldd install patchelf; do
+for tool in readlink readelf ldd install patchelf sha256sum; do
 	command -v "$tool" >/dev/null 2>&1 || { printf 'error: required tool %s was not found in PATH\n' "$tool" >&2; exit 1; }
 done
 
@@ -106,26 +106,48 @@ library_dir="$destination_dir/.${destination_name}-libs"
 mkdir -p "$destination_dir"
 rm -rf "$library_dir"
 mkdir -p "$library_dir"
-declare -A installed_sources=()
+declare -A installed_sonames=()
+declare -A installed_payloads=()
 
 copy_library() {
-	local source=$1 name target resolved
+	local source=$1 soname=$2 resolved hash payload_name payload alias_target
 	resolved="$(readlink -f -- "$source" 2>/dev/null || true)"
 	[[ -n "$resolved" && -f "$resolved" ]] || { printf 'error: dependency does not resolve to a regular file: %s\n' "$source" >&2; exit 1; }
-	name="$(basename -- "$source")"
-	target="$library_dir/$name"
-	if [[ -n "${installed_sources[$name]:-}" ]] && ! cmp -s "$resolved" "${installed_sources[$name]}"; then
-		printf 'error: dependency basename collision: %s\n' "$name" >&2
+	if [[ -z "$soname" || "$soname" != "$(basename -- "$soname")" || "$soname" == . || "$soname" == .. ]]; then
+		printf 'error: invalid DT_NEEDED SONAME: %s\n' "$soname" >&2
 		exit 1
 	fi
-	if [[ ! -e "$target" ]]; then
-		installed_sources["$name"]="$resolved"
-		install -m 0755 "$resolved" "$target"
-		if [[ "$name" != "$(basename -- "$source_interpreter")" ]] && readelf -h "$target" >/dev/null 2>&1; then
-			patchelf --set-rpath '\$ORIGIN' "$target"
+	if [[ -n "${installed_sonames[$soname]:-}" ]]; then
+		if ! cmp -s "$resolved" "${installed_sonames[$soname]}"; then
+			printf 'error: SONAME collision: %s resolves to differing content\n' "$soname" >&2
+			exit 1
+		fi
+		printf '%s' "${installed_payloads[$soname]}"
+		return
+	fi
+	hash="$(sha256sum "$resolved")"
+	hash="${hash%% *}"
+	payload_name=".${hash}-$(basename -- "$resolved")"
+	payload="$library_dir/$payload_name"
+	if [[ ! -e "$payload" ]]; then
+		install -m 0755 "$resolved" "$payload"
+		if [[ "$resolved" != "$(readlink -f -- "$source_interpreter")" ]] && readelf -h "$payload" >/dev/null 2>&1; then
+			patchelf --set-rpath '\$ORIGIN' "$payload"
 		fi
 	fi
-	printf '%s' "$target"
+	alias_target="$library_dir/$soname"
+	if [[ -e "$alias_target" || -L "$alias_target" ]]; then
+		printf 'error: private library alias already exists: %s\n' "$soname" >&2
+		exit 1
+	fi
+	ln -s -- "$payload_name" "$alias_target"
+	if [[ "$(dirname -- "$(readlink -- "$alias_target")")" != . || "$(dirname -- "$(readlink -f -- "$alias_target")")" != "$library_dir" ]]; then
+		printf 'error: private library alias escapes directory: %s\n' "$soname" >&2
+		exit 1
+	fi
+	installed_sonames["$soname"]="$resolved"
+	installed_payloads["$soname"]="$payload"
+	printf '%s' "$payload"
 }
 
 resolve_needed() {
@@ -156,7 +178,7 @@ resolve_needed() {
 
 declare -A inspected=()
 declare -a queue=("$resolved_source")
-copy_library "$source_interpreter" >/dev/null
+copy_library "$source_interpreter" "$(basename -- "$source_interpreter")" >/dev/null
 while ((${#queue[@]})); do
 	requester="${queue[0]}"
 	queue=("${queue[@]:1}")
@@ -165,14 +187,14 @@ while ((${#queue[@]})); do
 	while IFS= read -r needed; do
 		[[ -n "$needed" ]] || continue
 		resolved="$(resolve_needed "$needed" "$requester")"
-		copy_library "$resolved" >/dev/null
+		copy_library "$resolved" "$needed" >/dev/null
 		queue+=("$resolved")
 	done < <(patchelf --print-needed "$requester")
 done
 
 for module in libnss_files.so.2 libnss_dns.so.2 libresolv.so.2; do
 	if [[ -n "${closure_candidates[$module]:-}" ]]; then
-		copy_library "$(resolve_needed "$module" "$source_interpreter")" >/dev/null
+		copy_library "$(resolve_needed "$module" "$source_interpreter")" "$module" >/dev/null
 	fi
 done
 

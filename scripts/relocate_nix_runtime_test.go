@@ -1,6 +1,7 @@
 package scripts_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,6 +170,84 @@ func TestRelocateNixRuntimeRecursivelyCopiesNeededLibraries(t *testing.T) {
 	}
 	if got := printPatchelf(t, "--print-rpath", filepath.Join(temp, "bundle", ".runtime-libs", "libouter.so")); strings.Contains(got, temp) {
 		t.Fatalf("copied library retains source RPATH %q", got)
+	}
+}
+
+func TestRelocateNixRuntimePreservesVersionedSONAMEAlias(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("ELF relocation is Linux-only")
+	}
+	for _, tool := range []string{"cc", "ldd", "patchelf"} {
+		requireHostTool(t, tool)
+	}
+	temp := t.TempDir()
+	libs := filepath.Join(temp, "libs")
+	if err := os.Mkdir(libs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(libs, "foo.c"), "int foo(void) { return 42; }\n")
+	canonical := filepath.Join(libs, "libfoo.so.1.2")
+	compile(t, "cc", "-shared", "-fPIC", "-Wl,-soname,libfoo.so.1", "-o", canonical, filepath.Join(libs, "foo.c"))
+	if err := os.Symlink(filepath.Base(canonical), filepath.Join(libs, "libfoo.so.1")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(temp, "main.c"), "extern int foo(void); int main(void) { return foo() != 42; }\n")
+	source := filepath.Join(temp, "runtime")
+	compile(t, "cc", "-Wl,-rpath,"+libs, "-L"+libs, "-o", source, filepath.Join(temp, "main.c"), "-l:libfoo.so.1")
+	destination := filepath.Join(temp, "bundle", "runtime")
+	runRelocator(t, source, destination, []string{"TARGET_INTERPRETER=" + printPatchelf(t, "--print-interpreter", source), "TARGET_ARCH=" + runtimeArch()})
+
+	alias := filepath.Join(temp, "bundle", ".runtime-libs", "libfoo.so.1")
+	info, err := os.Lstat(alias)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("SONAME alias is not a symlink: info=%v err=%v", info, err)
+	}
+	target, err := os.Readlink(alias)
+	if err != nil || filepath.IsAbs(target) || filepath.Dir(target) != "." {
+		t.Fatalf("SONAME alias target = %q, err=%v; want same-directory relative target", target, err)
+	}
+	resolved, err := filepath.EvalSymlinks(alias)
+	if err != nil || filepath.Dir(resolved) != filepath.Dir(alias) {
+		t.Fatalf("SONAME alias escapes private directory: resolved=%q err=%v", resolved, err)
+	}
+	if output, err := exec.Command(destination).CombinedOutput(); err != nil {
+		t.Fatalf("relocated versioned fixture failed: %v\n%s", err, output)
+	}
+}
+
+func TestRelocateNixRuntimeRejectsDifferentContentForSameSONAME(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("ELF relocation is Linux-only")
+	}
+	for _, tool := range []string{"cc", "ldd", "patchelf"} {
+		requireHostTool(t, tool)
+	}
+	temp := t.TempDir()
+	for _, fixture := range []struct {
+		name  string
+		value int
+	}{
+		{name: "a", value: 1},
+		{name: "b", value: 2},
+	} {
+		dir := filepath.Join(temp, fixture.name)
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(dir, "foo.c"), fmt.Sprintf("int foo(void) { return %d; }\n", fixture.value))
+		compile(t, "cc", "-shared", "-fPIC", "-Wl,-soname,libfoo.so.1", "-o", filepath.Join(dir, "libfoo.so.1.2"), filepath.Join(dir, "foo.c"))
+		if err := os.Symlink("libfoo.so.1.2", filepath.Join(dir, "libfoo.so.1")); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(dir, fixture.name+".c"), "extern int foo(void); int "+fixture.name+"(void) { return foo(); }\n")
+		compile(t, "cc", "-shared", "-fPIC", "-Wl,-soname,lib"+fixture.name+".so", "-Wl,-rpath,$ORIGIN", "-L"+dir, "-o", filepath.Join(dir, "lib"+fixture.name+".so"), filepath.Join(dir, fixture.name+".c"), "-l:libfoo.so.1")
+	}
+	writeFile(t, filepath.Join(temp, "main.c"), "extern int a(void); extern int b(void); int main(void) { return a() + b() != 3; }\n")
+	source := filepath.Join(temp, "runtime")
+	compile(t, "cc", "-Wl,-rpath,"+filepath.Join(temp, "a")+":"+filepath.Join(temp, "b"), "-L"+filepath.Join(temp, "a"), "-L"+filepath.Join(temp, "b"), "-o", source, filepath.Join(temp, "main.c"), "-la", "-lb")
+	output, err := runRelocatorCommand(source, filepath.Join(temp, "bundle", "runtime"), []string{"TARGET_INTERPRETER=" + printPatchelf(t, "--print-interpreter", source), "TARGET_ARCH=" + runtimeArch()})
+	if err == nil || !strings.Contains(output, "SONAME collision: libfoo.so.1") {
+		t.Fatalf("collision output=%q err=%v", output, err)
 	}
 }
 
