@@ -4,6 +4,8 @@ FROM ${BASE_IMAGE} AS cflinuxfs5-tools
 ARG TARGETARCH
 ARG BUN_URL
 ARG BUN_SHA256
+ARG GO_URL
+ARG GO_SHA256
 ARG HERDR_URL
 ARG HERDR_SHA256
 ARG CF_URL
@@ -12,18 +14,24 @@ COPY docker/cflinuxfs5-builder/extract-cf-cli.sh /usr/local/bin/extract-cf-cli.s
 RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -v tar; \
     test "$TARGETARCH" = amd64 || test "$TARGETARCH" = arm64 || { echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 2; }; \
     test -n "${BUN_URL:-}" || { echo 'BUN_URL is required for the selected architecture' >&2; exit 2; }; \
-    test -n "${BUN_SHA256:-}" || { echo 'BUN_SHA256 is required' >&2; exit 2; }; \
+     test -n "${BUN_SHA256:-}" || { echo 'BUN_SHA256 is required' >&2; exit 2; }; \
+     test -n "${GO_URL:-}" || { echo 'GO_URL is required for the selected architecture' >&2; exit 2; }; \
+     test -n "${GO_SHA256:-}" || { echo 'GO_SHA256 is required' >&2; exit 2; }; \
     test -n "${HERDR_URL:-}" || { echo 'HERDR_URL is required; use the verified Herdr v0.8.2 release asset' >&2; exit 2; }; \
     test -n "${HERDR_SHA256:-}" || { echo 'HERDR_SHA256 is required' >&2; exit 2; }; \
      test -n "${CF_URL:-}" || { echo 'CF_URL is required; local CF version metadata is unresolved' >&2; exit 2; }; \
      test -n "${CF_SHA256:-}" || { echo 'CF_SHA256 is required' >&2; exit 2; }; \
      case "$CF_URL" in *.tar.gz|*.tgz) cf_format=tgz ;; *.zip) cf_format=zip ;; *) echo 'CF_URL must end in .tgz, .tar.gz, or .zip' >&2; exit 2 ;; esac; \
      mkdir -p /tools/downloads /tools/bin; \
-    curl --fail --location --retry 3 --output /tools/downloads/bun.zip "$BUN_URL"; \
+     curl --fail --location --retry 3 --output /tools/downloads/bun.zip "$BUN_URL"; \
     printf '%s  %s\n' "$BUN_SHA256" /tools/downloads/bun.zip | sha256sum -c -; \
     unzip -q /tools/downloads/bun.zip -d /tools/bun; \
     find /tools/bun -type f -name bun -exec install -m 0755 {} /tools/bin/bun \;; \
-    test -x /tools/bin/bun; \
+     test -x /tools/bin/bun; \
+     curl --fail --location --retry 3 --output /tools/downloads/go.tar.gz "$GO_URL"; \
+     printf '%s  %s\n' "$GO_SHA256" /tools/downloads/go.tar.gz | sha256sum -c -; \
+     rm -rf /usr/local/go; tar -C /usr/local -xzf /tools/downloads/go.tar.gz; \
+     test -x /usr/local/go/bin/go; \
     curl --fail --location --retry 3 --output /tools/downloads/herdr "$HERDR_URL"; \
     printf '%s  %s\n' "$HERDR_SHA256" /tools/downloads/herdr | sha256sum -c -; \
      install -m 0755 /tools/downloads/herdr /tools/bin/herdr; \
@@ -34,11 +42,11 @@ RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -
 FROM cflinuxfs5-tools AS build
 ARG GOOS=linux
 ARG GOARCH=amd64
+ENV PATH=/usr/local/go/bin:/tools/bin:$PATH
 COPY . /src
 COPY --from=cflinuxfs5-tools /tools /tools
 WORKDIR /src
-RUN set -eux; command -v go || { echo 'cflinuxfs5 image lacks Go; provide a builder image with Go or add a pinned package source' >&2; exit 2; }; \
-    command -v node || { echo 'cflinuxfs5 image lacks Node.js; Collie build requires a pinned Node/Bun toolchain' >&2; exit 2; }; \
+RUN set -eux; command -v go; \
     test -d collie/.git || { echo 'nested Collie checkout is required in the build context' >&2; exit 2; }; \
     /tools/bin/bun install --cwd web --frozen-lockfile; /tools/bin/bun run --cwd web build; \
     BUN_RUNTIME_BIN=/tools/bin/bun HERDR_RUNTIME_BIN=/tools/bin/herdr CF_BIN=/tools/bin/cf GOOS="$GOOS" GOARCH="$GOARCH" \

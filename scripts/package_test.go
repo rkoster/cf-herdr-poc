@@ -44,6 +44,11 @@ func TestBuildUsesTransactionalStagingAndValidatesArtifactContract(t *testing.T)
 func TestManifestPinsVerifiedHerdrArtifacts(t *testing.T) {
 	manifest := readPackageFile(t, "docker/cflinuxfs5-builder/artifacts.env")
 	for _, required := range []string{
+		"GO_VERSION=1.27.1",
+		"GO_URL_AMD64=https://go.dev/dl/go1.27.1.linux-amd64.tar.gz",
+		"GO_SHA256_AMD64=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445",
+		"GO_URL_ARM64=https://go.dev/dl/go1.27.1.linux-arm64.tar.gz",
+		"GO_SHA256_ARM64=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec",
 		"HERDR_VERSION=0.8.2",
 		"HERDR_URL_AMD64=https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-x86_64",
 		"HERDR_SHA256_AMD64=976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4",
@@ -71,7 +76,7 @@ func TestCFLinuxFS5SelectorUsesPinnedArtifactsForEachArchitecture(t *testing.T) 
 		{"amd64", "https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_x86-64.tgz", "98268ab3134bb3a1c97ffce797b4e6d35590a82e006cd098ad7a29f0a5cae7d8"},
 		{"arm64", "https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_arm64.tgz", "454c29a44a51c8edc9696678403e2e40808357a397033af5a018e6ca8ee32117"},
 	} {
-		t.Run(test.arch, func(t *testing.T) {
+			t.Run(test.arch, func(t *testing.T) {
 			command := exec.Command("bash", filepath.Join(root, "scripts", "select-cflinuxfs5-artifacts.sh"), test.arch)
 			command.Dir = root
 			command.Env = []string{"PATH=" + os.Getenv("PATH")}
@@ -85,6 +90,55 @@ func TestCFLinuxFS5SelectorUsesPinnedArtifactsForEachArchitecture(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+func TestCFLinuxFS5SelectorUsesPinnedGoForEachArchitecture(t *testing.T) {
+	root := packageRoot(t)
+	for _, test := range []struct {
+		arch string
+		url  string
+		sha  string
+	}{
+		{"amd64", "https://go.dev/dl/go1.27.1.linux-amd64.tar.gz", "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"},
+		{"arm64", "https://go.dev/dl/go1.27.1.linux-arm64.tar.gz", "3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec"},
+	} {
+		t.Run(test.arch, func(t *testing.T) {
+			command := exec.Command("bash", filepath.Join(root, "scripts", "select-cflinuxfs5-artifacts.sh"), test.arch)
+			command.Dir = root
+			command.Env = []string{"PATH=" + os.Getenv("PATH")}
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("selector failed: %v\n%s", err, output)
+			}
+			for _, required := range []string{"GO_URL=" + test.url, "GO_SHA256=" + test.sha} {
+				if !strings.Contains(string(output), required) {
+					t.Errorf("selector output missing %q: %s", required, output)
+				}
+			}
+		})
+	}
+}
+
+func TestCFLinuxFS5DockerfileBootstrapsGoWithoutNode(t *testing.T) {
+	dockerfile := readPackageFile(t, "docker/cflinuxfs5-builder/Dockerfile")
+	for _, required := range []string{
+		"ARG GO_URL",
+		"ARG GO_SHA256",
+		"/usr/local/go",
+		"sha256sum -c",
+		"PATH=/usr/local/go/bin:/tools/bin:$PATH",
+		"go build",
+	} {
+		if !strings.Contains(dockerfile, required) {
+			t.Errorf("Dockerfile missing %q", required)
+		}
+	}
+	if strings.Contains(dockerfile, "command -v node") {
+		t.Fatal("Dockerfile still requires Node.js")
+	}
+	if strings.Contains(dockerfile, "COPY --from=build /usr/local/go") || strings.Contains(dockerfile, "COPY --from=cflinuxfs5-tools /usr/local/go") {
+		t.Fatal("Dockerfile packages Go in the final output")
 	}
 }
 
