@@ -76,9 +76,22 @@ func TestBuildRuntimeRelocationIsExplicitAndCoversEveryNixRuntime(t *testing.T) 
 		`relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr" "$TARGET_INSTALL_DIR"`,
 		`relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie" "$TARGET_INSTALL_DIR"`,
 		`relocate_runtime "$cf_bin" "$MANAGER_RUNTIME_DIR/bin/cf" "$MANAGER_TARGET_INSTALL_DIR"`,
+		`bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/cf" version >/dev/null 2>&1`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("build-runtime.sh missing relocation contract %q", required)
+		}
+	}
+}
+
+func TestBuildRuntimeSmokeFailureIsActionableAndDoesNotPrintOutput(t *testing.T) {
+	script := readBuildScript(t)
+	for _, required := range []string{
+		"manager CF CLI smoke test failed",
+		"CF_BIN must execute cf version successfully",
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("build-runtime.sh missing actionable CF smoke contract %q", required)
 		}
 	}
 }

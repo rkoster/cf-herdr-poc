@@ -102,6 +102,20 @@ func TestBuildAssemblesExpectedLayoutWithFixtureTools(t *testing.T) {
 	}
 }
 
+func TestBuildPackagesManagerCFCLIAndRelocatedSmokeCheck(t *testing.T) {
+	script := readPackageFile(t, "scripts/build-runtime.sh")
+	if !strings.Contains(script, `bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/cf" version >/dev/null 2>&1`) {
+		t.Fatal("build-runtime.sh does not smoke-test the relocated manager CF CLI")
+	}
+	dist, output, err := runFixtureBuild(t, false)
+	if err != nil {
+		t.Fatalf("build.sh failed: %v\n%s", err, output)
+	}
+	if info, statErr := os.Stat(filepath.Join(dist, "manager-runtime/bin/cf")); statErr != nil || info.Mode()&0o111 == 0 {
+		t.Fatalf("manager CF CLI artifact is not executable: info=%v err=%v", info, statErr)
+	}
+}
+
 func TestManifestUsesManagerSpecificExecutablesAndSharedCollieAssets(t *testing.T) {
 	manifest := readPackageFile(t, "manifest.yml")
 	for _, required := range []string{

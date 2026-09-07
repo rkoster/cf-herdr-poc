@@ -70,6 +70,19 @@ func TestStageUsesExactArgvWithoutStartingOrAdoptingGUID(t *testing.T) {
 	}
 }
 
+func TestProviderUsesConfiguredExecutable(t *testing.T) {
+	run := &recordingRunner{outputs: [][]byte{[]byte("App 'demo' not found")}, errors: []error{errors.New("exit status 1")}}
+	provider := Provider{Run: run, Executable: "/app/manager-runtime/bin/cf"}
+
+	_, _, err := provider.execute(context.Background(), "app-guid", "app", "demo", "--guid")
+	if err == nil {
+		t.Fatal("execute succeeded")
+	}
+	if len(run.commands) != 1 || run.commands[0].name != "/app/manager-runtime/bin/cf" {
+		t.Fatalf("command = %#v, want configured CF executable", run.commands)
+	}
+}
+
 func TestStageRefusesExistingAppNameWithoutPush(t *testing.T) {
 	bitsPath := t.TempDir()
 	run := &recordingRunner{outputs: [][]byte{[]byte(appGUID)}}
