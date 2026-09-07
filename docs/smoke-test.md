@@ -15,12 +15,15 @@
 - A harmless Git repository supported by an allowed buildpack.
 - `bash`, `curl`, `jq`, and `cf`. The Devbox environment supplies these dependencies.
 
+The harness discovers `cf` from `PATH`, `LAB_PROFILE_BIN_DIR`, the per-user NixOS profile, or the home Nix profile. Set `CF_BIN` to an explicit executable path when Devbox isolation hides those profiles or strips `USER`.
+
 There is no reduced-coverage or skip mode. Both app-identity checks are mandatory.
 
 ## Invocation
 
 ```bash
 SMOKE_LIVE=1 \
+CF_BIN=/etc/profiles/per-user/$USER/bin/cf \
 MANAGER_URL=https://manager.example.com \
 MANAGER_API_TOKEN='set-without-shell-history' \
 MANAGER_APP_NAME=cf-herdr-manager \

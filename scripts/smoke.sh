@@ -6,9 +6,21 @@ if [[ ${SMOKE_LIVE:-0} != 1 ]]; then
   exit 2
 fi
 
-for command in curl cf jq; do
+for command in curl jq; do
   command -v "$command" >/dev/null 2>&1 || { printf 'smoke: required command not found: %s\n' "$command" >&2; exit 2; }
 done
+if [[ -z ${CF_BIN:-} ]]; then
+  CF_BIN=$(command -v cf 2>/dev/null || true)
+fi
+if [[ -z $CF_BIN && -n ${LAB_PROFILE_BIN_DIR:-} && -x $LAB_PROFILE_BIN_DIR/cf ]]; then
+  CF_BIN=$LAB_PROFILE_BIN_DIR/cf
+elif [[ -z $CF_BIN && -n ${USER:-} && -x /etc/profiles/per-user/$USER/bin/cf ]]; then
+  CF_BIN=/etc/profiles/per-user/$USER/bin/cf
+elif [[ -z $CF_BIN && -n ${HOME:-} && -x $HOME/.nix-profile/bin/cf ]]; then
+  CF_BIN=$HOME/.nix-profile/bin/cf
+fi
+[[ -n $CF_BIN ]] || { printf 'smoke: required CF CLI not found; expose cf in PATH or set CF_BIN to its executable path\n' >&2; exit 2; }
+[[ -f $CF_BIN && -x $CF_BIN ]] || { printf 'smoke: CF_BIN must name an executable file: %s\n' "$CF_BIN" >&2; exit 2; }
 for variable in MANAGER_URL MANAGER_API_TOKEN MANAGER_APP_NAME MANAGER_APP_GUID MANAGER_ROUTE_HOST WRONG_IDENTITY_APP SMOKE_REPOSITORY SMOKE_BUILDPACK IDENTITY_DOMAIN; do
   [[ -n ${!variable:-} ]] || { printf 'smoke: %s is required\n' "$variable" >&2; exit 2; }
 done
@@ -117,7 +129,7 @@ api_error() {
 
 route_collection() {
   local path=$1 expected_host=$2 expected_domain_guid=$3 output
-  output=$(cf curl "$path") || return 1
+  output=$("$CF_BIN" curl "$path") || return 1
   jq -e --arg host "$expected_host" --arg domain "$expected_domain_guid" '
     type=="object" and (.resources|type=="array")
     and all(.resources[];
@@ -132,7 +144,7 @@ route_collection() {
 policy_json() {
   local route_guid=$1 source_guid=$2 encoded_source output
   encoded_source=$(jq -rn --arg value "cf:app:$source_guid" '$value|@uri')
-  if ! output=$(cf curl "/v3/route_policies?route_guids=$route_guid&sources=$encoded_source" 2>/dev/null); then
+  if ! output=$("$CF_BIN" curl "/v3/route_policies?route_guids=$route_guid&sources=$encoded_source" 2>/dev/null); then
     printf 'smoke: route-policy query failed\n' >&2
     return 1
   fi
@@ -147,13 +159,13 @@ policy_json() {
 }
 
 direct_cleanup() {
-  cf remove-route-policy "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" --source "cf:app:$MANAGER_APP_GUID" >/dev/null 2>&1 || true
+  "$CF_BIN" remove-route-policy "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" --source "cf:app:$MANAGER_APP_GUID" >/dev/null 2>&1 || true
   if [[ -n ${sandbox_guid:-} ]]; then
-    cf remove-route-policy "$IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$sandbox_guid" >/dev/null 2>&1 || true
+    "$CF_BIN" remove-route-policy "$IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$sandbox_guid" >/dev/null 2>&1 || true
   fi
-  cf unmap-route "$SANDBOX_NAME" "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" >/dev/null 2>&1 || true
-  cf delete-route "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" -f >/dev/null 2>&1 || true
-  cf delete "$SANDBOX_NAME" -f -r >/dev/null 2>&1 || true
+  "$CF_BIN" unmap-route "$SANDBOX_NAME" "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" >/dev/null 2>&1 || true
+  "$CF_BIN" delete-route "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" -f >/dev/null 2>&1 || true
+  "$CF_BIN" delete "$SANDBOX_NAME" -f -r >/dev/null 2>&1 || true
 }
 
 manager_absent() {
@@ -169,8 +181,8 @@ manager_absent() {
 
 cf_resources_absent() {
   local apps routes sandbox_policies manager_policies
-  apps=$(cf curl "/v3/apps?names=$SANDBOX_NAME") || return 1
-  routes=$(cf curl "/v3/routes?hosts=$SANDBOX_NAME") || return 1
+  apps=$("$CF_BIN" curl "/v3/apps?names=$SANDBOX_NAME") || return 1
+  routes=$("$CF_BIN" curl "/v3/routes?hosts=$SANDBOX_NAME") || return 1
   [[ -n ${sandbox_route_guid:-} && -n ${manager_route_guid:-} && -n ${sandbox_guid:-} ]] || return 1
   sandbox_policies=$(policy_json "$sandbox_route_guid" "$MANAGER_APP_GUID") || return 1
   manager_policies=$(policy_json "$manager_route_guid" "$sandbox_guid") || return 1
@@ -210,12 +222,12 @@ managed_cleanup() {
 }
 trap managed_cleanup EXIT INT TERM
 
-target=$(cf target)
+target=$("$CF_BIN" target)
 for field in user org space; do
   value=$(printf '%s\n' "$target" | jq -Rrs --arg field "$field" 'split("\n") | map(select(test("^"+$field+":";"i"))) | first // "" | sub("^[^:]+:[ ]*";"")')
   [[ -n $value ]] || { printf 'smoke: cf target has no authenticated %s\n' "$field" >&2; exit 1; }
 done
-domain_json=$(cf curl "/v3/domains?names=$IDENTITY_DOMAIN")
+domain_json=$("$CF_BIN" curl "/v3/domains?names=$IDENTITY_DOMAIN")
 [[ $(jq -r '.resources|length' <<<"$domain_json") == 1 ]] || { printf 'smoke: identity domain not found or ambiguous\n' >&2; exit 1; }
 identity_domain_guid=$(jq -er '.resources[0].guid' <<<"$domain_json") || { printf 'smoke: identity domain response invalid\n' >&2; exit 1; }
 manager_routes=$(route_collection "/v3/routes?hosts=$MANAGER_ROUTE_HOST&domain_guids=$identity_domain_guid" "$MANAGER_ROUTE_HOST" "$identity_domain_guid") || { printf 'smoke: manager enrollment route response invalid\n' >&2; exit 1; }
@@ -224,7 +236,7 @@ manager_route_guid=$(jq -er '.resources[0].guid' <<<"$manager_routes")
 
 app_guid() {
   local name=$1 body
-  body=$(cf curl "/v3/apps?names=$name") || return 1
+  body=$("$CF_BIN" curl "/v3/apps?names=$name") || return 1
   jq -er --arg name "$name" '.resources | map(select(.name==$name)) | if length==1 then .[0].guid else empty end' <<<"$body"
 }
 actual_manager_guid=$(app_guid "$MANAGER_APP_NAME") || { printf 'smoke: manager app identity unavailable\n' >&2; exit 1; }
@@ -232,8 +244,8 @@ wrong_guid=$(app_guid "$WRONG_IDENTITY_APP") || { printf 'smoke: wrong-identity 
 [[ $actual_manager_guid == "$MANAGER_APP_GUID" ]] || { printf 'smoke: manager app GUID does not match MANAGER_APP_GUID\n' >&2; exit 1; }
 [[ $wrong_guid != "$actual_manager_guid" ]] || { printf 'smoke: wrong-identity app must differ from manager\n' >&2; exit 1; }
 
-existing_apps=$(cf curl "/v3/apps?names=$SANDBOX_NAME") || { printf 'smoke: sandbox name preflight app query failed\n' >&2; exit 1; }
-existing_routes=$(cf curl "/v3/routes?hosts=$SANDBOX_NAME&domain_guids=$identity_domain_guid") || { printf 'smoke: sandbox name preflight route query failed\n' >&2; exit 1; }
+existing_apps=$("$CF_BIN" curl "/v3/apps?names=$SANDBOX_NAME") || { printf 'smoke: sandbox name preflight app query failed\n' >&2; exit 1; }
+existing_routes=$("$CF_BIN" curl "/v3/routes?hosts=$SANDBOX_NAME&domain_guids=$identity_domain_guid") || { printf 'smoke: sandbox name preflight route query failed\n' >&2; exit 1; }
 jq -e '.resources|type=="array"' <<<"$existing_apps" >/dev/null 2>&1 || { printf 'smoke: sandbox name preflight app response invalid\n' >&2; exit 1; }
 jq -e '.resources|type=="array"' <<<"$existing_routes" >/dev/null 2>&1 || { printf 'smoke: sandbox name preflight route response invalid\n' >&2; exit 1; }
 if [[ $(jq -r '.resources|length' <<<"$existing_apps") != 0 || $(jq -r '.resources|length' <<<"$existing_routes") != 0 ]]; then
@@ -293,14 +305,14 @@ done
 
 sandbox_guid=$(app_guid "$SANDBOX_NAME") || { printf 'smoke: sandbox app not found\n' >&2; exit 1; }
 [[ $sandbox_guid != "$actual_manager_guid" && $sandbox_guid != "$wrong_guid" ]] || { printf 'smoke: sandbox app identity is not distinct\n' >&2; exit 1; }
-routes_json=$(cf curl "/v3/apps/$sandbox_guid/routes")
+routes_json=$("$CF_BIN" curl "/v3/apps/$sandbox_guid/routes")
 if ! route_rows=$(jq -er '.resources | if type=="array" then . else error("resources") end | .[] | [.guid,.host,.relationships.domain.data.guid] | @tsv' <<<"$routes_json"); then
   printf 'smoke: invalid sandbox route JSON\n' >&2
   exit 1
 fi
 while IFS=$'\t' read -r route_guid host domain_guid; do
   [[ -n $route_guid && -n $host && -n $domain_guid ]] || { printf 'smoke: invalid sandbox route JSON\n' >&2; exit 1; }
-  domain=$(cf curl "/v3/domains/$domain_guid" | jq -er '.name')
+  domain=$("$CF_BIN" curl "/v3/domains/$domain_guid" | jq -er '.name')
   [[ $host == "$SANDBOX_NAME" && $domain == "$IDENTITY_DOMAIN" ]] || { printf 'smoke: ordinary public sandbox route is mapped\n' >&2; exit 1; }
   sandbox_route_guid=$route_guid
 done <<<"$route_rows"
@@ -310,11 +322,11 @@ status=$(plain_status "$IDENTITY_URL/pack/v1/hello")
 case $status in 2??) printf 'smoke: identity route accepted request without instance certificate\n' >&2; exit 1 ;; esac
 
 remote_probe='code=$(curl --silent --output /dev/null --write-out "%{http_code}" --cert "$CF_INSTANCE_CERT" --key "$CF_INSTANCE_KEY" "'"$IDENTITY_URL"'/pack/v1/hello"); printf "%s\n" "$code"'
-wrong_status=$(cf ssh "$WRONG_IDENTITY_APP" -c "$remote_probe" | jq -Rrs 'split("\n")|map(select(test("^[0-9]{3}$")))|last//""')
+wrong_status=$("$CF_BIN" ssh "$WRONG_IDENTITY_APP" -c "$remote_probe" | jq -Rrs 'split("\n")|map(select(test("^[0-9]{3}$")))|last//""')
 [[ $wrong_status == 403 ]] || { printf 'smoke: wrong identity expected HTTP 403, got %s\n' "${wrong_status:-no status}" >&2; exit 1; }
 
 pack_probe='HERDR_PLUGIN_CONFIG_DIR=./data/collie-config HERDR_PLUGIN_STATE_DIR=./data/collie-state COLLIE_STATE_DIR=./data/collie-state HERDR_SOCKET_PATH=./data/collie-state/herdr.sock COLLIE_HOST=127.0.0.1 COLLIE_PORT=9191 ./sandbox/runtime/bin/collie pack status'
-pack_status=$(cf ssh "$MANAGER_APP_NAME" -c "$pack_probe") || { printf 'smoke: authenticated Pack status failed\n' >&2; exit 1; }
+pack_status=$("$CF_BIN" ssh "$MANAGER_APP_NAME" -c "$pack_probe") || { printf 'smoke: authenticated Pack status failed\n' >&2; exit 1; }
 if ! awk -v member="$member_id" '
   $0 ~ "(^|[[:space:]])" member "([[:space:]]|$)" {
     found=1
@@ -391,8 +403,8 @@ status=$(gateway_status GET "$MANAGER_URL/collie/api/pack")
 [[ $status == 200 ]] && valid_json "$RESPONSE_JSON" || { api_error "$status"; exit 1; }
 ! jq -e --arg member "$member_id" '.members[]?|select(.id==$member)' "$RESPONSE_JSON" >/dev/null || { printf 'smoke: member remains in Pack after deletion\n' >&2; exit 1; }
 
-apps=$(cf curl "/v3/apps?names=$SANDBOX_NAME") || { printf 'smoke: app query failed after deletion\n' >&2; exit 1; }
-routes=$(cf curl "/v3/routes?hosts=$SANDBOX_NAME") || { printf 'smoke: route query failed after deletion\n' >&2; exit 1; }
+apps=$("$CF_BIN" curl "/v3/apps?names=$SANDBOX_NAME") || { printf 'smoke: app query failed after deletion\n' >&2; exit 1; }
+routes=$("$CF_BIN" curl "/v3/routes?hosts=$SANDBOX_NAME") || { printf 'smoke: route query failed after deletion\n' >&2; exit 1; }
 sandbox_policies=$(policy_json "$sandbox_route_guid" "$MANAGER_APP_GUID")
 manager_policies=$(policy_json "$manager_route_guid" "$sandbox_guid")
 [[ $(jq -r '.resources|length' <<<"$apps") == 0 ]] || { printf 'smoke: app remains after deletion\n' >&2; exit 1; }

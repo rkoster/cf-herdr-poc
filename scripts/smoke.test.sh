@@ -114,7 +114,8 @@ printf '%s' "$status"
 case "$status" in 2??) exit 0 ;; *) exit 22 ;; esac
 EOF
 
-  cat >"$FAKE_BIN/cf" <<'EOF'
+  CF_CLI="$TEST_DIR/custom-cf"
+  cat >"$CF_CLI" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cf' >>"$FAKE_LOG"; for arg in "$@"; do printf ' <%s>' "$arg" >>"$FAKE_LOG"; done; printf '\n' >>"$FAKE_LOG"
@@ -194,17 +195,55 @@ case "${1:-}" in
   *) exit 94 ;;
 esac
 EOF
-  chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/cf"
+  chmod +x "$FAKE_BIN/curl" "$CF_CLI"
 }
 
 run_smoke() {
-  PATH="$FAKE_BIN:$PATH" TMPDIR=/tmp FAKE_LOG="$LOG" FAKE_STATE="$STATE" \
+  PATH="$FAKE_BIN:$PATH" TMPDIR=/tmp FAKE_LOG="$LOG" FAKE_STATE="$STATE" CF_BIN="${CF_BIN:-$CF_CLI}" \
     SMOKE_LIVE=1 SMOKE_NAME=smoke-fixed MANAGER_URL=https://manager.invalid \
     MANAGER_API_TOKEN="$SECRET" MANAGER_APP_NAME=manager-app WRONG_IDENTITY_APP=wrong-app \
     SMOKE_REPOSITORY=https://example.invalid/repo.git SMOKE_BUILDPACK=binary_buildpack \
     SMOKE_WORKSPACE_CWD=/home/vcap/app IDENTITY_DOMAIN=identity.invalid \
     MANAGER_APP_GUID=manager-guid MANAGER_ROUTE_HOST=manager-pack SMOKE_POLL_INTERVAL=0 SMOKE_TIMEOUT=${SMOKE_TIMEOUT:-2} \
-    bash "$SCRIPT" 2>&1
+    "$BASH" "$SCRIPT" 2>&1
+}
+
+test_explicit_cf_bin_works_without_cf_in_path() {
+  make_fakes
+  local output commands tool tool_bin="$TEST_DIR/tools"
+  mkdir -p "$tool_bin"
+  for tool in awk bash chmod cp date env jq mktemp rm sleep touch; do
+    ln -s "$(command -v "$tool")" "$tool_bin/$tool"
+  done
+  output=$(PATH="$tool_bin" run_smoke) || fail "custom CF_BIN failed: $output"
+  commands=$(<"$LOG")
+  assert_contains "$output" 'PASS smoke-fixed'
+  assert_contains "$commands" 'cf <target>'
+  [[ ! -e "$FAKE_BIN/cf" ]] || fail 'test PATH unexpectedly contains cf'
+}
+
+test_missing_cf_error_is_actionable() {
+  make_fakes
+  local output status tool_bin="$TEST_DIR/tools"
+  mkdir -p "$tool_bin"
+  ln -s "$(command -v bash)" "$tool_bin/bash"
+  ln -s "$(command -v env)" "$tool_bin/env"
+  ln -s "$(command -v jq)" "$tool_bin/jq"
+  set +e
+  output=$(PATH="$tool_bin" CF_BIN=/missing/custom-cf run_smoke)
+  status=$?
+  set -e
+  [[ $status -ne 0 ]] || fail 'missing custom CF_BIN unexpectedly passed'
+  assert_contains "$output" 'CF_BIN must name an executable file: /missing/custom-cf'
+}
+
+test_smoke_has_no_bare_cf_invocations() {
+  local line
+  while IFS= read -r line; do
+    if [[ $line =~ ^[[:space:]]*(cf[[:space:]]|[^#]*\$\(cf[[:space:]]) ]]; then
+      fail "bare cf invocation: $line"
+    fi
+  done <"$SCRIPT"
 }
 
 run_failure() {
@@ -337,6 +376,7 @@ test_docs_require_complete_live_prerequisites() {
   docs=$(<"$DOC")
   assert_contains "$docs" 'WRONG_IDENTITY_APP'
   assert_contains "$docs" 'MANAGER_APP_NAME'
+  assert_contains "$docs" 'CF_BIN=/etc/profiles/per-user/$USER/bin/cf'
   assert_contains "$docs" 'POST `/collie/api/workspace?host=<member>`'
   assert_contains "$docs" 'exactly HTTP 403'
   assert_contains "$docs" 'packaged Collie `pack status`'
@@ -467,6 +507,9 @@ test_cleanup_falls_back_to_direct_cf() {
 }
 
 test_live_guard_prevents_commands
+test_explicit_cf_bin_works_without_cf_in_path
+test_missing_cf_error_is_actionable
+test_smoke_has_no_bare_cf_invocations
 test_full_flow_and_exact_identity_checks
 test_public_ca_is_limited_to_manager_curl
 test_insecure_public_tls_is_explicit_and_limited_to_manager_curl
