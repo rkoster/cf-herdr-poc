@@ -56,7 +56,7 @@ The manifest supplies nonsecret packaged paths: `MANAGER_WEB_DIR=./web`, `MANAGE
 
 First authenticate and target the Cloud Foundry CLI in the space where Herdr will run. Copy the example values into your shell, replacing every example domain and host. Manifest variable substitution is intentionally not used.
 
-Run the foundation setup before deploying the Herdr application. `devbox run setup` sources `bosh.env`, deploys local `cf.yml` with `ops-enable-mtls-app-routing.yml`, relies on CredHub configured on the BOSH director instead of a local vars-store, and registers the `apps.identity` shared domain with route-policy enforcement through the CAPI v3 API:
+Run the foundation setup before deploying the Herdr application. `devbox run setup` sources `bosh.env`, deploys local `cf.yml` with `ops-enable-mtls-app-routing.yml`, relies on CredHub configured on the BOSH director instead of a local vars-store, and registers the `apps.identity` shared domain with route-policy enforcement and `any` source scope:
 
 ```bash
 devbox run setup
