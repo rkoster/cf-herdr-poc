@@ -46,7 +46,7 @@ func TestManagerWebServesAssetsAndFallsBackToIndex(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeColliePathsUsesManagerStartupDirectory(t *testing.T) {
+func TestCanonicalizeManagerPathsUsesManagerStartupDirectory(t *testing.T) {
 	root := t.TempDir()
 	originalDir, err := os.Getwd()
 	if err != nil {
@@ -57,12 +57,38 @@ func TestCanonicalizeColliePathsUsesManagerStartupDirectory(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(originalDir) })
 
-	cfg := config.Config{CollieDir: "collie", BunExecutable: "./bin/bun", CollieExecutable: "bin/collie"}
-	if err := canonicalizeColliePaths(&cfg); err != nil {
+	cfg := config.Config{
+		StatePath:        "./data/state.json",
+		WebDir:           "web",
+		CollieDir:        "collie",
+		WorkRoot:         "./data/work",
+		RuntimeDir:       "./manager-runtime",
+		BunExecutable:    "./manager-runtime/bin/bun",
+		CollieExecutable: "manager-runtime/bin/collie",
+	}
+	if err := canonicalizeManagerPaths(&cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.CollieDir != filepath.Join(root, "collie") || cfg.BunExecutable != filepath.Join(root, "bin/bun") || cfg.CollieExecutable != filepath.Join(root, "bin/collie") {
+	want := config.Config{
+		StatePath:        filepath.Join(root, "data/state.json"),
+		WebDir:           filepath.Join(root, "web"),
+		CollieDir:        filepath.Join(root, "collie"),
+		WorkRoot:         filepath.Join(root, "data/work"),
+		RuntimeDir:       filepath.Join(root, "manager-runtime"),
+		BunExecutable:    filepath.Join(root, "manager-runtime/bin/bun"),
+		CollieExecutable: filepath.Join(root, "manager-runtime/bin/collie"),
+	}
+	if cfg.StatePath != want.StatePath || cfg.WebDir != want.WebDir || cfg.CollieDir != want.CollieDir || cfg.WorkRoot != want.WorkRoot || cfg.RuntimeDir != want.RuntimeDir || cfg.BunExecutable != want.BunExecutable || cfg.CollieExecutable != want.CollieExecutable {
 		t.Fatalf("canonicalized config = %#v", cfg)
+	}
+
+	absolute := filepath.Join(root, "already-absolute")
+	cfg = config.Config{StatePath: absolute, WebDir: absolute, CollieDir: absolute, WorkRoot: absolute, RuntimeDir: absolute, BunExecutable: absolute, CollieExecutable: absolute}
+	if err := canonicalizeManagerPaths(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StatePath != absolute || cfg.WebDir != absolute || cfg.CollieDir != absolute || cfg.WorkRoot != absolute || cfg.RuntimeDir != absolute || cfg.BunExecutable != absolute || cfg.CollieExecutable != absolute {
+		t.Fatalf("absolute paths changed: %#v", cfg)
 	}
 }
 

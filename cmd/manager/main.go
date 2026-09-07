@@ -56,7 +56,7 @@ func run() error {
 	if err := cfg.ValidateProduction(); err != nil {
 		return fmt.Errorf("validate manager config: %w", err)
 	}
-	if err := canonicalizeColliePaths(&cfg); err != nil {
+	if err := canonicalizeManagerPaths(&cfg); err != nil {
 		return err
 	}
 	dirs, err := ensureManagerDirs(cfg)
@@ -172,17 +172,21 @@ func ensurePrivateDir(path string) error {
 	return nil
 }
 
-func canonicalizeColliePaths(cfg *config.Config) error {
+func canonicalizeManagerPaths(cfg *config.Config) error {
 	paths := []struct {
 		name  string
 		value *string
 	}{
+		{name: "MANAGER_STATE_PATH", value: &cfg.StatePath},
+		{name: "MANAGER_WEB_DIR", value: &cfg.WebDir},
 		{name: "MANAGER_COLLIE_DIR", value: &cfg.CollieDir},
+		{name: "MANAGER_WORK_ROOT", value: &cfg.WorkRoot},
+		{name: "MANAGER_RUNTIME_DIR", value: &cfg.RuntimeDir},
 		{name: "MANAGER_BUN_EXECUTABLE", value: &cfg.BunExecutable},
 		{name: "MANAGER_COLLIE_EXECUTABLE", value: &cfg.CollieExecutable},
 	}
 	for _, path := range paths {
-		if path.name != "MANAGER_COLLIE_DIR" && !strings.ContainsRune(*path.value, filepath.Separator) {
+		if filepath.IsAbs(*path.value) {
 			continue
 		}
 		absolute, err := filepath.Abs(*path.value)
