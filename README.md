@@ -143,7 +143,9 @@ Artifact tests use fake executable fixtures only; they do not establish that any
 
 - Deferred runtime and identity spike procedures are in [`docs/spikes/cf-buildpack-runtime.md`](docs/spikes/cf-buildpack-runtime.md) and [`docs/spikes/cf-pack-identity.md`](docs/spikes/cf-pack-identity.md). The original design and task log remain in `docs/superpowers/`.
 - The nested Collie checkout is intentionally a fork with POC changes and may be dirty; packaging must not modify its source or `.envrc`.
-- The source runtime requires a large copied Collie dependency tree, and portable Bun/Herdr acquisition is deliberately outside this repository.
+- The cflinuxfs5 builder pins Herdr v0.8.2 acquisition in `docker/cflinuxfs5-builder/artifacts.env`.
+  Verified CF CLI acquisition remains external and unresolved here, while non-container legacy paths
+  may still require externally supplied portable Bun/Herdr artifacts.
 - Lab deployment relocates local Nix startup dependency graphs without downloads. Separate private glibc bundles avoid collisions but materially increase `dist/`; dynamic `dlopen` and absolute asset paths remain risks until a live smoke test, and official static or portable artifacts remain the production path.
 - Local curl does not trust the lab CA used by the public manager route (observed curl code 60). An explicit insecure diagnostic reached login with HTTP 204, but no successful lifecycle result is claimed. The smoke harness prefers `SMOKE_PUBLIC_CA_CERT`; its explicit `SMOKE_INSECURE_PUBLIC_TLS=1` fallback applies only to public manager calls. Identity-route no-certificate and `cf ssh` instance-certificate checks retain strict TLS verification.
 - Sandbox staging checks `cf app NAME --guid` immediately before `cf push`, but separate CLI calls cannot make name reservation atomic. Another actor can still create the app in that lookup/push window; eliminating this race requires an atomic CAPI creation strategy.
