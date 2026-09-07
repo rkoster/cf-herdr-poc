@@ -13,5 +13,6 @@ applications:
     MANAGER_COLLIE_DIR: ./sandbox/runtime/collie
     MANAGER_RUNTIME_DIR: ./manager-runtime
     MANAGER_BUN_EXECUTABLE: ./manager-runtime/bin/bun
+    MANAGER_HERDR_EXECUTABLE: ./manager-runtime/bin/herdr
     MANAGER_COLLIE_EXECUTABLE: ./manager-runtime/bin/collie
     MANAGER_CF_EXECUTABLE: ./manager-runtime/bin/cf

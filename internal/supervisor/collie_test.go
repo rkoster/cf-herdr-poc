@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -551,5 +553,37 @@ func TestStopIsGracefulAndIdempotent(t *testing.T) {
 	}
 	if len(events) != 2 {
 		t.Fatalf("events = %v", events)
+	}
+}
+
+func TestUnixSocketReadinessAndHerdrCommand(t *testing.T) {
+	root := t.TempDir()
+	socketPath := filepath.Join(root, "herdr.sock")
+	events := []string{}
+	var got ProcessConfig
+	s := New(Config{
+		Executable: "/manager-runtime/bin/herdr", Args: []string{"server"},
+		ConfigDir: "/manager/config", StateDir: "/manager/state", SocketPath: socketPath,
+		ReadyTarget: socketPath, Environment: func(base []string) []string {
+			return append(base, "HERDR_PLUGIN_CONFIG_DIR=/manager/config", "HERDR_PLUGIN_STATE_DIR=/manager/state", "HERDR_SOCKET_PATH="+socketPath)
+		},
+		ReadyTimeout: time.Second, ProbeInterval: time.Millisecond,
+	}, func(config ProcessConfig) Process { got = config; return newFakeProcess(&events) }, UnixSocketProbe)
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop(context.Background())
+	ready := make(chan error, 1)
+	go func() { ready <- s.Ready(context.Background()) }()
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := <-ready; err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "/manager-runtime/bin/herdr" || !reflect.DeepEqual(got.Args, []string{"server"}) || environmentMap(got.Env)["HERDR_SOCKET_PATH"] != socketPath {
+		t.Fatalf("Herdr process config = %#v", got)
 	}
 }

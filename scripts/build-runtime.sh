@@ -168,9 +168,11 @@ if [[ -n "$MANAGER_RUNTIME_DIR" ]]; then
 	mkdir -p "$MANAGER_RUNTIME_DIR/bin"
 	if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" == 1 ]]; then
 		relocate_runtime "$bun_bin" "$MANAGER_RUNTIME_DIR/bin/bun" "$MANAGER_TARGET_INSTALL_DIR"
+		relocate_runtime "$herdr_bin" "$MANAGER_RUNTIME_DIR/bin/herdr" "$MANAGER_TARGET_INSTALL_DIR"
 		relocate_runtime "$collie_bin" "$MANAGER_RUNTIME_DIR/bin/collie" "$MANAGER_TARGET_INSTALL_DIR"
 		relocate_cf_wrapper "$cf_bin" "$MANAGER_RUNTIME_DIR/bin/cf" "$MANAGER_TARGET_INSTALL_DIR"
 		TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/bun" --version >/dev/null
+		TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/herdr" --version >/dev/null
 		TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/collie" --version >/dev/null
 		if ! "$MANAGER_RUNTIME_DIR/bin/cf" version >/dev/null 2>&1; then
 			printf 'error: relocated manager CF CLI smoke test failed: %s\n' "$MANAGER_RUNTIME_DIR/bin/cf" >&2
@@ -178,6 +180,7 @@ if [[ -n "$MANAGER_RUNTIME_DIR" ]]; then
 		fi
 	else
 		install -m 0755 "$bun_bin" "$MANAGER_RUNTIME_DIR/bin/bun"
+		install -m 0755 "$herdr_bin" "$MANAGER_RUNTIME_DIR/bin/herdr"
 		install -m 0755 "$collie_bin" "$MANAGER_RUNTIME_DIR/bin/collie"
 		install -m 0755 "$cf_bin" "$MANAGER_RUNTIME_DIR/bin/cf"
 	fi

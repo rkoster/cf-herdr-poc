@@ -26,6 +26,7 @@ type Config struct {
 	RuntimeDir        string
 	BunExecutable     string
 	CollieExecutable  string
+	HerdrExecutable   string
 	CFExecutable      string
 	InstanceCert      string
 	InstanceKey       string
@@ -106,6 +107,7 @@ func Load(getenv func(string) string) (Config, error) {
 		RuntimeDir:        runtimeDir,
 		BunExecutable:     valueOrDefault("MANAGER_BUN_EXECUTABLE", runtimeDir+"/bin/bun"),
 		CollieExecutable:  valueOrDefault("MANAGER_COLLIE_EXECUTABLE", runtimeDir+"/bin/collie"),
+		HerdrExecutable:   valueOrDefault("MANAGER_HERDR_EXECUTABLE", runtimeDir+"/bin/herdr"),
 		CFExecutable:      valueOrDefault("MANAGER_CF_EXECUTABLE", "./manager-runtime/bin/cf"),
 		InstanceCert:      valueOrDefault("CF_INSTANCE_CERT", "/etc/cf-instance-credentials/instance.crt"),
 		InstanceKey:       valueOrDefault("CF_INSTANCE_KEY", "/etc/cf-instance-credentials/instance.key"),

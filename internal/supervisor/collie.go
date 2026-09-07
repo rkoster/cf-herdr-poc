@@ -44,6 +44,8 @@ type Config struct {
 	ReadyTimeout  time.Duration
 	ProbeInterval time.Duration
 	StopTimeout   time.Duration
+	ReadyTarget   string
+	Environment   func([]string) []string
 }
 
 type ProcessConfig struct {
@@ -150,6 +152,9 @@ func New(config Config, factory ProcessFactory, probe Probe) *Supervisor {
 	if config.StopTimeout <= 0 {
 		config.StopTimeout = 5 * time.Second
 	}
+	if config.ReadyTarget == "" && config.Host != "" {
+		config.ReadyTarget = fmt.Sprintf("http://%s:%d/api/snapshot", config.Host, config.Port)
+	}
 	if factory == nil {
 		factory = func(c ProcessConfig) Process { return newExecProcess(c) }
 	}
@@ -186,7 +191,12 @@ func (s *Supervisor) startLocked(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("resolve Collie executable: %w", err)
 	}
-	env := collieruntime.Environment(collieruntime.Runtime{PluginRoot: s.config.PluginRoot, ConfigDir: s.config.ConfigDir, StateDir: s.config.StateDir, SocketPath: s.config.SocketPath, Host: s.config.Host, Port: s.config.Port, PackTransport: s.config.PackTransport}, os.Environ())
+	env := os.Environ()
+	if s.config.Environment != nil {
+		env = s.config.Environment(env)
+	} else {
+		env = collieruntime.Environment(collieruntime.Runtime{PluginRoot: s.config.PluginRoot, ConfigDir: s.config.ConfigDir, StateDir: s.config.StateDir, SocketPath: s.config.SocketPath, Host: s.config.Host, Port: s.config.Port, PackTransport: s.config.PackTransport}, env)
+	}
 	process := s.factory(ProcessConfig{Name: executable, Args: append([]string(nil), s.config.Args...), Dir: s.config.Dir, Env: env, Stdout: s.config.Stdout, Stderr: s.config.Stderr})
 	if err := process.Start(); err != nil {
 		return fmt.Errorf("start collie: %w", err)
@@ -253,7 +263,7 @@ func (s *Supervisor) Ready(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.config.ReadyTimeout)
 	defer cancel()
-	url := fmt.Sprintf("http://%s:%d/api/snapshot", s.config.Host, s.config.Port)
+	target := s.config.ReadyTarget
 	ticker := time.NewTicker(s.config.ProbeInterval)
 	defer ticker.Stop()
 	for {
@@ -266,7 +276,7 @@ func (s *Supervisor) Ready(ctx context.Context) error {
 			return fmt.Errorf("%w: %v", ErrChildExited, err)
 		default:
 		}
-		if err := s.probe(ctx, url); err == nil {
+		if err := s.probe(ctx, target); err == nil {
 			s.mu.Lock()
 			if s.generation == generation && !generation.isDone() {
 				s.healthy = true
@@ -356,6 +366,22 @@ func httpProbe(ctx context.Context, url string) error {
 		return fmt.Errorf("snapshot returned %s", response.Status)
 	}
 	return nil
+}
+
+func UnixSocketProbe(ctx context.Context, path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("%s is not a Unix socket", path)
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
 }
 
 type execProcess struct {

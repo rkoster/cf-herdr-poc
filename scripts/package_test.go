@@ -296,7 +296,7 @@ func TestBuildAssemblesExpectedLayoutWithFixtureTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build.sh failed: %v\n%s", err, output)
 	}
-	for _, executable := range []string{"manager", "manager-runtime/bin/bun", "manager-runtime/bin/cf", "manager-runtime/bin/collie", "sandbox/runtime/bin/bun", "sandbox/runtime/bin/herdr", "sandbox/runtime/bin/collie", "sandbox/runtime/bin/sandbox-bootstrap", "sandbox/runtime/start.sh"} {
+	for _, executable := range []string{"manager", "manager-runtime/bin/bun", "manager-runtime/bin/herdr", "manager-runtime/bin/cf", "manager-runtime/bin/collie", "sandbox/runtime/bin/bun", "sandbox/runtime/bin/herdr", "sandbox/runtime/bin/collie", "sandbox/runtime/bin/sandbox-bootstrap", "sandbox/runtime/start.sh"} {
 		info, statErr := os.Stat(filepath.Join(dist, filepath.FromSlash(executable)))
 		if statErr != nil || info.Mode()&0o111 == 0 {
 			t.Errorf("executable %s: info=%v err=%v", executable, info, statErr)
@@ -348,6 +348,7 @@ func TestManifestUsesManagerSpecificExecutablesAndSharedCollieAssets(t *testing.
 		"MANAGER_COLLIE_DIR: ./sandbox/runtime/collie",
 		"MANAGER_RUNTIME_DIR: ./manager-runtime",
 		"MANAGER_BUN_EXECUTABLE: ./manager-runtime/bin/bun",
+		"MANAGER_HERDR_EXECUTABLE: ./manager-runtime/bin/herdr",
 		"MANAGER_COLLIE_EXECUTABLE: ./manager-runtime/bin/collie",
 		"MANAGER_CF_EXECUTABLE: ./manager-runtime/bin/cf",
 	} {
@@ -628,7 +629,7 @@ printf '{}' > "$RUNTIME_DIR/collie/package.json"
 printf '{}' > "$RUNTIME_DIR/collie/node_modules/fixture/package.json"
 printf '<html>collie</html>' > "$RUNTIME_DIR/collie/web/dist/index.html"
  mkdir -p "$MANAGER_RUNTIME_DIR/bin/.cf-libs"
- for name in bun collie; do printf '#!/bin/sh\n' > "$MANAGER_RUNTIME_DIR/bin/$name"; chmod +x "$MANAGER_RUNTIME_DIR/bin/$name"; done
+  for name in bun herdr collie; do printf '#!/bin/sh\n' > "$MANAGER_RUNTIME_DIR/bin/$name"; chmod +x "$MANAGER_RUNTIME_DIR/bin/$name"; done
  printf '#!/bin/sh\n' > "$MANAGER_RUNTIME_DIR/bin/cf"
  printf '#!/bin/sh\n' > "$MANAGER_RUNTIME_DIR/bin/cf.real"
  chmod +x "$MANAGER_RUNTIME_DIR/bin/cf" "$MANAGER_RUNTIME_DIR/bin/cf.real"

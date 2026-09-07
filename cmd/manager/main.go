@@ -76,6 +76,7 @@ func run() error {
 	configDir := dirs.collieConfig
 	stateDir := dirs.collieState
 	socketPath := filepath.Join(stateDir, "herdr.sock")
+	herdr := supervisor.New(supervisor.Config{Executable: cfg.HerdrExecutable, Args: []string{"server"}, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, ReadyTarget: socketPath, Environment: func(base []string) []string { return herdrEnvironment(base, configDir, stateDir, socketPath) }}, nil, supervisor.UnixSocketProbe)
 	collie := supervisor.New(supervisor.Config{Executable: cfg.BunExecutable, Dir: cfg.CollieDir, PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, PackTransport: "cf-identity"}, nil, nil)
 	packManager := pack.New(commandRunner, collie, pack.Config{Executable: cfg.CollieExecutable, TempDir: dirs.token, PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, TokenLifetime: 10 * time.Minute})
 	builder := runtimebundle.Builder{Run: commandRunner, RuntimeDir: cfg.RuntimeDir, WorkRoot: cfg.WorkRoot}
@@ -94,11 +95,20 @@ func run() error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	if err := herdr.Start(ctx); err != nil {
+		return fmt.Errorf("start Herdr: %w", err)
+	}
+	if err := herdr.Ready(ctx); err != nil {
+		_ = herdr.Stop(context.Background())
+		return fmt.Errorf("wait for Herdr: %w", err)
+	}
 	if err := collie.Start(ctx); err != nil {
+		_ = herdr.Stop(context.Background())
 		return fmt.Errorf("start lead Collie: %w", err)
 	}
 	if err := collie.Ready(ctx); err != nil {
 		_ = collie.Stop(context.Background())
+		_ = herdr.Stop(context.Background())
 		return fmt.Errorf("wait for lead Collie: %w", err)
 	}
 	reconciler.Start(ctx)
@@ -112,13 +122,13 @@ func run() error {
 		close(errorsChannel)
 	}()
 
-	serveErr := waitForShutdown(ctx, errorsChannel, collie.Errors())
+	serveErr := waitForShutdown(ctx, errorsChannel, mergeSupervisorErrors(herdr.Errors(), collie.Errors()))
 	if serveErr != nil {
 		cancel()
 	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
-	return errors.Join(serveErr, stopAll(shutdownCtx, server.Shutdown, handler.Close, reconciler.Stop, collie.Stop))
+	return errors.Join(serveErr, stopAll(shutdownCtx, server.Shutdown, handler.Close, reconciler.Stop, collie.Stop, herdr.Stop))
 }
 
 type managerDirs struct {
@@ -187,6 +197,7 @@ func canonicalizeManagerPaths(cfg *config.Config) error {
 		{name: "MANAGER_RUNTIME_DIR", value: &cfg.RuntimeDir},
 		{name: "MANAGER_BUN_EXECUTABLE", value: &cfg.BunExecutable},
 		{name: "MANAGER_COLLIE_EXECUTABLE", value: &cfg.CollieExecutable},
+		{name: "MANAGER_HERDR_EXECUTABLE", value: &cfg.HerdrExecutable},
 		{name: "MANAGER_CF_EXECUTABLE", value: &cfg.CFExecutable},
 	}
 	for _, path := range paths {
@@ -238,16 +249,43 @@ func waitForShutdown(ctx context.Context, httpErrors, supervisorErrors <-chan er
 	}
 }
 
+func mergeSupervisorErrors(channels ...<-chan error) <-chan error {
+	merged := make(chan error, 1)
+	for _, channel := range channels {
+		go func(channel <-chan error) {
+			if err := <-channel; err != nil {
+				select {
+				case merged <- err:
+				default:
+				}
+			}
+		}(channel)
+	}
+	return merged
+}
+
 func managerHTTPServer(address string, handler http.Handler) *http.Server {
 	// A bounded WriteTimeout limits stuck clients while still allowing POC reverse-proxy streams.
 	return &http.Server{Addr: address, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 }
 
-func stopAll(ctx context.Context, stopHTTP, stopAPI func(context.Context) error, stopReconciler func(), stopCollie func(context.Context) error) error {
+func stopAll(ctx context.Context, stopHTTP, stopAPI func(context.Context) error, stopReconciler func(), stopCollie, stopHerdr func(context.Context) error) error {
 	httpErr := stopHTTP(ctx)
 	apiErr := stopAPI(ctx)
 	stopReconciler()
-	return errors.Join(httpErr, apiErr, stopCollie(ctx))
+	return errors.Join(httpErr, apiErr, stopCollie(ctx), stopHerdr(ctx))
+}
+
+func herdrEnvironment(base []string, configDir, stateDir, socketPath string) []string {
+	managed := map[string]bool{"HERDR_PLUGIN_CONFIG_DIR": true, "HERDR_PLUGIN_STATE_DIR": true, "HERDR_SOCKET_PATH": true}
+	result := make([]string, 0, len(base)+3)
+	for _, entry := range base {
+		key, _, found := strings.Cut(entry, "=")
+		if !found || !managed[key] {
+			result = append(result, entry)
+		}
+	}
+	return append(result, "HERDR_PLUGIN_CONFIG_DIR="+configDir, "HERDR_PLUGIN_STATE_DIR="+stateDir, "HERDR_SOCKET_PATH="+socketPath)
 }
 
 func loopbackAddress(address string) (string, int, error) {
