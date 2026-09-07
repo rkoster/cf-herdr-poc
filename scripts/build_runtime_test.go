@@ -133,12 +133,22 @@ func TestBuildRuntimeBuildsNativeConstrainedCopier(t *testing.T) {
 func TestBuildRuntimePackagesAndChecksCollieCLISources(t *testing.T) {
 	script := readBuildScript(t)
 	for _, required := range []string{
-		`"$COLLIE_DIR/cli" "$RUNTIME_DIR/collie/cli"`,
 		`./cmd/checkimports`,
-		`"$RUNTIME_DIR/collie/bridge/index.ts"`,
+		`-print0`,
+		`readarray -d ''`,
+		`"$COLLIE_DIR/$source" "$RUNTIME_DIR/collie/$source"`,
+		`"$RUNTIME_DIR/collie" "$RUNTIME_DIR/collie/bridge/index.ts"`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("build-runtime.sh missing Collie source closure contract %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		`"$COLLIE_DIR/bridge" "$RUNTIME_DIR/collie/bridge"`,
+		`"$COLLIE_DIR/cli" "$RUNTIME_DIR/collie/cli"`,
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("build-runtime.sh copies whole source tree %q", forbidden)
 		}
 	}
 }

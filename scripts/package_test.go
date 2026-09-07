@@ -95,6 +95,11 @@ func TestBuildAssemblesExpectedLayoutWithFixtureTools(t *testing.T) {
 			t.Errorf("artifact %s: %v", file, statErr)
 		}
 	}
+	for _, excluded := range []string{"sandbox/runtime/collie/cli/install-kind.test.ts", "sandbox/runtime/collie/cli/testdata"} {
+		if _, statErr := os.Stat(filepath.Join(dist, filepath.FromSlash(excluded))); !os.IsNotExist(statErr) {
+			t.Errorf("excluded artifact %s exists or cannot be checked: %v", excluded, statErr)
+		}
+	}
 }
 
 func TestManifestUsesManagerSpecificExecutablesAndSharedCollieAssets(t *testing.T) {

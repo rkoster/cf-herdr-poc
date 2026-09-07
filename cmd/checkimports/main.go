@@ -4,34 +4,45 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
+	"sort"
 	"strings"
 )
 
-var importPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?m)(?:^|[;\n])\s*(?:import|export)\s+(?:[^;"']*?\s+from\s+)?["']([^"']+)["']`),
-	regexp.MustCompile(`\bimport\s*\(\s*["']([^"']+)["']\s*\)`),
+type token struct {
+	kind  byte
+	value string
 }
 
 func main() {
-	if len(os.Args) != 3 {
-		fmt.Fprintln(os.Stderr, "usage: checkimports ROOT ENTRYPOINT")
+	print0 := len(os.Args) == 4 && os.Args[1] == "-print0"
+	if (!print0 && len(os.Args) != 3) || (print0 && len(os.Args) != 4) {
+		fmt.Fprintln(os.Stderr, "usage: checkimports [-print0] ROOT ENTRYPOINT")
 		os.Exit(2)
 	}
-	if err := checkImports(os.Args[1], os.Args[2]); err != nil {
+	args := os.Args[1:]
+	if print0 {
+		args = args[1:]
+	}
+	files, err := checkImports(args[0], args[1])
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "check imports: %v\n", err)
 		os.Exit(1)
 	}
+	if print0 {
+		for _, file := range files {
+			fmt.Printf("%s%c", file, 0)
+		}
+	}
 }
 
-func checkImports(root, entrypoint string) error {
+func checkImports(root, entrypoint string) ([]string, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	entrypoint, err = filepath.Abs(entrypoint)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	seen := make(map[string]bool)
 	var visit func(string) error
@@ -63,20 +74,118 @@ func checkImports(root, entrypoint string) error {
 		}
 		return nil
 	}
-	return visit(entrypoint)
+	if err := visit(entrypoint); err != nil {
+		return nil, err
+	}
+	files := make([]string, 0, len(seen))
+	for file := range seen {
+		relative, err := filepath.Rel(root, file)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, filepath.ToSlash(relative))
+	}
+	sort.Strings(files)
+	return files, nil
 }
 
 func relativeImports(contents []byte) []string {
 	var imports []string
-	for _, pattern := range importPatterns {
-		for _, match := range pattern.FindAllSubmatch(contents, -1) {
-			specifier := string(match[1])
-			if strings.HasPrefix(specifier, "./") || strings.HasPrefix(specifier, "../") {
-				imports = append(imports, specifier)
+	tokens := lex(contents)
+	for index, current := range tokens {
+		if current.kind != 'i' {
+			continue
+		}
+		if (current.value == "import" || current.value == "require") && index+2 < len(tokens) && tokens[index+1].value == "(" && tokens[index+2].kind == 's' {
+			imports = appendRelative(imports, tokens[index+2].value)
+			continue
+		}
+		if current.value != "import" && current.value != "export" {
+			continue
+		}
+		if index+1 < len(tokens) && tokens[index+1].kind == 's' {
+			imports = appendRelative(imports, tokens[index+1].value)
+			continue
+		}
+		for next := index + 1; next+1 < len(tokens) && tokens[next].value != ";"; next++ {
+			if tokens[next].value == "from" && tokens[next+1].kind == 's' {
+				imports = appendRelative(imports, tokens[next+1].value)
+				break
 			}
 		}
 	}
 	return imports
+}
+
+func appendRelative(imports []string, specifier string) []string {
+	if strings.HasPrefix(specifier, "./") || strings.HasPrefix(specifier, "../") {
+		return append(imports, specifier)
+	}
+	return imports
+}
+
+func lex(source []byte) []token {
+	var tokens []token
+	for index := 0; index < len(source); {
+		switch {
+		case source[index] == '/' && index+1 < len(source) && source[index+1] == '/':
+			index += 2
+			for index < len(source) && source[index] != '\n' {
+				index++
+			}
+		case source[index] == '/' && index+1 < len(source) && source[index+1] == '*':
+			index += 2
+			for index+1 < len(source) && !(source[index] == '*' && source[index+1] == '/') {
+				index++
+			}
+			if index+1 < len(source) {
+				index += 2
+			}
+		case source[index] == '\'' || source[index] == '"':
+			quote := source[index]
+			index++
+			var value strings.Builder
+			for index < len(source) && source[index] != quote {
+				if source[index] == '\\' && index+1 < len(source) {
+					index++
+				}
+				value.WriteByte(source[index])
+				index++
+			}
+			if index < len(source) {
+				index++
+			}
+			tokens = append(tokens, token{kind: 's', value: value.String()})
+		case source[index] == '`':
+			index++
+			for index < len(source) && source[index] != '`' {
+				if source[index] == '\\' && index+1 < len(source) {
+					index += 2
+				} else {
+					index++
+				}
+			}
+			if index < len(source) {
+				index++
+			}
+		case isIdentifierByte(source[index]):
+			start := index
+			for index < len(source) && isIdentifierByte(source[index]) {
+				index++
+			}
+			tokens = append(tokens, token{kind: 'i', value: string(source[start:index])})
+		default:
+			if strings.ContainsRune("();,", rune(source[index])) {
+				tokens = append(tokens, token{kind: 'p', value: string(source[index])})
+			}
+			index++
+		}
+	}
+	return tokens
+}
+
+func isIdentifierByte(value byte) bool {
+	return value == '_' || value == '$' || value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
 }
 
 func resolveImport(dir, specifier string) (string, error) {

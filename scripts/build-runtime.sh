@@ -167,9 +167,13 @@ if [[ -n "$MANAGER_RUNTIME_DIR" ]]; then
 fi
 install -m 0755 "$ROOT/sandbox/start.sh" "$RUNTIME_DIR/start.sh"
 
-# Materialize only selected runtime assets. The copier rejects broken or escaping symlinks.
-"$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/bridge" "$RUNTIME_DIR/collie/bridge"
-"$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/cli" "$RUNTIME_DIR/collie/cli"
+# Materialize the bridge's source closure. The copier rejects broken or escaping symlinks.
+"$TOOLS_DIR/checkimports" -print0 "$COLLIE_DIR" "$COLLIE_DIR/bridge/index.ts" >"$TOOLS_DIR/runtime-imports"
+readarray -d '' runtime_sources <"$TOOLS_DIR/runtime-imports"
+for source in "${runtime_sources[@]}"; do
+	mkdir -p "$(dirname -- "$RUNTIME_DIR/collie/$source")"
+	"$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/$source" "$RUNTIME_DIR/collie/$source"
+done
 "$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/package.json" "$RUNTIME_DIR/collie/package.json"
 "$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/node_modules" "$RUNTIME_DIR/collie/node_modules"
 mkdir -p "$RUNTIME_DIR/collie/web"
