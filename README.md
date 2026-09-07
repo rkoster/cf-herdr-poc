@@ -21,21 +21,27 @@ The nested Collie fork is pinned at `e6c7d8b80e70267439d768ffc5b9e3d408b84cd0`. 
 - A Linux Cloud Foundry foundation with Diego, the binary buildpack, an identity domain, and app instance identity credentials.
 - A space developer able to push, start, stop, delete, inspect, and set environment variables on apps; create, map, unmap, and delete routes; and add/remove identity route policies.
 - Platform approval for the sandbox buildpack allow-list and enough app, route, and memory quota for the manager plus sandboxes.
-- Production builds require independently obtained, portable Linux Bun and Herdr executables. Build scripts never download binaries and default builds reject Nix-linked or unresolved ELF executables.
+- Production builds require independently obtained, portable Linux Bun and Herdr executables. The
+  cflinuxfs5 builder pins verified Herdr v0.8.2 Linux artifacts in
+  `docker/cflinuxfs5-builder/artifacts.env`; build scripts never download binaries and default
+  builds reject Nix-linked or unresolved ELF executables.
 
 ## Build
 
-The default build uses the pinned cflinuxfs5 Docker builder. Herdr v0.8.2 and CF CLI checksums are intentionally required because exact official metadata was not available during this spike:
+The default build uses the pinned cflinuxfs5 Docker builder. Herdr v0.8.2 AMD64 and ARM64 URLs and
+SHA-256 checksums are pinned in `docker/cflinuxfs5-builder/artifacts.env`:
 
 ```bash
-export HERDR_URL=https://example.invalid/herdr-0.8.2-linux-amd64
-export HERDR_SHA256=obtain-from-official-release-metadata
+HERDR_URL_AMD64=https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-x86_64
+HERDR_SHA256_AMD64=976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4
+HERDR_URL_ARM64=https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-aarch64
+HERDR_SHA256_ARM64=f55610658e1c2e0d2aaef730b4b2ab885f7f8ba00285ab372bfb14f2e3d5b40d
 export CF_URL=https://example.invalid/cf8-cli-linux.tgz
 export CF_SHA256=obtain-from-official-release-metadata
 GOOS=linux GOARCH=amd64 BUILD_MODE=cflinuxfs5 bash scripts/build.sh
 ```
 
-Bun 1.3.13 is pinned to `https://github.com/oven-sh/bun/releases/download/bun-v1.3.13/bun-linux-x64.zip` with SHA-256 `79c0771fa8b92c33aae41e15a0e0d307ea99d0e2f00317c71c6c53237a78e25a`. Herdr v0.8.2 and the local CF CLI's `0.0.0-unknown-version` did not provide confirmable asset metadata; the builder fails closed rather than fabricate values. Do not use the example URLs.
+Bun 1.3.13 is pinned to `https://github.com/oven-sh/bun/releases/download/bun-v1.3.13/bun-linux-x64.zip` with SHA-256 `79c0771fa8b92c33aae41e15a0e0d307ea99d0e2f00317c71c6c53237a78e25a`. CF_URL and CF_SHA256 remain unresolved because the local CF CLI reports `0.0.0-unknown-version`; the builder fails closed rather than fabricate CF CLI values. Do not use the example CF CLI URL or checksum.
 
 The build compiles the manager and sandbox bootstrap with `CGO_ENABLED=0`, builds both frontends, invokes `scripts/build-runtime.sh`, validates every required artifact, and transactionally replaces `dist/`. It stages first, renames the old tree to a backup, installs the new tree, and restores the backup on failure or interruption. Directory replacement is not fully atomic: there is a small rename window in which `dist/` is absent. `COLLIE_RUNTIME_BIN` may override the Collie CLI produced by the nested build, but must satisfy the same portable executable checks.
 
