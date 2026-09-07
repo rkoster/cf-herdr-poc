@@ -49,10 +49,6 @@
         }
       }
     },
-    "cloudfoundry-cli": {
-      "resolved": "github:NixOS/nixpkgs/044bfe75bfe4c7bbe043dc17b5e42ea823b84a09?narHash=sha256-fBJMdnKUTUDtfi%2FBYLr71HLaC9dG382arxLF2Egg2uo%3D#cloudfoundry-cli",
-      "source": "nixpkg"
-    },
     "git": {
       "resolved": "github:NixOS/nixpkgs/044bfe75bfe4c7bbe043dc17b5e42ea823b84a09?narHash=sha256-fBJMdnKUTUDtfi%2FBYLr71HLaC9dG382arxLF2Egg2uo%3D#git",
       "source": "nixpkg"
@@ -62,40 +58,40 @@
       "resolved": "github:NixOS/nixpkgs/044bfe75bfe4c7bbe043dc17b5e42ea823b84a09?lastModified=1786534138&narHash=sha256-fBJMdnKUTUDtfi%2FBYLr71HLaC9dG382arxLF2Egg2uo%3D"
     },
     "go@1.25": {
-      "last_modified": "2026-08-27T07:16:00Z",
-      "resolved": "github:NixOS/nixpkgs/c27cdad491a991b11ed731760aa2ef8db0cb0410#go_1_25",
+      "last_modified": "2026-08-29T00:50:12Z",
+      "resolved": "github:NixOS/nixpkgs/e8be7818e19ada32105a8af937a6a473b38167ca#go_1_25",
       "source": "devbox-search",
-      "version": "1.25.13",
+      "version": "1.25.14",
       "systems": {
         "aarch64-darwin": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/dnd1yyqpzcgir4vmrcmydgnhqagn7zxc-go-1.25.13",
+              "path": "/nix/store/80ilwjjdhr4pssjm13klm8sgpvsi2xsf-go-1.25.14",
               "default": true
             }
           ],
-          "store_path": "/nix/store/dnd1yyqpzcgir4vmrcmydgnhqagn7zxc-go-1.25.13"
+          "store_path": "/nix/store/80ilwjjdhr4pssjm13klm8sgpvsi2xsf-go-1.25.14"
         },
         "aarch64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/cdq0v84vknlmyhc7cgg3ns2zgj8sgf3l-go-1.25.13",
+              "path": "/nix/store/zzig1iaijx6w5nfy34nw92g1kg4dkqbb-go-1.25.14",
               "default": true
             }
           ],
-          "store_path": "/nix/store/cdq0v84vknlmyhc7cgg3ns2zgj8sgf3l-go-1.25.13"
+          "store_path": "/nix/store/zzig1iaijx6w5nfy34nw92g1kg4dkqbb-go-1.25.14"
         },
         "x86_64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/zic5di27bny5jznxk2i8zxxhlk577yxm-go-1.25.13",
+              "path": "/nix/store/jzpm5gmvyjf1pjvsdw0bccc422y4b3n4-go-1.25.14",
               "default": true
             }
           ],
-          "store_path": "/nix/store/zic5di27bny5jznxk2i8zxxhlk577yxm-go-1.25.13"
+          "store_path": "/nix/store/jzpm5gmvyjf1pjvsdw0bccc422y4b3n4-go-1.25.14"
         }
       }
     },
