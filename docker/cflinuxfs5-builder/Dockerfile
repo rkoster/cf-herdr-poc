@@ -27,8 +27,10 @@ RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -
     printf '%s  %s\n' "$BUN_SHA256" /tools/downloads/bun.zip | sha256sum -c -; \
     unzip -q /tools/downloads/bun.zip -d /tools/bun; \
     find /tools/bun -type f -name bun -exec install -m 0755 {} /tools/bin/bun \;; \
-     test -x /tools/bin/bun; \
-     ln -s /tools/bin/bun /usr/local/bin/bunx; \
+      test -x /tools/bin/bun; \
+      ln -s /tools/bin/bun /tools/bin/bunx; \
+      test -x /tools/bin/bunx; \
+      ln -s /tools/bin/bun /usr/local/bin/bunx; \
      test -x /usr/local/bin/bunx; \
      /usr/local/bin/bunx --version; \
      curl --fail --location --retry 3 --output /tools/downloads/go.tar.gz "$GO_URL"; \

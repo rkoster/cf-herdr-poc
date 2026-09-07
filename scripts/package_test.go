@@ -142,6 +142,19 @@ func TestCFLinuxFS5DockerfileBootstrapsGoWithoutNode(t *testing.T) {
 	}
 }
 
+func TestCFLinuxFS5DockerfileCarriesBunxIntoBuildStage(t *testing.T) {
+	dockerfile := readPackageFile(t, "docker/cflinuxfs5-builder/Dockerfile")
+	for _, required := range []string{
+		"ln -s /tools/bin/bun /tools/bin/bunx",
+		"test -x /tools/bin/bunx",
+		"COPY --from=cflinuxfs5-tools /tools /tools",
+	} {
+		if !strings.Contains(dockerfile, required) {
+			t.Errorf("Dockerfile missing %q", required)
+		}
+	}
+}
+
 func TestCFLinuxFS5SelectorAllowsExplicitNonEmptyOverrides(t *testing.T) {
 	root := packageRoot(t)
 	command := exec.Command("bash", filepath.Join(root, "scripts", "select-cflinuxfs5-artifacts.sh"), "amd64")
