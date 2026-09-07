@@ -183,6 +183,9 @@ func TestCFLinuxFS5DockerfileCarriesBunxIntoBuildStage(t *testing.T) {
 		"ln -s /tools/bin/bun /tools/bin/bunx",
 		"test -x /tools/bin/bunx",
 		"COPY --from=cflinuxfs5-tools /tools /tools",
+		"ln -sf /tools/bin/bun /usr/local/bin/bunx",
+		"command -v bunx",
+		"bunx --version",
 	} {
 		if !strings.Contains(dockerfile, required) {
 			t.Errorf("Dockerfile missing %q", required)

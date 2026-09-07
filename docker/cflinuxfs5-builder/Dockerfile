@@ -52,6 +52,7 @@ COPY . /src
 COPY --from=cflinuxfs5-tools /tools /tools
 WORKDIR /src
 RUN set -eux; command -v go; \
+    ln -sf /tools/bin/bun /usr/local/bin/bunx; command -v bunx; bunx --version; \
     /tools/bin/bun install --cwd web --frozen-lockfile; /tools/bin/bun run --cwd web build; \
     BUN_RUNTIME_BIN=/tools/bin/bun HERDR_RUNTIME_BIN=/tools/bin/herdr CF_BIN=/tools/bin/cf GOOS="$GOOS" GOARCH="$GOARCH" \
       RUNTIME_DIR=/work/dist/sandbox/runtime MANAGER_RUNTIME_DIR=/work/dist/manager-runtime \
