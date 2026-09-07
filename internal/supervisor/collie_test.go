@@ -269,14 +269,7 @@ func TestStartResolvesRelativeExecutableBeforeApplyingChildDir(t *testing.T) {
 	if err := s.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	waitForFile(t, cwdFile)
-	got, err := os.ReadFile(cwdFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(string(got)) != collieDir {
-		t.Fatalf("tool cwd = %q, want %q", strings.TrimSpace(string(got)), collieDir)
-	}
+	waitForFileContent(t, cwdFile, collieDir+"\n")
 }
 
 func TestNewPreservesAbsoluteAndBareExecutables(t *testing.T) {
@@ -425,6 +418,22 @@ func waitForFile(t *testing.T, path string) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", path)
+		}
+		runtime.Gosched()
+	}
+}
+
+func waitForFileContent(t *testing.T, path, expected string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var data []byte
+	for {
+		data, _ = os.ReadFile(path)
+		if string(data) == expected {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s content %q; got %q", path, expected, data)
 		}
 		runtime.Gosched()
 	}
