@@ -37,11 +37,46 @@ func TestBuildRuntimeRejectsSymlinkBinary(t *testing.T) {
 	}
 }
 
+func TestBuildRuntimeRejectsNixBinaryByDefault(t *testing.T) {
+	bun, err := exec.LookPath("bun")
+	if err != nil {
+		t.Skipf("bun is unavailable: %v", err)
+	}
+	bun, err = filepath.EvalSymlinks(bun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(bun, "/nix/store/") {
+		t.Skipf("bun is not Nix-installed: %s", bun)
+	}
+	output, err := runBuild(t, []string{"BUN_RUNTIME_BIN=" + bun, "HERDR_RUNTIME_BIN=" + bun})
+	if err == nil {
+		t.Fatal("build-runtime.sh accepted a Nix runtime without explicit relocation")
+	}
+	if !strings.Contains(output, "BUN_RUNTIME_BIN must not come from /nix/store") {
+		t.Fatalf("output = %q, want default Nix rejection", output)
+	}
+}
+
 func TestBuildRuntimeScriptChecksLinuxDependencies(t *testing.T) {
 	script := readBuildScript(t)
 	for _, required := range []string{"BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "COLLIE_RUNTIME_BIN", "readelf", "ldd", "/nix/store"} {
 		if !strings.Contains(script, required) {
 			t.Errorf("build-runtime.sh does not contain %q", required)
+		}
+	}
+}
+
+func TestBuildRuntimeRelocationIsExplicitAndCoversEveryNixRuntime(t *testing.T) {
+	script := readBuildScript(t)
+	for _, required := range []string{
+		"ALLOW_NIX_RUNTIME_RELOCATION", "relocate-nix-runtime.sh",
+		`relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun"`,
+		`relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr"`,
+		`relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie"`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("build-runtime.sh missing relocation contract %q", required)
 		}
 	}
 }
@@ -64,6 +99,13 @@ func TestBuildRuntimeBuildsNativeConstrainedCopier(t *testing.T) {
 	}
 	if strings.Contains(script, "cp -RL") || strings.Contains(script, "go run ./cmd/copytree") {
 		t.Fatal("build-runtime.sh uses unsafe or target-architecture tree copying")
+	}
+}
+
+func TestBuildRuntimeNeverDownloadsCollieDependencies(t *testing.T) {
+	script := readBuildScript(t)
+	if !strings.Contains(script, `install --frozen-lockfile --offline`) {
+		t.Fatal("build-runtime.sh does not fail closed when Collie dependencies are absent")
 	}
 }
 

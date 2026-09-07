@@ -27,7 +27,9 @@ validate_runtime_binary() {
 		printf 'error: %s is required and must name a portable runtime executable\n' "$variable" >&2
 		exit 1
 	fi
-	if [[ -L "$path" ]]; then
+	if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" == 1 ]]; then
+		path="$(readlink -f -- "$path" 2>/dev/null || true)"
+	elif [[ -L "$path" ]]; then
 		printf 'error: %s must not be a symlink: %s\n' "$variable" "$path" >&2
 		exit 1
 	fi
@@ -35,7 +37,7 @@ validate_runtime_binary() {
 		printf 'error: %s must name a regular executable file: %s\n' "$variable" "$path" >&2
 		exit 1
 	fi
-	if [[ "$path" == /nix/store/* ]]; then
+	if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" != 1 && "$path" == /nix/store/* ]]; then
 		printf 'error: %s must not come from /nix/store: %s\n' "$variable" "$path" >&2
 		exit 1
 	fi
@@ -49,7 +51,7 @@ validate_runtime_binary() {
 		fi
 		elf_details="$("$readelf_bin" -l "$path" 2>&1)"
 		dependencies="$("$ldd_bin" "$path" 2>&1 || true)"
-		if [[ "$elf_details" == *'/nix/store/'* || "$dependencies" == *'/nix/store/'* ]]; then
+		if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" != 1 && ( "$elf_details" == *'/nix/store/'* || "$dependencies" == *'/nix/store/'* ) ]]; then
 			printf 'error: %s has non-portable /nix/store ELF dependencies: %s\n' "$variable" "$path" >&2
 			exit 1
 		fi
@@ -59,6 +61,15 @@ validate_runtime_binary() {
 		fi
 	fi
 	printf '%s' "$path"
+}
+
+if [[ -n "${ALLOW_NIX_RUNTIME_RELOCATION:-}" && "${ALLOW_NIX_RUNTIME_RELOCATION:-}" != 1 ]]; then
+	printf 'error: ALLOW_NIX_RUNTIME_RELOCATION must be exactly 1 when enabled\n' >&2
+	exit 1
+fi
+
+relocate_runtime() {
+	bash "$ROOT/scripts/relocate-nix-runtime.sh" "$1" "$2"
 }
 
 build_bun="$(require_tool bun)"
@@ -71,7 +82,7 @@ fi
 
 (
 	cd "$COLLIE_DIR"
-	"$build_bun" install --frozen-lockfile
+	"$build_bun" install --frozen-lockfile --offline
 	"$build_bun" run build
 )
 collie_bin="$(validate_runtime_binary COLLIE_RUNTIME_BIN "$COLLIE_DIR/bin/collie")"
@@ -83,9 +94,18 @@ rm -rf "$RUNTIME_DIR"
 mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie"
 CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o "$RUNTIME_DIR/bin/sandbox-bootstrap" ./cmd/sandbox-bootstrap
 test -x "$RUNTIME_DIR/bin/sandbox-bootstrap"
-install -m 0755 "$bun_bin" "$RUNTIME_DIR/bin/bun"
-install -m 0755 "$herdr_bin" "$RUNTIME_DIR/bin/herdr"
-install -m 0755 "$collie_bin" "$RUNTIME_DIR/bin/collie"
+if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" == 1 ]]; then
+	relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun"
+	relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr"
+	relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie"
+	"$RUNTIME_DIR/bin/bun" --version >/dev/null
+	"$RUNTIME_DIR/bin/herdr" --version >/dev/null
+	"$RUNTIME_DIR/bin/collie" --version >/dev/null
+else
+	install -m 0755 "$bun_bin" "$RUNTIME_DIR/bin/bun"
+	install -m 0755 "$herdr_bin" "$RUNTIME_DIR/bin/herdr"
+	install -m 0755 "$collie_bin" "$RUNTIME_DIR/bin/collie"
+fi
 install -m 0755 "$ROOT/sandbox/start.sh" "$RUNTIME_DIR/start.sh"
 
 # Materialize only selected runtime assets. The copier rejects broken or escaping symlinks.

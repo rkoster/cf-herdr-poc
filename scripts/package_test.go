@@ -2,6 +2,7 @@ package scripts_test
 
 import (
 	"bufio"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +35,41 @@ func TestBuildUsesTransactionalStagingAndValidatesArtifactContract(t *testing.T)
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("build.sh missing %q", required)
+		}
+	}
+}
+
+func TestBuildForwardsExplicitNixRelocationMode(t *testing.T) {
+	script := readPackageFile(t, "scripts/build.sh")
+	if !strings.Contains(script, `ALLOW_NIX_RUNTIME_RELOCATION="${ALLOW_NIX_RUNTIME_RELOCATION:-}"`) {
+		t.Fatal("build.sh does not explicitly forward Nix relocation mode")
+	}
+}
+
+func TestDevboxDeployBuildsRelocatedRuntimeBeforePush(t *testing.T) {
+	var config struct {
+		Packages []string `json:"packages"`
+		Shell    struct {
+			Scripts map[string]string `json:"scripts"`
+		} `json:"shell"`
+	}
+	if err := json.Unmarshal([]byte(readPackageFile(t, "devbox.json")), &config); err != nil {
+		t.Fatal(err)
+	}
+	deploy := config.Shell.Scripts["deploy"]
+	build := strings.Index(deploy, "bash scripts/build.sh")
+	push := strings.Index(deploy, "cf push")
+	if build < 0 || push < 0 || build > push {
+		t.Fatalf("deploy must build before push: %q", deploy)
+	}
+	for _, required := range []string{"command -v bun", "command -v herdr", "BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "ALLOW_NIX_RUNTIME_RELOCATION=1"} {
+		if !strings.Contains(deploy, required) {
+			t.Errorf("deploy script missing %q", required)
+		}
+	}
+	for _, required := range []string{"patchelf", "binutils", "gcc"} {
+		if !contains(config.Packages, required) {
+			t.Errorf("devbox packages missing %q", required)
 		}
 	}
 }
@@ -270,4 +306,13 @@ func writeExecutable(t *testing.T, path, contents string) {
 	if err := os.WriteFile(path, []byte(contents), 0o755); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
