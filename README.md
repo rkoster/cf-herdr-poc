@@ -54,7 +54,15 @@ The manifest supplies nonsecret packaged paths: `MANAGER_WEB_DIR=./web`, `MANAGE
 
 ## Deploy
 
-Copy the example values into your shell, replacing every example domain and host. Manifest variable substitution is intentionally not used. `manifest.yml` has `no-route: true`; `scripts/deploy.sh` maps exactly one public manager route and one manager identity route, and no sandbox route.
+First authenticate and target the Cloud Foundry CLI in the space where Herdr will run. Copy the example values into your shell, replacing every example domain and host. Manifest variable substitution is intentionally not used.
+
+Run the foundation setup before deploying the Herdr application. `devbox run setup` sources `bosh.env`, deploys local `cf.yml` with `ops-enable-mtls-app-routing.yml`, relies on CredHub configured on the BOSH director instead of a local vars-store, and registers the `apps.identity` shared domain with route-policy enforcement:
+
+```bash
+devbox run setup
+```
+
+Then deploy the Herdr manager with the application-only command:
 
 ```bash
 export MANAGER_APP_NAME=cf-herdr-manager
@@ -66,9 +74,11 @@ export MANAGER_ROUTE_HOST="${MANAGER_PACK_HOST%.$CF_IDENTITY_DOMAIN}"
 export SANDBOX_BUILDPACKS=binary_buildpack,nodejs_buildpack
 export MANAGER_API_TOKEN="$(openssl rand -hex 32)"
 
-bash scripts/deploy.sh
+devbox run deploy
 export MANAGER_APP_GUID="$(cf app "$MANAGER_APP_NAME" --guid)"
 ```
+
+`manifest.yml` has `no-route: true`; `devbox run deploy` maps exactly one public manager route and one manager identity route, and no sandbox route.
 
 For each manager-created sandbox, obtain its GUID and apply both exact route policies after its identity route exists:
 
