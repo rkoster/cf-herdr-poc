@@ -2,10 +2,11 @@
 set -euo pipefail
 
 TMPDIR="${DEPLOY_TMPDIR:-/tmp}"
-if [[ ! -d "$TMPDIR" || ! -w "$TMPDIR" ]]; then
-	printf 'error: deployment temporary directory is not writable: %s (set DEPLOY_TMPDIR to override)\n' "$TMPDIR" >&2
+if ! tmp_probe="$(mktemp "$TMPDIR/cf-herdr-deploy-probe.XXXXXX" 2>/dev/null)"; then
+	printf 'error: cannot create temporary files in %s; set DEPLOY_TMPDIR to a writable, searchable directory\n' "$TMPDIR" >&2
 	exit 1
 fi
+rm -f "$tmp_probe"
 export TMPDIR
 
 require_tool() {
@@ -66,7 +67,15 @@ cf set-env "$MANAGER_APP_NAME" SANDBOX_BUILDPACKS "$SANDBOX_BUILDPACKS"
 cf set-env "$MANAGER_APP_NAME" MANAGER_APP_NAME "$MANAGER_APP_NAME"
 cf set-env "$MANAGER_APP_NAME" MANAGER_APP_GUID "$MANAGER_APP_GUID"
 cf set-env "$MANAGER_APP_NAME" MANAGER_PACK_HOST "$MANAGER_PACK_HOST"
-cf set-env "$MANAGER_APP_NAME" MANAGER_API_TOKEN "$MANAGER_API_TOKEN"
+token_output="$(mktemp "$TMPDIR/cf-herdr-token-output.XXXXXX")"
+if cf set-env "$MANAGER_APP_NAME" MANAGER_API_TOKEN "$MANAGER_API_TOKEN" >"$token_output" 2>&1; then
+	rm -f "$token_output"
+	printf 'MANAGER_API_TOKEN configured\n'
+else
+	rm -f "$token_output"
+	printf 'error: failed to set MANAGER_API_TOKEN\n' >&2
+	exit 1
+fi
 
 printf '==> configure routes\n'
 cf create-route "$PUBLIC_DOMAIN" --hostname "$MANAGER_PUBLIC_HOST"

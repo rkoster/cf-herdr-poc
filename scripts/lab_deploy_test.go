@@ -79,6 +79,94 @@ func TestLabDeployUsesSafeTemporaryDirectory(t *testing.T) {
 	}
 }
 
+func TestLabDeployRejectsNonexistentTemporaryDirectory(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	tmpdir := filepath.Join(t.TempDir(), "missing")
+	fixture.env = append(fixture.env, "DEPLOY_TMPDIR="+tmpdir)
+
+	output, err := fixture.run(t)
+	if err == nil {
+		t.Fatal("lab-deploy.sh succeeded with nonexistent DEPLOY_TMPDIR")
+	}
+	if !strings.Contains(output, "cannot create temporary files") || !strings.Contains(output, "DEPLOY_TMPDIR") {
+		t.Fatalf("output = %q, want actionable temporary-directory error", output)
+	}
+	if events := fixture.events(t); len(events) != 0 {
+		t.Fatalf("events = %#v, want no build or CF calls", events)
+	}
+}
+
+func TestLabDeployRejectsNonsearchableTemporaryDirectory(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	tmpdir := t.TempDir()
+	if err := os.Chmod(tmpdir, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(tmpdir, 0o700) })
+	permissionProbe := filepath.Join(tmpdir, "permission-probe")
+	if err := os.WriteFile(permissionProbe, nil, 0o600); err == nil {
+		_ = os.Remove(permissionProbe)
+		t.Skip("executing identity bypasses directory search permission")
+	}
+	fixture.env = append(fixture.env, "DEPLOY_TMPDIR="+tmpdir)
+
+	output, err := fixture.run(t)
+	if err == nil {
+		t.Fatal("lab-deploy.sh succeeded with nonsearchable DEPLOY_TMPDIR")
+	}
+	if !strings.Contains(output, "cannot create temporary files") {
+		t.Fatalf("output = %q, want actionable temporary-directory error", output)
+	}
+}
+
+func TestLabDeployReportsMktempFailure(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	fixture.env = append(fixture.env, "FAKE_MKTEMP_STATUS=24")
+
+	output, err := fixture.run(t)
+	if err == nil {
+		t.Fatal("lab-deploy.sh succeeded when mktemp failed")
+	}
+	if !strings.Contains(output, "cannot create temporary files") || !strings.Contains(output, "DEPLOY_TMPDIR") {
+		t.Fatalf("output = %q, want actionable mktemp error", output)
+	}
+}
+
+func TestLabDeployDoesNotExposeTokenFromSuccessfulCFOutput(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	fixture.env = append(fixture.env, "FAKE_CF_ECHO_TOKEN=1")
+
+	output, err := fixture.run(t)
+	if err != nil {
+		t.Fatalf("lab-deploy.sh: %v: %s", err, output)
+	}
+	if strings.Contains(output, "secret-token") {
+		t.Fatalf("deploy output exposed token: %s", output)
+	}
+	if !containsEvent(fixture.events(t), "cf\tset-env\tmanager\tMANAGER_API_TOKEN\tsecret-token") {
+		t.Fatal("token-setting CF command was not called with the token")
+	}
+}
+
+func TestLabDeployDoesNotExposeTokenFromFailedCFOutput(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	fixture.env = append(fixture.env, "FAKE_CF_ECHO_TOKEN=1", "FAKE_CF_TOKEN_STATUS=25")
+
+	output, err := fixture.run(t)
+	if err == nil {
+		t.Fatal("lab-deploy.sh succeeded when token-setting CF command failed")
+	}
+	if strings.Contains(output, "secret-token") {
+		t.Fatalf("deploy failure output exposed token: %s", output)
+	}
+	if !strings.Contains(output, "failed to set MANAGER_API_TOKEN") {
+		t.Fatalf("output = %q, want generic token-setting failure", output)
+	}
+	if !containsEvent(fixture.events(t), "cf\tset-env\tmanager\tMANAGER_API_TOKEN\tsecret-token") {
+		t.Fatal("token-setting CF command was not called with the token")
+	}
+}
+
 func TestLabDeployBuildFailurePreventsCFCalls(t *testing.T) {
 	fixture := newLabDeployFixture(t)
 	fixture.env = append(fixture.env, "FAKE_BUILD_STATUS=23")
@@ -119,7 +207,26 @@ printf 'cf' >> "$EVENT_LOG"
 printf '\t%s' "$@" >> "$EVENT_LOG"
 printf '\n' >> "$EVENT_LOG"
 if [ "$1" = app ] && [ "$3" = --guid ]; then printf 'manager-guid\n'; fi
+if [ "$1" = set-env ] && [ "$3" = MANAGER_API_TOKEN ] && [ "${FAKE_CF_ECHO_TOKEN:-}" = 1 ]; then
+  printf 'cf echoed token argument: %s\n' "$4"
+  printf 'cf echoed token error: %s\n' "$4" >&2
+  exit "${FAKE_CF_TOKEN_STATUS:-0}"
+fi
 `)
+	writeExecutable(t, filepath.Join(fixture.bin, "mktemp"), `#!/bin/sh
+if [ "${FAKE_MKTEMP_STATUS:-}" != "" ]; then exit "$FAKE_MKTEMP_STATUS"; fi
+template=$1
+path="${template%XXXXXX}fixture"
+: > "$path" || exit 1
+printf '%s\n' "$path"
+`)
+	rm, err := exec.LookPath("rm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(rm, filepath.Join(fixture.bin, "rm")); err != nil {
+		t.Fatal(err)
+	}
 	for _, tool := range []string{"bun", "herdr", "go", "patchelf", "readelf", "ldd", "nix-store"} {
 		writeExecutable(t, filepath.Join(fixture.bin, tool), "#!/bin/sh\nexit 0\n")
 	}
@@ -164,4 +271,13 @@ func (fixture *labDeployFixture) events(t *testing.T) []string {
 		t.Fatal(err)
 	}
 	return events
+}
+
+func containsEvent(events []string, want string) bool {
+	for _, event := range events {
+		if event == want {
+			return true
+		}
+	}
+	return false
 }
