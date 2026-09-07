@@ -8,6 +8,7 @@ ARG HERDR_URL
 ARG HERDR_SHA256
 ARG CF_URL
 ARG CF_SHA256
+COPY extract-cf-cli.sh /usr/local/bin/extract-cf-cli.sh
 RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -v tar; \
     test "$TARGETARCH" = amd64 || test "$TARGETARCH" = arm64 || { echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 2; }; \
     test -n "${BUN_URL:-}" || { echo 'BUN_URL is required for the selected architecture' >&2; exit 2; }; \
@@ -24,11 +25,10 @@ RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -
     test -x /tools/bin/bun; \
     curl --fail --location --retry 3 --output /tools/downloads/herdr "$HERDR_URL"; \
     printf '%s  %s\n' "$HERDR_SHA256" /tools/downloads/herdr | sha256sum -c -; \
-    install -m 0755 /tools/downloads/herdr /tools/bin/herdr; \
-    curl --fail --location --retry 3 --output /tools/downloads/cf "$CF_URL"; \
-    printf '%s  %s\n' "$CF_SHA256" /tools/downloads/cf | sha256sum -c -; \
-    case "$CF_URL" in *.tar.gz|*.tgz) mkdir -p /tools/cf && tar -xzf /tools/downloads/cf -C /tools/cf;; *.zip) mkdir -p /tools/cf && unzip -q /tools/downloads/cf -d /tools/cf;; *) echo 'CF_URL must be a .tgz, .tar.gz, or .zip archive' >&2; exit 2;; esac; \
-    find /tools/cf -type f -name cf -exec install -m 0755 {} /tools/bin/cf \;; test -x /tools/bin/cf
+     install -m 0755 /tools/downloads/herdr /tools/bin/herdr; \
+     curl --fail --location --retry 3 --output /tools/downloads/cf "$CF_URL"; \
+     printf '%s  %s\n' "$CF_SHA256" /tools/downloads/cf | sha256sum -c -; \
+     /usr/local/bin/extract-cf-cli.sh /tools/downloads/cf /tools/bin
 
 FROM cflinuxfs5-tools AS build
 ARG GOOS=linux
