@@ -33,6 +33,7 @@ type Supervisor interface {
 type Config struct {
 	Executable    string
 	TempDir       string
+	PluginRoot    string
 	ConfigDir     string
 	StateDir      string
 	SocketPath    string
@@ -194,7 +195,7 @@ func (m *Manager) run(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (m *Manager) environment() []string {
-	return collieruntime.Environment(collieruntime.Runtime{ConfigDir: m.config.ConfigDir, StateDir: m.config.StateDir, SocketPath: m.config.SocketPath, Host: m.config.Host, Port: m.config.Port, PackTransport: "cf-identity"}, os.Environ())
+	return collieruntime.Environment(collieruntime.Runtime{PluginRoot: m.config.PluginRoot, ConfigDir: m.config.ConfigDir, StateDir: m.config.StateDir, SocketPath: m.config.SocketPath, Host: m.config.Host, Port: m.config.Port, PackTransport: "cf-identity"}, os.Environ())
 }
 
 func validateMemberID(id string) error {

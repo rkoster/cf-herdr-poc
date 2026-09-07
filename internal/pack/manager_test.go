@@ -48,7 +48,7 @@ func TestPrepareEnrollmentCreatesPrivateTokenFileAndRestarts(t *testing.T) {
 	temp := t.TempDir()
 	r := &fakeRunner{output: []byte(invite + "\n\n  single-use · expires 2026-09-03T18:00:00.000Z (10 minutes)\n")}
 	s := &fakeSupervisor{}
-	m := New(r, s, Config{Executable: "collie", TempDir: temp, ConfigDir: "/manager/config", StateDir: "/manager/state", SocketPath: "/manager/herdr.sock", Port: 8787})
+	m := New(r, s, Config{Executable: "collie", TempDir: temp, PluginRoot: "/manager/collie", ConfigDir: "/manager/config", StateDir: "/manager/state", SocketPath: "/manager/herdr.sock", Port: 8787})
 	handle, err := m.PrepareEnrollment(context.Background(), "pack.apps.example", "sandbox-a")
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestPrepareEnrollmentCreatesPrivateTokenFileAndRestarts(t *testing.T) {
 		t.Fatalf("calls = %#v", r.calls)
 	}
 	env := environmentMap(r.calls[0].env)
-	if env["HERDR_PLUGIN_CONFIG_DIR"] != "/manager/config" || env["HERDR_PLUGIN_STATE_DIR"] != "/manager/state" || env["COLLIE_STATE_DIR"] != "/manager/state" || env["HERDR_SOCKET_PATH"] != "/manager/herdr.sock" || env["COLLIE_HOST"] != "127.0.0.1" || env["COLLIE_PORT"] != "8787" {
+	if env["COLLIE_PLUGIN_ROOT"] != "/manager/collie" || env["HERDR_PLUGIN_CONFIG_DIR"] != "/manager/config" || env["HERDR_PLUGIN_STATE_DIR"] != "/manager/state" || env["COLLIE_STATE_DIR"] != "/manager/state" || env["HERDR_SOCKET_PATH"] != "/manager/herdr.sock" || env["COLLIE_HOST"] != "127.0.0.1" || env["COLLIE_PORT"] != "8787" {
 		t.Fatalf("CLI environment = %#v", env)
 	}
 	if s.restarts != 1 {
@@ -267,7 +267,8 @@ esac
 {
   printf 'HERDR_PLUGIN_CONFIG_DIR=%s\n' "$HERDR_PLUGIN_CONFIG_DIR"
   printf 'HERDR_PLUGIN_STATE_DIR=%s\n' "$HERDR_PLUGIN_STATE_DIR"
-  printf 'COLLIE_STATE_DIR=%s\n' "$COLLIE_STATE_DIR"
+	  printf 'COLLIE_STATE_DIR=%s\n' "$COLLIE_STATE_DIR"
+	  printf 'COLLIE_PLUGIN_ROOT=%s\n' "$COLLIE_PLUGIN_ROOT"
   printf 'HERDR_SOCKET_PATH=%s\n' "$HERDR_SOCKET_PATH"
   printf 'COLLIE_HOST=%s\n' "$COLLIE_HOST"
   printf 'COLLIE_PORT=%s\n' "$COLLIE_PORT"
@@ -284,13 +285,17 @@ printf '%s\n\n  single-use · expires 2026-09-03T18:00:00.000Z (10 minutes)\n' '
 	if err := os.WriteFile(script, []byte(scriptBody), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	s := supervisor.New(supervisor.Config{Executable: script, Args: []string{"bridge"}, ConfigDir: configDir, StateDir: stateDir, SocketPath: filepath.Join(temp, "herdr.sock"), Port: 8787, PackTransport: "cf-identity", StopTimeout: time.Second, Stdout: io.Discard, Stderr: io.Discard}, nil, func(context.Context, string) error { return nil })
+	pluginRoot := filepath.Join(temp, "collie")
+	if err := os.Mkdir(pluginRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := supervisor.New(supervisor.Config{Executable: script, Args: []string{"bridge"}, Dir: pluginRoot, PluginRoot: pluginRoot, ConfigDir: configDir, StateDir: stateDir, SocketPath: filepath.Join(temp, "herdr.sock"), Port: 8787, PackTransport: "cf-identity", StopTimeout: time.Second, Stdout: io.Discard, Stderr: io.Discard}, nil, func(context.Context, string) error { return nil })
 	if err := s.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Stop(context.Background())
 	waitForPath(t, bridgeEnv)
-	m := New(runner.Exec{}, s, Config{Executable: script, TempDir: temp, ConfigDir: configDir, StateDir: stateDir, SocketPath: filepath.Join(temp, "herdr.sock"), Port: 8787})
+	m := New(runner.Exec{}, s, Config{Executable: script, TempDir: temp, PluginRoot: pluginRoot, ConfigDir: configDir, StateDir: stateDir, SocketPath: filepath.Join(temp, "herdr.sock"), Port: 8787})
 	handle, err := m.PrepareEnrollment(context.Background(), "pack.example", "sandbox-a")
 	if err != nil {
 		t.Fatal(err)
@@ -311,6 +316,9 @@ printf '%s\n\n  single-use · expires 2026-09-03T18:00:00.000Z (10 minutes)\n' '
 	values := string(cliValues)
 	if !strings.Contains(values, "COLLIE_HOST=127.0.0.1\n") || !strings.Contains(values, "COLLIE_PORT=8787\n") || !strings.Contains(values, "COLLIE_PACK_TRANSPORT=cf-identity\n") {
 		t.Fatalf("manager Collie environment is not loopback CF identity mode:\n%s", values)
+	}
+	if !strings.Contains(values, "COLLIE_PLUGIN_ROOT="+pluginRoot+"\n") {
+		t.Fatalf("manager Collie environment has wrong plugin root:\n%s", values)
 	}
 }
 

@@ -32,6 +32,7 @@ type Config struct {
 	Executable    string
 	Args          []string
 	Dir           string
+	PluginRoot    string
 	ConfigDir     string
 	StateDir      string
 	SocketPath    string
@@ -65,6 +66,7 @@ type Probe func(context.Context, string) error
 
 type Supervisor struct {
 	config     Config
+	configErr  error
 	factory    ProcessFactory
 	probe      Probe
 	mu         sync.Mutex
@@ -110,11 +112,22 @@ func (g *processGeneration) expectExit() bool {
 }
 
 func New(config Config, factory ProcessFactory, probe Probe) *Supervisor {
+	var configErr error
 	if config.Executable == "" {
 		config.Executable = "bun"
 	}
 	if len(config.Args) == 0 {
 		config.Args = []string{"run", "bridge/index.ts"}
+	}
+	if config.Dir != "" {
+		if absoluteDir, err := filepath.Abs(config.Dir); err != nil {
+			configErr = fmt.Errorf("resolve Collie directory %q: %w", config.Dir, err)
+		} else {
+			config.Dir = absoluteDir
+		}
+	}
+	if config.PluginRoot == "" {
+		config.PluginRoot = config.Dir
 	}
 	if config.Host == "" {
 		config.Host = "127.0.0.1"
@@ -143,7 +156,7 @@ func New(config Config, factory ProcessFactory, probe Probe) *Supervisor {
 	if probe == nil {
 		probe = httpProbe
 	}
-	return &Supervisor{config: config, factory: factory, probe: probe, errors: make(chan error, 1)}
+	return &Supervisor{config: config, configErr: configErr, factory: factory, probe: probe, errors: make(chan error, 1)}
 }
 
 func (s *Supervisor) Start(ctx context.Context) error {
@@ -153,6 +166,9 @@ func (s *Supervisor) Start(ctx context.Context) error {
 }
 
 func (s *Supervisor) startLocked(ctx context.Context) error {
+	if s.configErr != nil {
+		return s.configErr
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -170,7 +186,7 @@ func (s *Supervisor) startLocked(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("resolve Collie executable: %w", err)
 	}
-	env := collieruntime.Environment(collieruntime.Runtime{ConfigDir: s.config.ConfigDir, StateDir: s.config.StateDir, SocketPath: s.config.SocketPath, Host: s.config.Host, Port: s.config.Port, PackTransport: s.config.PackTransport}, os.Environ())
+	env := collieruntime.Environment(collieruntime.Runtime{PluginRoot: s.config.PluginRoot, ConfigDir: s.config.ConfigDir, StateDir: s.config.StateDir, SocketPath: s.config.SocketPath, Host: s.config.Host, Port: s.config.Port, PackTransport: s.config.PackTransport}, os.Environ())
 	process := s.factory(ProcessConfig{Name: executable, Args: append([]string(nil), s.config.Args...), Dir: s.config.Dir, Env: env, Stdout: s.config.Stdout, Stderr: s.config.Stderr})
 	if err := process.Start(); err != nil {
 		return fmt.Errorf("start collie: %w", err)

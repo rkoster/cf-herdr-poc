@@ -94,6 +94,7 @@ func TestLauncherExportsCFPeerRuntimeBeforeBootstrapAndCollie(t *testing.T) {
 	lines := executableLines(readLauncher(t))
 	script := strings.Join(lines, "\n")
 	required := []string{
+		`export COLLIE_PLUGIN_ROOT="$COLLIE_DIR"`,
 		`export COLLIE_PORT="${PORT:?Cloud Foundry PORT is required}"`,
 		`export COLLIE_HOST=0.0.0.0`,
 		`export COLLIE_ALLOW_NON_LOOPBACK_BIND=1`,
@@ -277,7 +278,7 @@ func readLauncher(t *testing.T) string {
 func runLauncherHelper() {
 	role := os.Getenv("SANDBOX_HELPER_ROLE")
 	if role == "sandbox-bootstrap" {
-		for key, want := range map[string]string{"COLLIE_PORT": "8080", "COLLIE_HOST": "0.0.0.0", "COLLIE_ALLOW_NON_LOOPBACK_BIND": "1", "COLLIE_PACK_TRANSPORT": "cf-identity"} {
+		for key, want := range map[string]string{"COLLIE_PLUGIN_ROOT": filepath.Join(filepath.Dir(os.Getenv("SIGNAL_LOG")), "collie"), "COLLIE_PORT": "8080", "COLLIE_HOST": "0.0.0.0", "COLLIE_ALLOW_NON_LOOPBACK_BIND": "1", "COLLIE_PACK_TRANSPORT": "cf-identity"} {
 			if os.Getenv(key) != want {
 				os.Exit(2)
 			}

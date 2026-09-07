@@ -56,6 +56,9 @@ func run() error {
 	if err := cfg.ValidateProduction(); err != nil {
 		return fmt.Errorf("validate manager config: %w", err)
 	}
+	if err := canonicalizeColliePaths(&cfg); err != nil {
+		return err
+	}
 	host, port, err := loopbackAddress(cfg.CollieAddress)
 	if err != nil {
 		return err
@@ -69,8 +72,8 @@ func run() error {
 	configDir := filepath.Join(filepath.Dir(cfg.StatePath), "collie-config")
 	stateDir := filepath.Join(filepath.Dir(cfg.StatePath), "collie-state")
 	socketPath := filepath.Join(stateDir, "herdr.sock")
-	collie := supervisor.New(supervisor.Config{Executable: cfg.BunExecutable, Dir: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, PackTransport: "cf-identity"}, nil, nil)
-	packManager := pack.New(commandRunner, collie, pack.Config{Executable: cfg.CollieExecutable, TempDir: filepath.Join(filepath.Dir(cfg.StatePath), "tokens"), ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, TokenLifetime: 10 * time.Minute})
+	collie := supervisor.New(supervisor.Config{Executable: cfg.BunExecutable, Dir: cfg.CollieDir, PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, PackTransport: "cf-identity"}, nil, nil)
+	packManager := pack.New(commandRunner, collie, pack.Config{Executable: cfg.CollieExecutable, TempDir: filepath.Join(filepath.Dir(cfg.StatePath), "tokens"), PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, TokenLifetime: 10 * time.Minute})
 	builder := runtimebundle.Builder{Run: commandRunner, RuntimeDir: cfg.RuntimeDir, WorkRoot: cfg.WorkRoot}
 	cloud := cf.Provider{Run: commandRunner, Buildpacks: cfg.Buildpacks, WorkRoot: cfg.WorkRoot}
 	probe := identity.New(identity.Config{CertPath: cfg.InstanceCert, KeyPath: cfg.InstanceKey, Timeout: 10 * time.Second, MaxBodyBytes: 64 << 10})
@@ -109,6 +112,28 @@ func run() error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	return errors.Join(serveErr, stopAll(shutdownCtx, server.Shutdown, handler.Close, reconciler.Stop, collie.Stop))
+}
+
+func canonicalizeColliePaths(cfg *config.Config) error {
+	paths := []struct {
+		name  string
+		value *string
+	}{
+		{name: "MANAGER_COLLIE_DIR", value: &cfg.CollieDir},
+		{name: "MANAGER_BUN_EXECUTABLE", value: &cfg.BunExecutable},
+		{name: "MANAGER_COLLIE_EXECUTABLE", value: &cfg.CollieExecutable},
+	}
+	for _, path := range paths {
+		if path.name != "MANAGER_COLLIE_DIR" && !strings.ContainsRune(*path.value, filepath.Separator) {
+			continue
+		}
+		absolute, err := filepath.Abs(*path.value)
+		if err != nil {
+			return fmt.Errorf("resolve %s %q: %w", path.name, *path.value, err)
+		}
+		*path.value = absolute
+	}
+	return nil
 }
 
 func managerWeb(dir string) http.Handler {

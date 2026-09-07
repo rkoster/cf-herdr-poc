@@ -265,11 +265,18 @@ func TestStartResolvesRelativeExecutableBeforeApplyingChildDir(t *testing.T) {
 
 	cwdFile := filepath.Join(root, "tool-cwd")
 	t.Setenv("TOOL_CWD_FILE", cwdFile)
-	s := New(Config{Executable: "./bin/tool", Dir: collieDir}, nil, func(context.Context, string) error { return nil })
+	var processConfig ProcessConfig
+	s := New(Config{Executable: "./bin/tool", Dir: "./collie"}, func(config ProcessConfig) Process {
+		processConfig = config
+		return newExecProcess(config)
+	}, func(context.Context, string) error { return nil })
 	if err := s.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	waitForFileContent(t, cwdFile, collieDir+"\n")
+	if processConfig.Dir != collieDir || environmentMap(processConfig.Env)["COLLIE_PLUGIN_ROOT"] != collieDir {
+		t.Fatalf("relative Collie dir was not shared as absolute plugin root: %#v", processConfig)
+	}
 }
 
 func TestNewPreservesAbsoluteAndBareExecutables(t *testing.T) {

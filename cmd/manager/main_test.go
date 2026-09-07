@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"cf-herdr-poc/internal/config"
 )
 
 func TestManagerWebServesAssetsAndFallsBackToIndex(t *testing.T) {
@@ -40,6 +42,26 @@ func TestManagerWebServesAssetsAndFallsBackToIndex(t *testing.T) {
 		if response.Code != tt.status || string(body) != tt.want {
 			t.Errorf("%s = %d %q, want %d %q", tt.path, response.Code, body, tt.status, tt.want)
 		}
+	}
+}
+
+func TestCanonicalizeColliePathsUsesManagerStartupDirectory(t *testing.T) {
+	root := t.TempDir()
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+
+	cfg := config.Config{CollieDir: "collie", BunExecutable: "./bin/bun", CollieExecutable: "bin/collie"}
+	if err := canonicalizeColliePaths(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CollieDir != filepath.Join(root, "collie") || cfg.BunExecutable != filepath.Join(root, "bin/bun") || cfg.CollieExecutable != filepath.Join(root, "bin/collie") {
+		t.Fatalf("canonicalized config = %#v", cfg)
 	}
 }
 
