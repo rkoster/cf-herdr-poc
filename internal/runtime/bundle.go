@@ -152,15 +152,53 @@ func validateRuntime(source string) error {
 	if source == "" {
 		return fmt.Errorf("runtime directory is required")
 	}
+	root, err := filepath.Abs(source)
+	if err != nil {
+		return fmt.Errorf("resolve runtime directory: %w", err)
+	}
+	if root, err = filepath.EvalSymlinks(root); err != nil {
+		return fmt.Errorf("resolve runtime directory: %w", err)
+	}
 	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("runtime contains symlink %q", path)
+			if err := validateRuntimeSymlink(root, path); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
+}
+
+func validateRuntimeSymlink(root, path string) error {
+	target, err := os.Readlink(path)
+	if err != nil {
+		return fmt.Errorf("read runtime symlink %q: %w", path, err)
+	}
+	if filepath.IsAbs(target) {
+		return fmt.Errorf("runtime symlink %q is absolute", path)
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("resolve runtime symlink %q: %w", path, err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return fmt.Errorf("resolve runtime symlink %q: %w", path, err)
+	}
+	if err := requireChild(root, resolved); err != nil {
+		return fmt.Errorf("runtime symlink %q resolves outside runtime: %w", path, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("inspect runtime symlink %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("runtime symlink %q does not resolve to a regular file", path)
+	}
+	return nil
 }
 
 func validateOverlayDestination(source, workRoot, destination string) error {
@@ -229,7 +267,18 @@ func copyRuntime(source, destination string) error {
 			return err
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("runtime contains symlink %q", path)
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(source, path)
+			if err != nil {
+				return err
+			}
+			if err := rejectSymlinkComponents(filepath.Dir(destination), filepath.Join(destination, rel)); err != nil {
+				return err
+			}
+			return os.Symlink(target, filepath.Join(destination, rel))
 		}
 		rel, err := filepath.Rel(source, path)
 		if err != nil {

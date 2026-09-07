@@ -132,7 +132,7 @@ func TestPrepareRejectsUnsafeInputsBeforeRunningCommands(t *testing.T) {
 	}
 }
 
-func TestPrepareRejectsRuntimeSymlink(t *testing.T) {
+func TestPrepareRejectsBrokenRuntimeSymlink(t *testing.T) {
 	workRoot := t.TempDir()
 	destination := filepath.Join(workRoot, "demo")
 	runtimeDir := t.TempDir()
@@ -154,6 +154,56 @@ func TestPrepareRejectsRuntimeSymlink(t *testing.T) {
 	}
 	if len(recorder.commands) != 1 || recorder.commands[0].args[0] != "clone" {
 		t.Fatalf("commands = %#v, want clone only", recorder.commands)
+	}
+}
+
+func TestPrepareRejectsRuntimeSymlinksThatEscapeOrAreAbsolute(t *testing.T) {
+	for _, target := range []string{"../outside", "/etc/passwd"} {
+		t.Run(target, func(t *testing.T) {
+			workRoot := t.TempDir()
+			destination := filepath.Join(workRoot, "demo")
+			runtimeDir := t.TempDir()
+			if err := os.Symlink(target, filepath.Join(runtimeDir, "link")); err != nil {
+				t.Fatal(err)
+			}
+			recorder := cloneRunner(destination, nil)
+
+			_, err := (Builder{Run: recorder, RuntimeDir: runtimeDir, WorkRoot: workRoot}).Prepare(
+				context.Background(), "https://git.example/demo.git", destination,
+			)
+			if err == nil || !strings.Contains(err.Error(), "symlink") {
+				t.Fatalf("error = %v, want symlink rejection", err)
+			}
+		})
+	}
+}
+
+func TestPreparePreservesInternalRuntimeSymlink(t *testing.T) {
+	workRoot := t.TempDir()
+	destination := filepath.Join(workRoot, "demo")
+	runtimeDir := t.TempDir()
+	libs := filepath.Join(runtimeDir, "bin", ".bun-libs")
+	writeFile(t, filepath.Join(libs, ".real-libc.so.6"), 0o755, "libc\n")
+	if err := os.Symlink(".real-libc.so.6", filepath.Join(libs, ".hash-libc.so.6")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".hash-libc.so.6", filepath.Join(libs, "libc.so.6")); err != nil {
+		t.Fatal(err)
+	}
+	recorder := cloneRunner(destination, nil)
+
+	if _, err := (Builder{Run: recorder, RuntimeDir: runtimeDir, WorkRoot: workRoot}).Prepare(
+		context.Background(), "https://git.example/demo.git", destination,
+	); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(destination, ".sandbox", "bin", ".bun-libs", "libc.so.6")
+	got, err := os.Readlink(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ".hash-libc.so.6" {
+		t.Fatalf("runtime symlink target = %q, want %q", got, ".hash-libc.so.6")
 	}
 }
 
