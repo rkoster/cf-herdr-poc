@@ -79,7 +79,10 @@ func run() error {
 	collie := supervisor.New(supervisor.Config{Executable: cfg.BunExecutable, Dir: cfg.CollieDir, PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, PackTransport: "cf-identity"}, nil, nil)
 	packManager := pack.New(commandRunner, collie, pack.Config{Executable: cfg.CollieExecutable, TempDir: dirs.token, PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, TokenLifetime: 10 * time.Minute})
 	builder := runtimebundle.Builder{Run: commandRunner, RuntimeDir: cfg.RuntimeDir, WorkRoot: cfg.WorkRoot}
-	cloud := cf.Provider{Run: commandRunner, Buildpacks: cfg.Buildpacks, WorkRoot: cfg.WorkRoot}
+	if info, statErr := os.Stat(cfg.CFExecutable); statErr != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+		return fmt.Errorf("validate MANAGER_CF_EXECUTABLE: executable is missing or not executable: %s", cfg.CFExecutable)
+	}
+	cloud := cf.Provider{Run: commandRunner, Executable: cfg.CFExecutable, Buildpacks: cfg.Buildpacks, WorkRoot: cfg.WorkRoot}
 	probe := identity.New(identity.Config{CertPath: cfg.InstanceCert, KeyPath: cfg.InstanceKey, Timeout: 10 * time.Second, MaxBodyBytes: 64 << 10})
 	reconciler := reconcile.New(reconcile.Config{WorkRoot: cfg.WorkRoot, IdentityDomain: cfg.IdentityDomain, ManagerRouteHost: cfg.ManagerRouteHost, ManagerPackHost: cfg.ManagerPackHost, ManagerAppGUID: cfg.ManagerAppGUID, PollAttempts: 30, PollInterval: time.Second, ScanInterval: cfg.ReconcileInterval}, state, reconcile.BundleRuntime{Builder: builder}, cloud, reconcile.ConcretePackManager{Manager: packManager}, probe, realClock{})
 	collieURL, _ := url.Parse("http://" + cfg.CollieAddress)
@@ -184,6 +187,7 @@ func canonicalizeManagerPaths(cfg *config.Config) error {
 		{name: "MANAGER_RUNTIME_DIR", value: &cfg.RuntimeDir},
 		{name: "MANAGER_BUN_EXECUTABLE", value: &cfg.BunExecutable},
 		{name: "MANAGER_COLLIE_EXECUTABLE", value: &cfg.CollieExecutable},
+		{name: "MANAGER_CF_EXECUTABLE", value: &cfg.CFExecutable},
 	}
 	for _, path := range paths {
 		if filepath.IsAbs(*path.value) {

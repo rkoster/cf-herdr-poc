@@ -67,7 +67,7 @@ func TestDevboxDeployDelegatesToLabDeployScript(t *testing.T) {
 	if build < 0 || push < 0 || build > push {
 		t.Fatalf("lab deploy must build before push")
 	}
-	for _, required := range []string{"CF_BIN", "BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "ALLOW_NIX_RUNTIME_RELOCATION=1", "DEPLOY_TMPDIR", "build distribution", "push manager", "configure routes", "start manager"} {
+	for _, required := range []string{"CF_BIN", "BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "MANAGER_CF_EXECUTABLE", "ALLOW_NIX_RUNTIME_RELOCATION=1", "DEPLOY_TMPDIR", "build distribution", "push manager", "configure routes", "start manager"} {
 		if !strings.Contains(labDeploy, required) {
 			t.Errorf("lab deploy script missing %q", required)
 		}
@@ -84,7 +84,7 @@ func TestBuildAssemblesExpectedLayoutWithFixtureTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build.sh failed: %v\n%s", err, output)
 	}
-	for _, executable := range []string{"manager", "manager-runtime/bin/bun", "manager-runtime/bin/collie", "sandbox/runtime/bin/bun", "sandbox/runtime/bin/herdr", "sandbox/runtime/bin/collie", "sandbox/runtime/bin/sandbox-bootstrap", "sandbox/runtime/start.sh"} {
+	for _, executable := range []string{"manager", "manager-runtime/bin/bun", "manager-runtime/bin/cf", "manager-runtime/bin/collie", "sandbox/runtime/bin/bun", "sandbox/runtime/bin/herdr", "sandbox/runtime/bin/collie", "sandbox/runtime/bin/sandbox-bootstrap", "sandbox/runtime/start.sh"} {
 		info, statErr := os.Stat(filepath.Join(dist, filepath.FromSlash(executable)))
 		if statErr != nil || info.Mode()&0o111 == 0 {
 			t.Errorf("executable %s: info=%v err=%v", executable, info, statErr)
@@ -109,6 +109,7 @@ func TestManifestUsesManagerSpecificExecutablesAndSharedCollieAssets(t *testing.
 		"MANAGER_RUNTIME_DIR: ./manager-runtime",
 		"MANAGER_BUN_EXECUTABLE: ./manager-runtime/bin/bun",
 		"MANAGER_COLLIE_EXECUTABLE: ./manager-runtime/bin/collie",
+		"MANAGER_CF_EXECUTABLE: ./manager-runtime/bin/cf",
 	} {
 		if !strings.Contains(manifest, required) {
 			t.Errorf("manifest.yml missing %q", required)
@@ -158,7 +159,7 @@ func TestDeploymentMapsOnlyManagerPublicAndIdentityRoutes(t *testing.T) {
 		}
 	}
 	deploy := readPackageFile(t, "scripts/deploy.sh")
-	for _, required := range []string{"cf push", "--no-route", "--no-start", "cf set-env", "cf start", "cf create-route", "cf map-route", "PUBLIC_DOMAIN", "CF_IDENTITY_DOMAIN", "MANAGER_PUBLIC_HOST", "MANAGER_PACK_HOST", "SANDBOX_BUILDPACKS", "MANAGER_API_TOKEN", "MANAGER_APP_GUID"} {
+	for _, required := range []string{"cf push", "--no-route", "--no-start", "cf set-env", "MANAGER_CF_EXECUTABLE", "cf start", "cf create-route", "cf map-route", "PUBLIC_DOMAIN", "CF_IDENTITY_DOMAIN", "MANAGER_PUBLIC_HOST", "MANAGER_PACK_HOST", "SANDBOX_BUILDPACKS", "MANAGER_API_TOKEN", "MANAGER_APP_GUID"} {
 		if !strings.Contains(deploy, required) {
 			t.Errorf("deploy.sh missing %q", required)
 		}
@@ -213,6 +214,7 @@ if [ "$1" = set-env ] && [ "$3" = MANAGER_API_TOKEN ]; then printf 'new token: %
 		{"set-env", "manager", "MANAGER_RUNTIME_DIR", "./manager-runtime"},
 		{"set-env", "manager", "MANAGER_BUN_EXECUTABLE", "./manager-runtime/bin/bun"},
 		{"set-env", "manager", "MANAGER_COLLIE_EXECUTABLE", "./manager-runtime/bin/collie"},
+		{"set-env", "manager", "MANAGER_CF_EXECUTABLE", "./manager-runtime/bin/cf"},
 		{"set-env", "manager", "CF_IDENTITY_DOMAIN", "apps.identity"},
 		{"set-env", "manager", "SANDBOX_BUILDPACKS", "ruby_buildpack"},
 		{"set-env", "manager", "MANAGER_APP_NAME", "manager"},
@@ -386,7 +388,7 @@ printf '{}' > "$RUNTIME_DIR/collie/package.json"
 printf '{}' > "$RUNTIME_DIR/collie/node_modules/fixture/package.json"
 printf '<html>collie</html>' > "$RUNTIME_DIR/collie/web/dist/index.html"
 mkdir -p "$MANAGER_RUNTIME_DIR/bin"
-for name in bun collie; do printf '#!/bin/sh\n' > "$MANAGER_RUNTIME_DIR/bin/$name"; chmod +x "$MANAGER_RUNTIME_DIR/bin/$name"; done
+for name in bun cf collie; do printf '#!/bin/sh\n' > "$MANAGER_RUNTIME_DIR/bin/$name"; chmod +x "$MANAGER_RUNTIME_DIR/bin/$name"; done
 `
 	writeExecutable(t, runtimeScript, runtimeBody)
 	fakeRuntime := filepath.Join(temp, "portable")
@@ -396,7 +398,7 @@ for name in bun collie; do printf '#!/bin/sh\n' > "$MANAGER_RUNTIME_DIR/bin/$nam
 	command.Env = []string{
 		"PATH=" + bin + ":" + os.Getenv("PATH"), "DIST_DIR=" + dist,
 		"BUILD_RUNTIME_SCRIPT=" + runtimeScript, "BUN_RUNTIME_BIN=" + fakeRuntime,
-		"HERDR_RUNTIME_BIN=" + fakeRuntime, "FIXTURE_WEB_DIST=" + filepath.Join(root, "web", "dist"),
+		"HERDR_RUNTIME_BIN=" + fakeRuntime, "CF_BIN=" + fakeRuntime, "FIXTURE_WEB_DIST=" + filepath.Join(root, "web", "dist"),
 	}
 	if failRuntime {
 		command.Env = append(command.Env, "FAIL_RUNTIME=1")

@@ -79,6 +79,7 @@ type CloudFoundry interface {
 
 type Provider struct {
 	Run        runner.Runner
+	Executable string
 	Buildpacks []string
 	WorkRoot   string
 }
@@ -424,13 +425,17 @@ func isProviderAlreadyExists(err error) bool {
 
 func (p Provider) execute(ctx context.Context, operationName string, args ...string) (model.Operation, []byte, error) {
 	started := time.Now().UTC()
-	operation := model.Operation{Name: operationName, StartedAt: started, Command: commandDisplay("cf", args)}
+	executable := p.Executable
+	if executable == "" {
+		executable = "cf"
+	}
+	operation := model.Operation{Name: operationName, StartedAt: started, Command: commandDisplay(executable, args)}
 	if p.Run == nil {
 		operation.Duration = time.Since(started)
 		operation.Error = "command runner is required"
 		return operation, nil, errors.New(operation.Error)
 	}
-	output, err := p.Run.Run(ctx, "cf", args...)
+	output, err := p.Run.Run(ctx, executable, args...)
 	operation.Duration = time.Since(started)
 	operation.Success = err == nil
 	operation.Summary = sanitizeOutput(output)

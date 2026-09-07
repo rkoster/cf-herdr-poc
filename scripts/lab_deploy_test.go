@@ -66,7 +66,7 @@ func TestLabDeployDiscoversOperatorProfileTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "bun=" + filepath.Join(fixture.bin, "bun") + "\nherdr=" + filepath.Join(profileBin, "herdr") + "\n"
+	want := "bun=" + filepath.Join(fixture.bin, "bun") + "\nherdr=" + filepath.Join(profileBin, "herdr") + "\ncf=" + filepath.Join(profileBin, "cf") + "\n"
 	if string(buildEnv) != want {
 		t.Fatalf("build runtime paths = %q, want %q", buildEnv, want)
 	}
@@ -92,7 +92,7 @@ func TestLabDeployExplicitRuntimeOverridesPATH(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "bun=" + explicitBun + "\nherdr=" + explicitHerdr + "\n"
+	want := "bun=" + explicitBun + "\nherdr=" + explicitHerdr + "\ncf=" + filepath.Join(fixture.bin, "cf") + "\n"
 	if string(buildEnv) != want {
 		t.Fatalf("build runtime paths = %q, want explicit paths %q", buildEnv, want)
 	}
@@ -149,6 +149,7 @@ func TestLabDeployPreservesBuildAndCFSequence(t *testing.T) {
 		"cf\tset-env\tmanager\tMANAGER_RUNTIME_DIR\t./manager-runtime",
 		"cf\tset-env\tmanager\tMANAGER_BUN_EXECUTABLE\t./manager-runtime/bin/bun",
 		"cf\tset-env\tmanager\tMANAGER_COLLIE_EXECUTABLE\t./manager-runtime/bin/collie",
+		"cf\tset-env\tmanager\tMANAGER_CF_EXECUTABLE\t./manager-runtime/bin/cf",
 		"cf\tset-env\tmanager\tCF_IDENTITY_DOMAIN\tapps.identity",
 		"cf\tset-env\tmanager\tSANDBOX_BUILDPACKS\truby_buildpack",
 		"cf\tset-env\tmanager\tMANAGER_APP_NAME\tmanager",
@@ -339,7 +340,7 @@ func newLabDeployFixture(t *testing.T) *labDeployFixture {
 	writeExecutable(t, filepath.Join(fixture.bin, "bash"), `#!/bin/sh
 printf 'build\n' >> "$EVENT_LOG"
 printf '%s\n' "$TMPDIR" > "$TMPDIR_LOG"
-printf 'bun=%s\nherdr=%s\n' "$BUN_RUNTIME_BIN" "$HERDR_RUNTIME_BIN" > "$BUILD_ENV_LOG"
+	printf 'bun=%s\nherdr=%s\ncf=%s\n' "$BUN_RUNTIME_BIN" "$HERDR_RUNTIME_BIN" "$CF_BIN" > "$BUILD_ENV_LOG"
 exit "${FAKE_BUILD_STATUS:-0}"
 `)
 	writeFakeCF(t, filepath.Join(fixture.bin, "cf"), "cf")

@@ -38,6 +38,7 @@ func TestLoadDefaults(t *testing.T) {
 		RuntimeDir:        "./sandbox/runtime",
 		BunExecutable:     "./sandbox/runtime/bin/bun",
 		CollieExecutable:  "./sandbox/runtime/bin/collie",
+		CFExecutable:      "./manager-runtime/bin/cf",
 		InstanceCert:      "/etc/cf-instance-credentials/instance.crt",
 		InstanceKey:       "/etc/cf-instance-credentials/instance.key",
 	}
@@ -117,6 +118,7 @@ func TestLoadOverrides(t *testing.T) {
 		"MANAGER_RUNTIME_DIR":        " /tmp/runtime ",
 		"MANAGER_BUN_EXECUTABLE":     " /tmp/bun ",
 		"MANAGER_COLLIE_EXECUTABLE":  " /tmp/collie-bin ",
+		"MANAGER_CF_EXECUTABLE":      " /tmp/cf ",
 		"CF_INSTANCE_CERT":           " /tmp/cert ",
 		"CF_INSTANCE_KEY":            " /tmp/key ",
 	}))
@@ -127,7 +129,7 @@ func TestLoadOverrides(t *testing.T) {
 	if got.StatePath != "/tmp/state.json" || got.WebDir != "/tmp/web" || got.CollieDir != "/tmp/collie" ||
 		got.ManagerAppName != "manager" || got.ManagerAppGUID != "app-guid" || got.ManagerPackHost != "pack.apps.identity" || got.ManagerRouteHost != "pack" ||
 		got.ReconcileInterval != 5*time.Second || got.APIToken != "operator-secret" || got.CollieAddress != "127.0.0.1:9191" ||
-		got.WorkRoot != "/tmp/work" || got.RuntimeDir != "/tmp/runtime" || got.BunExecutable != "/tmp/bun" || got.CollieExecutable != "/tmp/collie-bin" || got.InstanceCert != "/tmp/cert" || got.InstanceKey != "/tmp/key" {
+		got.WorkRoot != "/tmp/work" || got.RuntimeDir != "/tmp/runtime" || got.BunExecutable != "/tmp/bun" || got.CollieExecutable != "/tmp/collie-bin" || got.CFExecutable != "/tmp/cf" || got.InstanceCert != "/tmp/cert" || got.InstanceKey != "/tmp/key" {
 		t.Fatalf("Load() overrides = %#v", got)
 	}
 }

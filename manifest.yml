@@ -14,3 +14,4 @@ applications:
     MANAGER_RUNTIME_DIR: ./manager-runtime
     MANAGER_BUN_EXECUTABLE: ./manager-runtime/bin/bun
     MANAGER_COLLIE_EXECUTABLE: ./manager-runtime/bin/collie
+    MANAGER_CF_EXECUTABLE: ./manager-runtime/bin/cf

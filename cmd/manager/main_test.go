@@ -65,6 +65,7 @@ func TestCanonicalizeManagerPathsUsesManagerStartupDirectory(t *testing.T) {
 		RuntimeDir:       "./manager-runtime",
 		BunExecutable:    "./manager-runtime/bin/bun",
 		CollieExecutable: "manager-runtime/bin/collie",
+		CFExecutable:     "manager-runtime/bin/cf",
 	}
 	if err := canonicalizeManagerPaths(&cfg); err != nil {
 		t.Fatal(err)
@@ -77,17 +78,18 @@ func TestCanonicalizeManagerPathsUsesManagerStartupDirectory(t *testing.T) {
 		RuntimeDir:       filepath.Join(root, "manager-runtime"),
 		BunExecutable:    filepath.Join(root, "manager-runtime/bin/bun"),
 		CollieExecutable: filepath.Join(root, "manager-runtime/bin/collie"),
+		CFExecutable:     filepath.Join(root, "manager-runtime/bin/cf"),
 	}
-	if cfg.StatePath != want.StatePath || cfg.WebDir != want.WebDir || cfg.CollieDir != want.CollieDir || cfg.WorkRoot != want.WorkRoot || cfg.RuntimeDir != want.RuntimeDir || cfg.BunExecutable != want.BunExecutable || cfg.CollieExecutable != want.CollieExecutable {
+	if cfg.StatePath != want.StatePath || cfg.WebDir != want.WebDir || cfg.CollieDir != want.CollieDir || cfg.WorkRoot != want.WorkRoot || cfg.RuntimeDir != want.RuntimeDir || cfg.BunExecutable != want.BunExecutable || cfg.CollieExecutable != want.CollieExecutable || cfg.CFExecutable != want.CFExecutable {
 		t.Fatalf("canonicalized config = %#v", cfg)
 	}
 
 	absolute := filepath.Join(root, "already-absolute")
-	cfg = config.Config{StatePath: absolute, WebDir: absolute, CollieDir: absolute, WorkRoot: absolute, RuntimeDir: absolute, BunExecutable: absolute, CollieExecutable: absolute}
+	cfg = config.Config{StatePath: absolute, WebDir: absolute, CollieDir: absolute, WorkRoot: absolute, RuntimeDir: absolute, BunExecutable: absolute, CollieExecutable: absolute, CFExecutable: absolute}
 	if err := canonicalizeManagerPaths(&cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.StatePath != absolute || cfg.WebDir != absolute || cfg.CollieDir != absolute || cfg.WorkRoot != absolute || cfg.RuntimeDir != absolute || cfg.BunExecutable != absolute || cfg.CollieExecutable != absolute {
+	if cfg.StatePath != absolute || cfg.WebDir != absolute || cfg.CollieDir != absolute || cfg.WorkRoot != absolute || cfg.RuntimeDir != absolute || cfg.BunExecutable != absolute || cfg.CollieExecutable != absolute || cfg.CFExecutable != absolute {
 		t.Fatalf("absolute paths changed: %#v", cfg)
 	}
 }

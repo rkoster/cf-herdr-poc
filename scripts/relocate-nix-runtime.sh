@@ -155,6 +155,12 @@ copy_library() {
 resolve_needed() {
 	local soname=$1 requester=$2 requester_dir rpath entry candidate first=''
 	if [[ "$soname" == "$(basename -- "$source_interpreter")" ]]; then printf '%s' "$source_interpreter"; return; fi
+	# Keep mixed Nix profile glibc components pinned to the executable's direct set.
+	case "$soname" in
+		libc.so.6|libpthread.so.0|libresolv.so.2|libdl.so.2|librt.so.1)
+			if [[ -n "${ldd_paths[$soname]:-}" ]]; then readlink -f -- "${ldd_paths[$soname]}"; return; fi
+			;;
+	esac
 	requester_dir="$(dirname -- "$requester")"
 	if [[ -f "$requester_dir/$soname" ]]; then readlink -f -- "$requester_dir/$soname"; return; fi
 	rpath="$(patchelf --print-rpath "$requester" 2>/dev/null || true)"

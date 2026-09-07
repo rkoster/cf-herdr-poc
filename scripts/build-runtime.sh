@@ -7,6 +7,7 @@ RUNTIME_DIR="${RUNTIME_DIR:-$ROOT/sandbox/runtime}"
 TARGET_INSTALL_DIR="${TARGET_INSTALL_DIR:-}"
 MANAGER_RUNTIME_DIR="${MANAGER_RUNTIME_DIR:-}"
 MANAGER_TARGET_INSTALL_DIR="${MANAGER_TARGET_INSTALL_DIR:-}"
+CF_BIN="${CF_BIN:-}"
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
 TOOLS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cf-herdr-tools.XXXXXX")"
@@ -118,6 +119,13 @@ scan_elf_metadata() {
 build_bun="$(require_tool bun)"
 bun_bin="$(validate_runtime_binary BUN_RUNTIME_BIN)"
 herdr_bin="$(validate_runtime_binary HERDR_RUNTIME_BIN)"
+cf_bin="$(validate_runtime_binary CF_BIN)"
+if [[ "$(uname -s)" == Linux ]]; then
+	if ! "$cf_bin" version >/dev/null 2>&1; then
+		printf 'error: CF_BIN must execute cf version successfully: %s\n' "$cf_bin" >&2
+		exit 1
+	fi
+fi
 if [[ ! -d "$COLLIE_DIR/.git" ]]; then
   printf 'error: Collie checkout is missing at %s\n' "$COLLIE_DIR" >&2
   exit 1
@@ -157,11 +165,13 @@ if [[ -n "$MANAGER_RUNTIME_DIR" ]]; then
 	if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" == 1 ]]; then
 		relocate_runtime "$bun_bin" "$MANAGER_RUNTIME_DIR/bin/bun" "$MANAGER_TARGET_INSTALL_DIR"
 		relocate_runtime "$collie_bin" "$MANAGER_RUNTIME_DIR/bin/collie" "$MANAGER_TARGET_INSTALL_DIR"
+	relocate_runtime "$cf_bin" "$MANAGER_RUNTIME_DIR/bin/cf" "$MANAGER_TARGET_INSTALL_DIR"
 		TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/bun" --version >/dev/null
 		TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/collie" --version >/dev/null
 	else
 		install -m 0755 "$bun_bin" "$MANAGER_RUNTIME_DIR/bin/bun"
 		install -m 0755 "$collie_bin" "$MANAGER_RUNTIME_DIR/bin/collie"
+		install -m 0755 "$cf_bin" "$MANAGER_RUNTIME_DIR/bin/cf"
 	fi
 	scan_elf_metadata "$MANAGER_RUNTIME_DIR"
 fi

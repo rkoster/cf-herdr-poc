@@ -60,7 +60,7 @@ func TestBuildRuntimeRejectsNixBinaryByDefault(t *testing.T) {
 
 func TestBuildRuntimeScriptChecksLinuxDependencies(t *testing.T) {
 	script := readBuildScript(t)
-	for _, required := range []string{"BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "COLLIE_RUNTIME_BIN", "readelf", "ldd", "/nix/store"} {
+	for _, required := range []string{"BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "COLLIE_RUNTIME_BIN", "CF_BIN", "readelf", "ldd", "/nix/store"} {
 		if !strings.Contains(script, required) {
 			t.Errorf("build-runtime.sh does not contain %q", required)
 		}
@@ -75,6 +75,7 @@ func TestBuildRuntimeRelocationIsExplicitAndCoversEveryNixRuntime(t *testing.T) 
 		`relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun" "$TARGET_INSTALL_DIR"`,
 		`relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr" "$TARGET_INSTALL_DIR"`,
 		`relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie" "$TARGET_INSTALL_DIR"`,
+		`relocate_runtime "$cf_bin" "$MANAGER_RUNTIME_DIR/bin/cf" "$MANAGER_TARGET_INSTALL_DIR"`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("build-runtime.sh missing relocation contract %q", required)

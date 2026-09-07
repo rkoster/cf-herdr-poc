@@ -44,6 +44,7 @@ BUN_RUNTIME_BIN="$(resolve_tool BUN_RUNTIME_BIN bun)"
 HERDR_RUNTIME_BIN="$(resolve_tool HERDR_RUNTIME_BIN herdr)"
 CF_BIN="$(resolve_tool CF_BIN cf)"
 export BUN_RUNTIME_BIN HERDR_RUNTIME_BIN ALLOW_NIX_RUNTIME_RELOCATION=1
+export CF_BIN
 for tool in go patchelf readelf ldd nix-store; do
 	if ! command -v "$tool" >/dev/null 2>&1; then
 		printf 'error: required build tool %s was not found in PATH\n' "$tool" >&2
@@ -76,6 +77,7 @@ MANAGER_APP_GUID="$("$CF_BIN" app "$MANAGER_APP_NAME" --guid)"
 "$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_RUNTIME_DIR ./manager-runtime
 "$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_BUN_EXECUTABLE ./manager-runtime/bin/bun
 "$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_COLLIE_EXECUTABLE ./manager-runtime/bin/collie
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_CF_EXECUTABLE ./manager-runtime/bin/cf
 "$CF_BIN" set-env "$MANAGER_APP_NAME" CF_IDENTITY_DOMAIN "$CF_IDENTITY_DOMAIN"
 "$CF_BIN" set-env "$MANAGER_APP_NAME" SANDBOX_BUILDPACKS "$SANDBOX_BUILDPACKS"
 "$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_APP_NAME "$MANAGER_APP_NAME"
