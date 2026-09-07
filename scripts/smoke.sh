@@ -37,6 +37,7 @@ elif [[ ${SMOKE_INSECURE_PUBLIC_TLS:-} == 1 ]]; then
 fi
 
 SMOKE_TIMEOUT=${SMOKE_TIMEOUT:-1200}
+SMOKE_CLEANUP_TIMEOUT=${SMOKE_CLEANUP_TIMEOUT:-120}
 SMOKE_POLL_INTERVAL=${SMOKE_POLL_INTERVAL:-5}
 SMOKE_WORKSPACE_CWD=${SMOKE_WORKSPACE_CWD:-/home/vcap/app}
 
@@ -45,6 +46,7 @@ SANDBOX_NAME=${SMOKE_NAME:-smoke-$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM}
 cleanup_armed=0
 [[ $IDENTITY_DOMAIN =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && $IDENTITY_DOMAIN == *.* ]] || { printf 'smoke: invalid identity domain\n' >&2; exit 2; }
 [[ $SMOKE_TIMEOUT =~ ^[1-9][0-9]*$ && $SMOKE_POLL_INTERVAL =~ ^[0-9]+$ ]] || { printf 'smoke: invalid timeout or poll interval\n' >&2; exit 2; }
+[[ $SMOKE_CLEANUP_TIMEOUT =~ ^[1-9][0-9]*$ ]] || { printf 'smoke: SMOKE_CLEANUP_TIMEOUT must be a positive integer\n' >&2; exit 2; }
 
 MANAGER_URL=${MANAGER_URL%/}
 IDENTITY_HOST="$SANDBOX_NAME.$IDENTITY_DOMAIN"
@@ -204,17 +206,14 @@ managed_cleanup() {
   if (( cleanup_armed )); then
     local status deadline
     status=$(gateway_status DELETE "$MANAGER_URL/manager/api/sandboxes/$SANDBOX_NAME")
-    deadline=$((SECONDS + SMOKE_TIMEOUT))
-    while [[ $status == 202 ]] && (( SECONDS < deadline )); do
-      if manager_absent; then
-        if cf_resources_absent; then deleted=1; else direct_cleanup; fi
-        break
-      fi
+    direct_cleanup
+    deadline=$((SECONDS + SMOKE_CLEANUP_TIMEOUT))
+    while (( SECONDS < deadline )); do
+      if manager_absent; then deleted=1; break; fi
       sleep "$SMOKE_POLL_INTERVAL"
     done
     if (( ! deleted )); then
-      direct_cleanup
-      cf_resources_absent >/dev/null 2>&1 || true
+      printf 'smoke: cleanup deadline exceeded; residual manager record: %s\n' "$SANDBOX_NAME" >&2
     fi
   fi
   rm -rf "$WORK_DIR"

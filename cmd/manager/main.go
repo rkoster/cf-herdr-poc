@@ -59,6 +59,10 @@ func run() error {
 	if err := canonicalizeColliePaths(&cfg); err != nil {
 		return err
 	}
+	dirs, err := ensureManagerDirs(cfg)
+	if err != nil {
+		return fmt.Errorf("initialize manager runtime directories: %w", err)
+	}
 	host, port, err := loopbackAddress(cfg.CollieAddress)
 	if err != nil {
 		return err
@@ -69,11 +73,11 @@ func run() error {
 	}
 
 	commandRunner := runner.Exec{}
-	configDir := filepath.Join(filepath.Dir(cfg.StatePath), "collie-config")
-	stateDir := filepath.Join(filepath.Dir(cfg.StatePath), "collie-state")
+	configDir := dirs.collieConfig
+	stateDir := dirs.collieState
 	socketPath := filepath.Join(stateDir, "herdr.sock")
 	collie := supervisor.New(supervisor.Config{Executable: cfg.BunExecutable, Dir: cfg.CollieDir, PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, PackTransport: "cf-identity"}, nil, nil)
-	packManager := pack.New(commandRunner, collie, pack.Config{Executable: cfg.CollieExecutable, TempDir: filepath.Join(filepath.Dir(cfg.StatePath), "tokens"), PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, TokenLifetime: 10 * time.Minute})
+	packManager := pack.New(commandRunner, collie, pack.Config{Executable: cfg.CollieExecutable, TempDir: dirs.token, PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, TokenLifetime: 10 * time.Minute})
 	builder := runtimebundle.Builder{Run: commandRunner, RuntimeDir: cfg.RuntimeDir, WorkRoot: cfg.WorkRoot}
 	cloud := cf.Provider{Run: commandRunner, Buildpacks: cfg.Buildpacks, WorkRoot: cfg.WorkRoot}
 	probe := identity.New(identity.Config{CertPath: cfg.InstanceCert, KeyPath: cfg.InstanceKey, Timeout: 10 * time.Second, MaxBodyBytes: 64 << 10})
@@ -112,6 +116,60 @@ func run() error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	return errors.Join(serveErr, stopAll(shutdownCtx, server.Shutdown, handler.Close, reconciler.Stop, collie.Stop))
+}
+
+type managerDirs struct {
+	collieConfig string
+	collieState  string
+	token        string
+}
+
+func ensureManagerDirs(cfg config.Config) (managerDirs, error) {
+	base := filepath.Dir(cfg.StatePath)
+	dirs := managerDirs{
+		collieConfig: filepath.Join(base, "collie-config"),
+		collieState:  filepath.Join(base, "collie-state"),
+		token:        filepath.Join(base, "tokens"),
+	}
+	for name, path := range map[string]string{
+		"state parent":  base,
+		"work root":     cfg.WorkRoot,
+		"Collie config": dirs.collieConfig,
+		"Collie state":  dirs.collieState,
+		"token":         dirs.token,
+	} {
+		if err := ensurePrivateDir(path); err != nil {
+			return managerDirs{}, fmt.Errorf("ensure %s directory: %w", name, err)
+		}
+	}
+	return dirs, nil
+}
+
+func ensurePrivateDir(path string) error {
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%q is a symlink", path)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("%q is not a directory", path)
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect %q: %w", path, err)
+	}
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return fmt.Errorf("create %q: %w", path, err)
+	}
+	info, err = os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect created directory %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("created path %q is not a physical directory", path)
+	}
+	return nil
 }
 
 func canonicalizeColliePaths(cfg *config.Config) error {

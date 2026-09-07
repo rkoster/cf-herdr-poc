@@ -2,7 +2,7 @@
 
 ## Status
 
-**Deferred.** No full live lifecycle smoke has been approved or run. The lab public manager route is signed by a lab CA that local curl does not trust by default; this transport friction is now explicit without weakening identity-route verification.
+**In progress.** A live lifecycle attempt reached manager creation but did not complete. The lab public manager route is signed by a lab CA that local curl does not trust by default; this transport friction is explicit without weakening identity-route verification.
 
 ## Prerequisites
 
@@ -40,6 +40,8 @@ bash scripts/smoke.sh
 
 `SMOKE_NAME` may override the generated unique name. The script refuses to invoke CF or curl unless `SMOKE_LIVE=1` is present. It sends the manager token from an owner-only temporary JSON file, obtains an owner-only session cookie jar, and removes both through the cleanup trap. Credentials and certificate/key contents are never printed or placed in curl process arguments.
 
+`SMOKE_CLEANUP_TIMEOUT` independently bounds cleanup polling and defaults to 120 seconds. Lifecycle failure requests manager deletion immediately, directly removes only resources for the uniquely preflighted smoke name, and reports any residual manager record when that bound expires rather than reusing the longer lifecycle timeout.
+
 `SMOKE_PUBLIC_CA_CERT` is the preferred lab trust mode. It must name a readable regular file that is not a symlink, and the harness passes it as curl `--cacert` only for calls through `MANAGER_URL`. If the lab CA file is unavailable, `SMOKE_INSECURE_PUBLIC_TLS=1` is an explicit lab-only fallback for those same public manager calls and prints `smoke: public-route TLS verification disabled for lab` once. Any other insecure value, or configuring both modes, is rejected before network activity. Neither mode affects the local no-client-certificate identity assertion, `cf ssh`, or the in-container curl that presents `CF_INSTANCE_CERT` and `CF_INSTANCE_KEY`; identity-route TLS continues to use platform/system trust and remains fully verified.
 
 Before arming destructive cleanup, the harness verifies that no app or identity-domain route already uses the stable sandbox name. It also performs an authenticated, strictly validated manager sandbox listing and requires that name to have no manager record. It then arms cleanup immediately before creation. A concurrent creator can still race this check; that limitation is accepted for this POC.
@@ -76,7 +78,9 @@ The script prints only fixed timing labels. Manager operation durations are used
 
 ## Observations
 
-The lab public manager curl failed certificate verification with curl code 60 because the lab CA is not in the local trust store. An explicit `--insecure` diagnostic reached the login endpoint and received HTTP 204. This is not a lifecycle smoke result: no live smoke was run, and identity-aware route requests remain strictly verified.
+The lab public manager curl initially failed certificate verification with curl code 60 because the lab CA is not in the local trust store. An explicit lab trust mode reached the login endpoint and received HTTP 204. Identity-aware route requests remained strictly verified.
+
+The lifecycle attempt failed during create with `resolve physical work root: lstat /home/vcap/app/data/work: no such file or directory`; manager startup had loaded missing state as empty without work root initialization. Direct CF cleanup removed the smoke app and routes, but the failed residual manager record remained because reconciliation refused deletion, and the harness continued polling it under the 20-minute lifecycle timeout. These are observed failures, not a completed smoke result.
 
 ## Recommendations
 

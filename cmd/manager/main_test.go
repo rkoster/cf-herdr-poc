@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +63,76 @@ func TestCanonicalizeColliePathsUsesManagerStartupDirectory(t *testing.T) {
 	}
 	if cfg.CollieDir != filepath.Join(root, "collie") || cfg.BunExecutable != filepath.Join(root, "bin/bun") || cfg.CollieExecutable != filepath.Join(root, "bin/collie") {
 		t.Fatalf("canonicalized config = %#v", cfg)
+	}
+}
+
+func TestEnsurePrivateDirCreatesNestedDirectoryWithPrivatePermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nested", "private")
+	if err := ensurePrivateDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("created mode = %v, want private directory", info.Mode())
+	}
+}
+
+func TestEnsurePrivateDirLeavesExistingDirectoryPermissionsUnchanged(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "operator")
+	if err := os.Mkdir(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o750 {
+		t.Fatalf("existing mode = %v, want 0750", info.Mode().Perm())
+	}
+}
+
+func TestEnsurePrivateDirRejectsFileAndFinalSymlink(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{file, link} {
+		if err := ensurePrivateDir(path); err == nil || !strings.Contains(err.Error(), path) {
+			t.Fatalf("ensurePrivateDir(%q) error = %v", path, err)
+		}
+	}
+}
+
+func TestEnsureManagerDirsCreatesAllRuntimeDirectories(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Config{StatePath: filepath.Join(root, "state", "sandboxes.json"), WorkRoot: filepath.Join(root, "work")}
+	dirs, err := ensureManagerDirs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{filepath.Join(root, "state"), filepath.Join(root, "work"), filepath.Join(root, "state", "collie-config"), filepath.Join(root, "state", "collie-state"), filepath.Join(root, "state", "tokens")}
+	for _, path := range want {
+		if info, statErr := os.Lstat(path); statErr != nil || !info.IsDir() {
+			t.Fatalf("runtime directory %q: info=%v err=%v", path, info, statErr)
+		}
+	}
+	if dirs.token != want[4] {
+		t.Fatalf("token dir = %q, want %q", dirs.token, want[4])
 	}
 }
 

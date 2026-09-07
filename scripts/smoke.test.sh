@@ -64,7 +64,7 @@ case "$url $method" in
     if [[ ${FAKE_SCENARIO:-happy} == create_lost || ${FAKE_SCENARIO:-happy} == create_malformed ]]; then status=404
     else status=${FAKE_MANAGER_DELETE_STATUS:-202}
     fi
-    [[ $status == 202 ]] && touch "$FAKE_STATE/manager-cleaned"
+    [[ $status == 202 && ${FAKE_SCENARIO:-happy} != failed_record_sticks ]] && touch "$FAKE_STATE/manager-cleaned"
     ;;
   */manager/api/sandboxes\ GET)
     if [[ ! -f "$FAKE_STATE/created" && ${FAKE_SCENARIO:-happy} == orphan_manager ]]; then body='[{"name":"smoke-fixed","repository":"https://example.invalid/orphan.git","buildpack":"binary_buildpack","desired":"present","phase":"failed","lastError":"orphan","createdAt":"2026-09-03T00:00:00Z","updatedAt":"2026-09-03T00:01:00Z"}]'
@@ -73,7 +73,7 @@ case "$url $method" in
     elif [[ ${FAKE_SCENARIO:-happy} == malformed ]]; then body='{bad';
     elif [[ -f "$FAKE_STATE/manager-cleaned" && ${FAKE_SCENARIO:-happy} == malformed_deletion_list ]]; then body='{}'
     elif [[ -f "$FAKE_STATE/manager-cleaned" ]]; then body='[]'
-    elif [[ ${FAKE_SCENARIO:-happy} == failed ]]; then body='[{"name":"smoke-fixed","phase":"failed","lastError":"safe failure"}]'
+    elif [[ ${FAKE_SCENARIO:-happy} == failed || ${FAKE_SCENARIO:-happy} == failed_record_sticks ]]; then body='[{"name":"smoke-fixed","phase":"failed","lastError":"safe failure"}]'
     elif [[ ${FAKE_SCENARIO:-happy} == timeout ]]; then body='[{"name":"smoke-fixed","phase":"creating"}]'
     elif [[ ${FAKE_SCENARIO:-happy} == api_leak ]]; then body='[{"name":"smoke-fixed","phase":"creating","appGuid":"private-guid"}]'
     else body='[{"name":"smoke-fixed","repository":"https://example.invalid/repo.git","buildpack":"binary_buildpack","desired":"present","phase":"ready","packMemberId":"smoke-fixed","operations":[{"name":"stage","duration":3000000000,"success":true},{"name":"start-app","duration":4000000000,"success":true},{"name":"secure-route","duration":5000000000,"success":true},{"name":"trigger-enrollment","duration":6000000000,"success":true}],"createdAt":"2026-09-04T00:00:00Z","updatedAt":"2026-09-04T00:00:07Z"}]'
@@ -204,7 +204,7 @@ run_smoke() {
     MANAGER_API_TOKEN="$SECRET" MANAGER_APP_NAME=manager-app WRONG_IDENTITY_APP=wrong-app \
     SMOKE_REPOSITORY=https://example.invalid/repo.git SMOKE_BUILDPACK=binary_buildpack \
     SMOKE_WORKSPACE_CWD=/home/vcap/app IDENTITY_DOMAIN=identity.invalid \
-    MANAGER_APP_GUID=manager-guid MANAGER_ROUTE_HOST=manager-pack SMOKE_POLL_INTERVAL=0 SMOKE_TIMEOUT=${SMOKE_TIMEOUT:-2} \
+    MANAGER_APP_GUID=manager-guid MANAGER_ROUTE_HOST=manager-pack SMOKE_POLL_INTERVAL=0 SMOKE_TIMEOUT=${SMOKE_TIMEOUT:-2} SMOKE_CLEANUP_TIMEOUT=${SMOKE_CLEANUP_TIMEOUT:-2} \
     "$BASH" "$SCRIPT" 2>&1
 }
 
@@ -380,6 +380,10 @@ test_docs_require_complete_live_prerequisites() {
   assert_contains "$docs" 'POST `/collie/api/workspace?host=<member>`'
   assert_contains "$docs" 'exactly HTTP 403'
   assert_contains "$docs" 'packaged Collie `pack status`'
+  assert_contains "$docs" 'SMOKE_CLEANUP_TIMEOUT'
+  assert_contains "$docs" 'work root initialization'
+  assert_contains "$docs" 'residual manager record'
+  assert_contains "$docs" '**In progress.**'
   assert_not_contains "$docs" 'SMOKE_SKIP_WRONG_IDENTITY'
   assert_not_contains "$docs" 'read-only'
 }
@@ -506,6 +510,27 @@ test_cleanup_falls_back_to_direct_cf() {
   assert_contains "$commands" 'cf <delete> <smoke-fixed>'
 }
 
+test_failed_lifecycle_cleanup_is_independently_bounded() {
+  make_fakes
+  local output commands started=$SECONDS elapsed
+  output=$(FAKE_SCENARIO=failed_record_sticks SMOKE_TIMEOUT=1200 SMOKE_CLEANUP_TIMEOUT=1 run_failure)
+  elapsed=$((SECONDS - started))
+  commands=$(<"$LOG")
+  (( elapsed < 5 )) || fail "cleanup used lifecycle timeout (${elapsed}s)"
+  assert_contains "$output" 'lifecycle failed: safe failure'
+  assert_contains "$output" 'cleanup deadline exceeded; residual manager record: smoke-fixed'
+  assert_contains "$commands" 'cf <delete> <smoke-fixed>'
+  assert_contains "$commands" '/manager/api/sandboxes/smoke-fixed>'
+}
+
+test_cleanup_timeout_must_be_positive() {
+  make_fakes
+  local output
+  output=$(SMOKE_CLEANUP_TIMEOUT=0 run_failure no)
+  assert_contains "$output" 'SMOKE_CLEANUP_TIMEOUT must be a positive integer'
+  [[ ! -e $LOG ]] || fail 'invalid cleanup timeout invoked a command'
+}
+
 test_live_guard_prevents_commands
 test_explicit_cf_bin_works_without_cf_in_path
 test_missing_cf_error_is_actionable
@@ -525,4 +550,6 @@ test_manager_deletion_list_schema_is_strict
 test_route_policy_schema_failures_are_not_absence
 test_cleanup_is_armed_immediately_before_create
 test_cleanup_falls_back_to_direct_cf
+test_failed_lifecycle_cleanup_is_independently_bounded
+test_cleanup_timeout_must_be_positive
 printf 'PASS smoke script tests\n'
