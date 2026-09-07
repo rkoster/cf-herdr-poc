@@ -241,6 +241,8 @@ test_full_flow_and_exact_identity_checks() {
   assert_contains "$output" 'upload               unavailable'
   assert_not_contains "$output" "$SECRET"
   assert_not_contains "$commands" "$SECRET"
+  assert_not_contains "$commands" '<--insecure>'
+  assert_not_contains "$commands" '<--cacert>'
   assert_contains "$commands" 'cf <ssh> <wrong-app>'
   assert_contains "$commands" 'cf <ssh> <manager-app>'
   assert_contains "$commands" './sandbox/runtime/bin/collie pack status'
@@ -270,6 +272,64 @@ test_full_flow_and_exact_identity_checks() {
     '/collie/api/pack>' \
     'cf <curl> </v3/apps?names=smoke-fixed>'
   if [[ $commands == *'cf <map-route>'* ]]; then fail 'mapped public route'; fi
+}
+
+test_public_ca_is_limited_to_manager_curl() {
+  make_fakes
+  local ca_cert="$TEST_DIR/lab-ca.pem" output commands
+  touch "$ca_cert"
+  output=$(SMOKE_PUBLIC_CA_CERT="$ca_cert" run_smoke) || fail "CA mode failed: $output"
+  commands=$(<"$LOG")
+  assert_contains "$commands" "curl <--cacert> <$ca_cert> <--silent>"
+  assert_contains "$commands" '<https://manager.invalid/manager/api/session>'
+  assert_contains "$commands" '<https://manager.invalid/collie/api/snapshot?host=smoke-fixed>'
+  assert_contains "$commands" 'curl <--silent> <--show-error> <--output>'
+  assert_contains "$commands" '<https://smoke-fixed.identity.invalid/pack/v1/hello>'
+  assert_not_contains "$commands" "cf <ssh> <wrong-app> <-c> <code=\$(curl --cacert"
+  assert_not_contains "$commands" 'cf <ssh> <wrong-app> <-c> <code=$(curl --insecure'
+  assert_not_contains "$commands" 'cf <ssh> <manager-app> <-c> <HERDR_PLUGIN_CONFIG_DIR=./data/collie-config --cacert'
+}
+
+test_insecure_public_tls_is_explicit_and_limited_to_manager_curl() {
+  make_fakes
+  local output commands warning_count
+  output=$(SMOKE_INSECURE_PUBLIC_TLS=1 run_smoke) || fail "insecure mode failed: $output"
+  commands=$(<"$LOG")
+  warning_count=$(printf '%s\n' "$output" | jq -Rrs '[splits("\n")|select(.=="smoke: public-route TLS verification disabled for lab")]|length')
+  [[ $warning_count == 1 ]] || fail "expected exactly one insecure TLS warning, got $warning_count"
+  assert_contains "$commands" 'curl <--insecure> <--silent>'
+  assert_contains "$commands" '<https://manager.invalid/manager/api/session>'
+  assert_contains "$commands" '<https://manager.invalid/collie/api/snapshot?host=smoke-fixed>'
+  assert_contains "$commands" 'curl <--silent> <--show-error> <--output>'
+  assert_contains "$commands" '<https://smoke-fixed.identity.invalid/pack/v1/hello>'
+  assert_not_contains "$commands" 'cf <ssh> <wrong-app> <-c> <code=$(curl --insecure'
+  assert_not_contains "$commands" 'cf <ssh> <wrong-app> <-c> <code=$(curl --cacert'
+  assert_not_contains "$commands" 'cf <ssh> <manager-app> <-c> <HERDR_PLUGIN_CONFIG_DIR=./data/collie-config --insecure'
+}
+
+test_public_tls_configuration_fails_closed() {
+  make_fakes
+  local ca_cert="$TEST_DIR/lab-ca.pem" output commands
+  touch "$ca_cert"
+  output=$(SMOKE_INSECURE_PUBLIC_TLS=true run_failure no)
+  assert_contains "$output" 'SMOKE_INSECURE_PUBLIC_TLS must be 1 or unset'
+  [[ ! -e $LOG ]] || fail 'invalid TLS mode invoked a command'
+
+  make_fakes
+  ca_cert="$TEST_DIR/lab-ca.pem"
+  touch "$ca_cert"
+  output=$(SMOKE_PUBLIC_CA_CERT="$ca_cert" SMOKE_INSECURE_PUBLIC_TLS=1 run_failure no)
+  assert_contains "$output" 'SMOKE_PUBLIC_CA_CERT conflicts with SMOKE_INSECURE_PUBLIC_TLS=1'
+
+  make_fakes
+  output=$(SMOKE_PUBLIC_CA_CERT="$TEST_DIR/missing.pem" run_failure no)
+  assert_contains "$output" 'SMOKE_PUBLIC_CA_CERT must be a readable regular non-symlink file'
+
+  make_fakes
+  touch "$TEST_DIR/ca-target.pem"
+  ln -s "$TEST_DIR/ca-target.pem" "$TEST_DIR/ca-link.pem"
+  output=$(SMOKE_PUBLIC_CA_CERT="$TEST_DIR/ca-link.pem" run_failure no)
+  assert_contains "$output" 'SMOKE_PUBLIC_CA_CERT must be a readable regular non-symlink file'
 }
 
 test_docs_require_complete_live_prerequisites() {
@@ -408,6 +468,9 @@ test_cleanup_falls_back_to_direct_cf() {
 
 test_live_guard_prevents_commands
 test_full_flow_and_exact_identity_checks
+test_public_ca_is_limited_to_manager_curl
+test_insecure_public_tls_is_explicit_and_limited_to_manager_curl
+test_public_tls_configuration_fails_closed
 test_docs_require_complete_live_prerequisites
 test_identity_status_must_be_exact
 test_bad_lifecycle_and_security_responses_fail_closed

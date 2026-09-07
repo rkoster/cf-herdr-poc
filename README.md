@@ -2,7 +2,7 @@
 
 CF Herdr runs one public manager app that supervises the lead Collie process and creates short-lived Cloud Foundry sandbox apps. Browsers connect only through the manager and lead Collie. Sandbox apps never receive ordinary public routes; their identity routes are default-deny and restricted with Cloud Foundry route policies.
 
-This is a deliberately dirty POC, not a production deployment. Live `cf push` validation is deferred: the current target has no identity domain, so identity routes and route policies cannot yet be exercised end to end.
+This is a deliberately dirty POC, not a production deployment. Full live lifecycle validation remains deferred; observed lab connectivity friction and unverified end-to-end behavior are recorded separately below.
 
 ## Architecture
 
@@ -135,6 +135,6 @@ Artifact tests use fake executable fixtures only; they do not establish that any
 - The nested Collie checkout is intentionally a fork with POC changes and may be dirty; packaging must not modify its source or `.envrc`.
 - The source runtime requires a large copied Collie dependency tree, and portable Bun/Herdr acquisition is deliberately outside this repository.
 - Lab deployment relocates local Nix startup dependency graphs without downloads. Separate private glibc bundles avoid collisions but materially increase `dist/`; dynamic `dlopen` and absolute asset paths remain risks until a live smoke test, and official static or portable artifacts remain the production path.
-- The current CF target lacks an identity domain. Live route-policy, instance-identity, manager health, sandbox lifecycle, and browser-through-lead spikes are deferred and no successful result is claimed.
+- Local curl does not trust the lab CA used by the public manager route (observed curl code 60). An explicit insecure diagnostic reached login with HTTP 204, but no successful lifecycle result is claimed. The smoke harness prefers `SMOKE_PUBLIC_CA_CERT`; its explicit `SMOKE_INSECURE_PUBLIC_TLS=1` fallback applies only to public manager calls. Identity-route no-certificate and `cf ssh` instance-certificate checks retain strict TLS verification.
 - Sandbox staging checks `cf app NAME --guid` immediately before `cf push`, but separate CLI calls cannot make name reservation atomic. Another actor can still create the app in that lookup/push window; eliminating this race requires an atomic CAPI creation strategy.
 - Deletion never adopts an app GUID discovered by name. If a sandbox record has no persisted app GUID and that CF app name exists, stable manager-owned Pack state may be cleaned but the record remains failed with `ownership unknown`; an operator must investigate the potential orphan rather than risk deleting an unrelated app.

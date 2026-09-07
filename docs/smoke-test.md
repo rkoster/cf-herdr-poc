@@ -2,7 +2,7 @@
 
 ## Status
 
-**Deferred.** Live execution is forbidden until a new Cloud Foundry environment provides identity-based routing and the deployed package contains portable Bun, Herdr, and Collie binaries. No live results are recorded.
+**Deferred.** No full live lifecycle smoke has been approved or run. The lab public manager route is signed by a lab CA that local curl does not trust by default; this transport friction is now explicit without weakening identity-route verification.
 
 ## Prerequisites
 
@@ -31,10 +31,13 @@ IDENTITY_DOMAIN=apps.internal.example.com \
 SMOKE_REPOSITORY=https://example.com/organization/harmless-smoke.git \
 SMOKE_BUILDPACK=binary_buildpack \
 SMOKE_WORKSPACE_CWD=/home/vcap/app \
+SMOKE_PUBLIC_CA_CERT=/absolute/path/to/lab-ca.pem \
 bash scripts/smoke.sh
 ```
 
 `SMOKE_NAME` may override the generated unique name. The script refuses to invoke CF or curl unless `SMOKE_LIVE=1` is present. It sends the manager token from an owner-only temporary JSON file, obtains an owner-only session cookie jar, and removes both through the cleanup trap. Credentials and certificate/key contents are never printed or placed in curl process arguments.
+
+`SMOKE_PUBLIC_CA_CERT` is the preferred lab trust mode. It must name a readable regular file that is not a symlink, and the harness passes it as curl `--cacert` only for calls through `MANAGER_URL`. If the lab CA file is unavailable, `SMOKE_INSECURE_PUBLIC_TLS=1` is an explicit lab-only fallback for those same public manager calls and prints `smoke: public-route TLS verification disabled for lab` once. Any other insecure value, or configuring both modes, is rejected before network activity. Neither mode affects the local no-client-certificate identity assertion, `cf ssh`, or the in-container curl that presents `CF_INSTANCE_CERT` and `CF_INSTANCE_KEY`; identity-route TLS continues to use platform/system trust and remains fully verified.
 
 Before arming destructive cleanup, the harness verifies that no app or identity-domain route already uses the stable sandbox name. It also performs an authenticated, strictly validated manager sandbox listing and requires that name to have no manager record. It then arms cleanup immediately before creation. A concurrent creator can still race this check; that limitation is accepted for this POC.
 
@@ -70,7 +73,7 @@ The script prints only fixed timing labels. Manager operation durations are used
 
 ## Observations
 
-None. Live execution remains forbidden, so there are no environment versions, retries, failures, interventions, or timings to report.
+The lab public manager curl failed certificate verification with curl code 60 because the lab CA is not in the local trust store. An explicit `--insecure` diagnostic reached the login endpoint and received HTTP 204. This is not a lifecycle smoke result: no live smoke was run, and identity-aware route requests remain strictly verified.
 
 ## Recommendations
 

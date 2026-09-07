@@ -13,6 +13,17 @@ for variable in MANAGER_URL MANAGER_API_TOKEN MANAGER_APP_NAME MANAGER_APP_GUID 
   [[ -n ${!variable:-} ]] || { printf 'smoke: %s is required\n' "$variable" >&2; exit 2; }
 done
 
+[[ -z ${SMOKE_INSECURE_PUBLIC_TLS:-} || ${SMOKE_INSECURE_PUBLIC_TLS:-} == 1 ]] || { printf 'smoke: SMOKE_INSECURE_PUBLIC_TLS must be 1 or unset\n' >&2; exit 2; }
+[[ -z ${SMOKE_PUBLIC_CA_CERT:-} || ${SMOKE_INSECURE_PUBLIC_TLS:-} != 1 ]] || { printf 'smoke: SMOKE_PUBLIC_CA_CERT conflicts with SMOKE_INSECURE_PUBLIC_TLS=1\n' >&2; exit 2; }
+public_curl_args=()
+if [[ -n ${SMOKE_PUBLIC_CA_CERT:-} ]]; then
+  [[ -f $SMOKE_PUBLIC_CA_CERT && -r $SMOKE_PUBLIC_CA_CERT && ! -L $SMOKE_PUBLIC_CA_CERT ]] || { printf 'smoke: SMOKE_PUBLIC_CA_CERT must be a readable regular non-symlink file\n' >&2; exit 2; }
+  public_curl_args=(--cacert "$SMOKE_PUBLIC_CA_CERT")
+elif [[ ${SMOKE_INSECURE_PUBLIC_TLS:-} == 1 ]]; then
+  public_curl_args=(--insecure)
+  printf 'smoke: public-route TLS verification disabled for lab\n' >&2
+fi
+
 SMOKE_TIMEOUT=${SMOKE_TIMEOUT:-1200}
 SMOKE_POLL_INTERVAL=${SMOKE_POLL_INTERVAL:-5}
 SMOKE_WORKSPACE_CWD=${SMOKE_WORKSPACE_CWD:-/home/vcap/app}
@@ -52,7 +63,7 @@ declare -A phase_observed=()
 
 gateway_status() {
   local method=$1 url=$2 data_file=${3:-} status
-  local args=(--silent --show-error --output "$RESPONSE_JSON" --write-out '%{http_code}' --request "$method" --cookie "$COOKIE_JAR" --cookie-jar "$COOKIE_JAR")
+  local args=("${public_curl_args[@]}" --silent --show-error --output "$RESPONSE_JSON" --write-out '%{http_code}' --request "$method" --cookie "$COOKIE_JAR" --cookie-jar "$COOKIE_JAR")
   [[ -z $data_file ]] || args+=(--header 'Content-Type: application/json' --data-binary "@$data_file")
   status=$(curl "${args[@]}" "$url") || true
   printf '%s' "$status"

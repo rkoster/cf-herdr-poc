@@ -1,10 +1,12 @@
 # CF Pack Identity Spike
 
-Status: Deferred
+Status: Deferred; public-route TLS friction observed
 
 Date: 2026-09-04
 
-Reason: The current CF target has no identity-aware domain, and portable Bun and Herdr binaries are unavailable, so route-policy and Pack enrollment behavior cannot be tested yet.
+Reason: No approved full lifecycle smoke has run, so route-policy and Pack enrollment behavior remains unverified end to end.
+
+Observed public-route preflight: local curl rejected the public manager certificate with code 60 because the lab CA was not trusted locally. An explicit insecure diagnostic returned HTTP 204 from login. The smoke harness prefers `SMOKE_PUBLIC_CA_CERT=/path/to/lab-ca.pem`; `SMOKE_INSECURE_PUBLIC_TLS=1` is a visible lab-only fallback restricted to public `MANAGER_URL` calls. It never changes the no-certificate identity probe or requests made through `cf ssh`, which continue to verify TLS while presenting instance credentials where required.
 
 ## Commands
 
