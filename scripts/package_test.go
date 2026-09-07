@@ -41,6 +41,21 @@ func TestBuildUsesTransactionalStagingAndValidatesArtifactContract(t *testing.T)
 	}
 }
 
+func TestManifestPinsVerifiedHerdrArtifacts(t *testing.T) {
+	manifest := readPackageFile(t, "docker/cflinuxfs5-builder/artifacts.env")
+	for _, required := range []string{
+		"HERDR_VERSION=0.8.2",
+		"HERDR_URL_AMD64=https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-x86_64",
+		"HERDR_SHA256_AMD64=976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4",
+		"HERDR_URL_ARM64=https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-aarch64",
+		"HERDR_SHA256_ARM64=f55610658e1c2e0d2aaef730b4b2ab885f7f8ba00285ab372bfb14f2e3d5b40d",
+	} {
+		if !strings.Contains(manifest, required) {
+			t.Errorf("artifacts.env missing %q", required)
+		}
+	}
+}
+
 func TestBuildForwardsExplicitNixRelocationMode(t *testing.T) {
 	script := readPackageFile(t, "scripts/build.sh")
 	if !strings.Contains(script, `ALLOW_NIX_RUNTIME_RELOCATION="${ALLOW_NIX_RUNTIME_RELOCATION:-}"`) {

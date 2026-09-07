@@ -12,7 +12,7 @@ RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -
     test "$TARGETARCH" = amd64 || test "$TARGETARCH" = arm64 || { echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 2; }; \
     test -n "${BUN_URL:-}" || { echo 'BUN_URL is required for the selected architecture' >&2; exit 2; }; \
     test -n "${BUN_SHA256:-}" || { echo 'BUN_SHA256 is required' >&2; exit 2; }; \
-    test -n "${HERDR_URL:-}" || { echo 'HERDR_URL is required; official Herdr v0.8.2 asset is unresolved' >&2; exit 2; }; \
+    test -n "${HERDR_URL:-}" || { echo 'HERDR_URL is required; use the verified Herdr v0.8.2 release asset' >&2; exit 2; }; \
     test -n "${HERDR_SHA256:-}" || { echo 'HERDR_SHA256 is required' >&2; exit 2; }; \
     test -n "${CF_URL:-}" || { echo 'CF_URL is required; local CF version metadata is unresolved' >&2; exit 2; }; \
     test -n "${CF_SHA256:-}" || { echo 'CF_SHA256 is required' >&2; exit 2; }; \
