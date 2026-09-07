@@ -8,7 +8,7 @@ ARG HERDR_URL
 ARG HERDR_SHA256
 ARG CF_URL
 ARG CF_SHA256
-COPY extract-cf-cli.sh /usr/local/bin/extract-cf-cli.sh
+COPY docker/cflinuxfs5-builder/extract-cf-cli.sh /usr/local/bin/extract-cf-cli.sh
 RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -v tar; \
     test "$TARGETARCH" = amd64 || test "$TARGETARCH" = arm64 || { echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 2; }; \
     test -n "${BUN_URL:-}" || { echo 'BUN_URL is required for the selected architecture' >&2; exit 2; }; \

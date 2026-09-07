@@ -20,7 +20,7 @@ func TestCFLinuxFS5BuilderContract(t *testing.T) {
 		"COPY --from=build /work/dist/ /",
 		"ARG TARGETARCH",
 		"sha256sum -c",
-		"COPY extract-cf-cli.sh /usr/local/bin/extract-cf-cli.sh",
+		"COPY docker/cflinuxfs5-builder/extract-cf-cli.sh /usr/local/bin/extract-cf-cli.sh",
 		"HERDR_URL is required",
 		"CF_URL is required",
 		"/work/dist/manager",
