@@ -31,7 +31,7 @@ func TestBuildUsesTransactionalStagingAndValidatesArtifactContract(t *testing.T)
 		"mktemp -d", "DIST_STAGING", "trap", "mv", "CGO_ENABLED=0", "GOOS=", "GOARCH=",
 		"scripts/build-runtime.sh", "BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "RUNTIME_DIR=",
 		"TARGET_INSTALL_DIR=", "MANAGER_RUNTIME_DIR=", "MANAGER_TARGET_INSTALL_DIR=",
-		"web/dist", "sandbox/runtime", "manager-runtime", "collie/bridge", "collie/node_modules", "collie/package.json",
+		"web/dist", "sandbox/runtime", "manager-runtime", "collie/bridge", "collie/cli", "collie/node_modules", "collie/package.json",
 		"test -x", "test -f", "${name}.previous",
 	} {
 		if !strings.Contains(script, required) {
@@ -90,7 +90,7 @@ func TestBuildAssemblesExpectedLayoutWithFixtureTools(t *testing.T) {
 			t.Errorf("executable %s: info=%v err=%v", executable, info, statErr)
 		}
 	}
-	for _, file := range []string{"web/index.html", "sandbox/runtime/collie/bridge/index.ts", "sandbox/runtime/collie/package.json", "sandbox/runtime/collie/node_modules/fixture/package.json", "sandbox/runtime/collie/web/dist/index.html"} {
+	for _, file := range []string{"web/index.html", "sandbox/runtime/collie/bridge/index.ts", "sandbox/runtime/collie/cli/install-kind.ts", "sandbox/runtime/collie/cli/link.ts", "sandbox/runtime/collie/cli/sys.ts", "sandbox/runtime/collie/package.json", "sandbox/runtime/collie/node_modules/fixture/package.json", "sandbox/runtime/collie/web/dist/index.html"} {
 		if _, statErr := os.Stat(filepath.Join(dist, filepath.FromSlash(file))); statErr != nil {
 			t.Errorf("artifact %s: %v", file, statErr)
 		}
@@ -372,10 +372,11 @@ exec /bin/mv "$@"
 	runtimeBody := `#!/bin/sh
 set -eu
 if [ "${FAIL_RUNTIME:-}" = 1 ]; then exit 23; fi
-mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie/bridge" "$RUNTIME_DIR/collie/node_modules/fixture" "$RUNTIME_DIR/collie/web/dist"
+	mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie/bridge" "$RUNTIME_DIR/collie/cli" "$RUNTIME_DIR/collie/node_modules/fixture" "$RUNTIME_DIR/collie/web/dist"
 for name in bun herdr collie sandbox-bootstrap; do printf '#!/bin/sh\n' > "$RUNTIME_DIR/bin/$name"; chmod +x "$RUNTIME_DIR/bin/$name"; done
 printf '#!/bin/sh\n' > "$RUNTIME_DIR/start.sh"; chmod +x "$RUNTIME_DIR/start.sh"
 printf fixture > "$RUNTIME_DIR/collie/bridge/index.ts"
+for name in install-kind link sys; do printf fixture > "$RUNTIME_DIR/collie/cli/$name.ts"; done
 printf '{}' > "$RUNTIME_DIR/collie/package.json"
 printf '{}' > "$RUNTIME_DIR/collie/node_modules/fixture/package.json"
 printf '<html>collie</html>' > "$RUNTIME_DIR/collie/web/dist/index.html"

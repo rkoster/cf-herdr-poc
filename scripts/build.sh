@@ -47,7 +47,7 @@ cp -R "$ROOT/web/dist/." "$DIST_STAGING/web/"
 for executable in manager manager-runtime/bin/bun manager-runtime/bin/collie sandbox/runtime/bin/bun sandbox/runtime/bin/herdr sandbox/runtime/bin/collie sandbox/runtime/bin/sandbox-bootstrap sandbox/runtime/start.sh; do
 	test -x "$DIST_STAGING/$executable" || { printf 'error: missing executable artifact %s\n' "$executable" >&2; exit 1; }
 done
-for artifact in web/index.html sandbox/runtime/collie/bridge/index.ts sandbox/runtime/collie/package.json sandbox/runtime/collie/web/dist/index.html; do
+for artifact in web/index.html sandbox/runtime/collie/bridge/index.ts sandbox/runtime/collie/cli/install-kind.ts sandbox/runtime/collie/cli/link.ts sandbox/runtime/collie/cli/sys.ts sandbox/runtime/collie/package.json sandbox/runtime/collie/web/dist/index.html; do
 	test -f "$DIST_STAGING/$artifact" || { printf 'error: missing artifact %s\n' "$artifact" >&2; exit 1; }
 done
 test -d "$DIST_STAGING/sandbox/runtime/collie/node_modules" || { printf 'error: missing artifact sandbox/runtime/collie/node_modules\n' >&2; exit 1; }

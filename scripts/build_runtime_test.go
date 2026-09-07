@@ -130,6 +130,19 @@ func TestBuildRuntimeBuildsNativeConstrainedCopier(t *testing.T) {
 	}
 }
 
+func TestBuildRuntimePackagesAndChecksCollieCLISources(t *testing.T) {
+	script := readBuildScript(t)
+	for _, required := range []string{
+		`"$COLLIE_DIR/cli" "$RUNTIME_DIR/collie/cli"`,
+		`./cmd/checkimports`,
+		`"$RUNTIME_DIR/collie/bridge/index.ts"`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("build-runtime.sh missing Collie source closure contract %q", required)
+		}
+	}
+}
+
 func TestBuildRuntimeNeverDownloadsCollieDependencies(t *testing.T) {
 	script := readBuildScript(t)
 	if !strings.Contains(script, `install --frozen-lockfile --offline`) {

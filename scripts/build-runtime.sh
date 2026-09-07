@@ -132,6 +132,7 @@ collie_bin="$(validate_runtime_binary COLLIE_RUNTIME_BIN "$COLLIE_DIR/bin/collie
 GOHOSTOS="$(go env GOHOSTOS)"
 GOHOSTARCH="$(go env GOHOSTARCH)"
 CGO_ENABLED=0 GOOS="$GOHOSTOS" GOARCH="$GOHOSTARCH" go build -o "$TOOLS_DIR/copytree" ./cmd/copytree
+CGO_ENABLED=0 GOOS="$GOHOSTOS" GOARCH="$GOHOSTARCH" go build -o "$TOOLS_DIR/checkimports" ./cmd/checkimports
 
 rm -rf "$RUNTIME_DIR"
 mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie"
@@ -168,10 +169,12 @@ install -m 0755 "$ROOT/sandbox/start.sh" "$RUNTIME_DIR/start.sh"
 
 # Materialize only selected runtime assets. The copier rejects broken or escaping symlinks.
 "$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/bridge" "$RUNTIME_DIR/collie/bridge"
+"$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/cli" "$RUNTIME_DIR/collie/cli"
 "$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/package.json" "$RUNTIME_DIR/collie/package.json"
 "$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/node_modules" "$RUNTIME_DIR/collie/node_modules"
 mkdir -p "$RUNTIME_DIR/collie/web"
 "$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/web/dist" "$RUNTIME_DIR/collie/web/dist"
+"$TOOLS_DIR/checkimports" "$RUNTIME_DIR/collie" "$RUNTIME_DIR/collie/bridge/index.ts"
 scan_elf_metadata "$RUNTIME_DIR"
 
 printf 'sandbox runtime assembled at %s\n' "$RUNTIME_DIR"
