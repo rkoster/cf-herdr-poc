@@ -227,6 +227,25 @@ func TestRuntimeDocsDescribeNeededClosureAndResidualDlopenRisk(t *testing.T) {
 	}
 }
 
+func TestDeploymentDocsUseExplicitCFCLIPath(t *testing.T) {
+	readme := readPackageFile(t, "README.md")
+	start := strings.Index(readme, "## Deploy")
+	end := strings.Index(readme, "## Verification")
+	if start < 0 || end < 0 || start >= end {
+		t.Fatal("README deployment and cleanup sections not found")
+	}
+	commands := readme[start:end]
+	if !strings.Contains(commands, "CF_BIN=/path/to/cf") {
+		t.Fatal("README deployment commands must define an explicit CF_BIN")
+	}
+	for _, line := range strings.Split(commands, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "cf ") || strings.Contains(trimmed, "$(cf ") {
+			t.Errorf("README deployment command uses unresolved CF CLI: %q", trimmed)
+		}
+	}
+}
+
 func TestProcfileStartsPackagedManager(t *testing.T) {
 	if got := strings.TrimSpace(readPackageFile(t, "Procfile")); got != "web: ./manager" {
 		t.Fatalf("Procfile = %q", got)

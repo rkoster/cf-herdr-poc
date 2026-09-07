@@ -79,19 +79,22 @@ export SANDBOX_BUILDPACKS=binary_buildpack,nodejs_buildpack
 export MANAGER_API_TOKEN=replace-with-externally-supplied-secret
 
 devbox run deploy
-export MANAGER_APP_GUID="$(cf app "$MANAGER_APP_NAME" --guid)"
 ```
 
 `manifest.yml` has `no-route: true`; `devbox run deploy` first builds `dist/` from the locally installed Nix runtimes using the explicit lab relocation mode, then maps exactly one public manager route and one manager identity route, and no sandbox route. On NixOS, the command automatically discovers `cf`, `herdr`, and (after Devbox's Bun) Bun in the normal per-user Nix profiles. Set `CF_BIN`, `HERDR_RUNTIME_BIN`, or `BUN_RUNTIME_BIN` to override discovery with an explicit executable path. It does not generate or persist `MANAGER_API_TOKEN`; supply that ephemeral secret externally.
 
+`devbox run deploy` is the deployment route and handles CF CLI discovery internally. For the manual post-deployment and cleanup commands below, set `CF_BIN` to the same executable path (for example, the result of that discovery or an operator-selected CF CLI); these examples intentionally do not duplicate the NixOS-specific discovery logic.
+
 For each manager-created sandbox, obtain its GUID and apply both exact route policies after its identity route exists:
 
 ```bash
+CF_BIN=/path/to/cf
+export MANAGER_APP_GUID="$("$CF_BIN" app "$MANAGER_APP_NAME" --guid)"
 export SANDBOX_APP_NAME=replace-with-sandbox-name
 export SANDBOX_HOST="$SANDBOX_APP_NAME"
-export SANDBOX_GUID="$(cf app "$SANDBOX_APP_NAME" --guid)"
-cf add-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_HOST" --source "cf:app:$MANAGER_APP_GUID"
-cf add-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$SANDBOX_GUID"
+export SANDBOX_GUID="$("$CF_BIN" app "$SANDBOX_APP_NAME" --guid)"
+"$CF_BIN" add-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_HOST" --source "cf:app:$MANAGER_APP_GUID"
+"$CF_BIN" add-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$SANDBOX_GUID"
 ```
 
 Confirm the binary buildpack and every sandbox buildpack are allow-listed by platform operators before pushing. The manifest's `binary_buildpack` is required because the manager Go binary is prebuilt.
@@ -103,14 +106,15 @@ Manager reconciliation records each sandbox app GUID. Before a name-addressed ap
 Remove policies before deleting routes and apps:
 
 ```bash
-cf remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_HOST" --source "cf:app:$MANAGER_APP_GUID"
-cf remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$SANDBOX_GUID"
-cf delete "$SANDBOX_APP_NAME" -f -r
-cf unmap-route "$MANAGER_APP_NAME" "$PUBLIC_DOMAIN" --hostname "$MANAGER_PUBLIC_HOST"
-cf unmap-route "$MANAGER_APP_NAME" "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"
-cf delete-route "$PUBLIC_DOMAIN" --hostname "$MANAGER_PUBLIC_HOST" -f
-cf delete-route "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" -f
-cf delete "$MANAGER_APP_NAME" -f
+CF_BIN=/path/to/cf
+"$CF_BIN" remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_HOST" --source "cf:app:$MANAGER_APP_GUID"
+"$CF_BIN" remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$SANDBOX_GUID"
+"$CF_BIN" delete "$SANDBOX_APP_NAME" -f -r
+"$CF_BIN" unmap-route "$MANAGER_APP_NAME" "$PUBLIC_DOMAIN" --hostname "$MANAGER_PUBLIC_HOST"
+"$CF_BIN" unmap-route "$MANAGER_APP_NAME" "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"
+"$CF_BIN" delete-route "$PUBLIC_DOMAIN" --hostname "$MANAGER_PUBLIC_HOST" -f
+"$CF_BIN" delete-route "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" -f
+"$CF_BIN" delete "$MANAGER_APP_NAME" -f
 rm -rf dist
 ```
 
