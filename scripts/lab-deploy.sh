@@ -67,12 +67,9 @@ cf set-env "$MANAGER_APP_NAME" SANDBOX_BUILDPACKS "$SANDBOX_BUILDPACKS"
 cf set-env "$MANAGER_APP_NAME" MANAGER_APP_NAME "$MANAGER_APP_NAME"
 cf set-env "$MANAGER_APP_NAME" MANAGER_APP_GUID "$MANAGER_APP_GUID"
 cf set-env "$MANAGER_APP_NAME" MANAGER_PACK_HOST "$MANAGER_PACK_HOST"
-token_output="$(mktemp "$TMPDIR/cf-herdr-token-output.XXXXXX")"
-if cf set-env "$MANAGER_APP_NAME" MANAGER_API_TOKEN "$MANAGER_API_TOKEN" >"$token_output" 2>&1; then
-	rm -f "$token_output"
+if cf set-env "$MANAGER_APP_NAME" MANAGER_API_TOKEN "$MANAGER_API_TOKEN" >/dev/null 2>&1; then
 	printf 'MANAGER_API_TOKEN configured\n'
 else
-	rm -f "$token_output"
 	printf 'error: failed to set MANAGER_API_TOKEN\n' >&2
 	exit 1
 fi

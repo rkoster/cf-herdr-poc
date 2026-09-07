@@ -134,7 +134,8 @@ func TestLabDeployReportsMktempFailure(t *testing.T) {
 
 func TestLabDeployDoesNotExposeTokenFromSuccessfulCFOutput(t *testing.T) {
 	fixture := newLabDeployFixture(t)
-	fixture.env = append(fixture.env, "FAKE_CF_ECHO_TOKEN=1")
+	tmpdir := t.TempDir()
+	fixture.env = append(fixture.env, "FAKE_CF_ECHO_TOKEN=1", "DEPLOY_TMPDIR="+tmpdir)
 
 	output, err := fixture.run(t)
 	if err != nil {
@@ -146,11 +147,13 @@ func TestLabDeployDoesNotExposeTokenFromSuccessfulCFOutput(t *testing.T) {
 	if !containsEvent(fixture.events(t), "cf\tset-env\tmanager\tMANAGER_API_TOKEN\tsecret-token") {
 		t.Fatal("token-setting CF command was not called with the token")
 	}
+	assertNoSecretOutputFile(t, fixture, tmpdir)
 }
 
 func TestLabDeployDoesNotExposeTokenFromFailedCFOutput(t *testing.T) {
 	fixture := newLabDeployFixture(t)
-	fixture.env = append(fixture.env, "FAKE_CF_ECHO_TOKEN=1", "FAKE_CF_TOKEN_STATUS=25")
+	tmpdir := t.TempDir()
+	fixture.env = append(fixture.env, "FAKE_CF_ECHO_TOKEN=1", "FAKE_CF_TOKEN_STATUS=25", "DEPLOY_TMPDIR="+tmpdir)
 
 	output, err := fixture.run(t)
 	if err == nil {
@@ -165,6 +168,7 @@ func TestLabDeployDoesNotExposeTokenFromFailedCFOutput(t *testing.T) {
 	if !containsEvent(fixture.events(t), "cf\tset-env\tmanager\tMANAGER_API_TOKEN\tsecret-token") {
 		t.Fatal("token-setting CF command was not called with the token")
 	}
+	assertNoSecretOutputFile(t, fixture, tmpdir)
 }
 
 func TestLabDeployBuildFailurePreventsCFCalls(t *testing.T) {
@@ -216,6 +220,7 @@ fi
 	writeExecutable(t, filepath.Join(fixture.bin, "mktemp"), `#!/bin/sh
 if [ "${FAKE_MKTEMP_STATUS:-}" != "" ]; then exit "$FAKE_MKTEMP_STATUS"; fi
 template=$1
+printf '%s\n' "$template" >> "$MKTEMP_LOG"
 path="${template%XXXXXX}fixture"
 : > "$path" || exit 1
 printf '%s\n' "$path"
@@ -232,11 +237,40 @@ printf '%s\n' "$path"
 	}
 	fixture.env = []string{
 		"PATH=" + fixture.bin, "EVENT_LOG=" + fixture.eventLog, "TMPDIR_LOG=" + fixture.tmpdirLog,
+		"MKTEMP_LOG=" + filepath.Join(temp, "mktemp.log"),
 		"MANAGER_APP_NAME=manager", "PUBLIC_DOMAIN=apps.example", "MANAGER_PUBLIC_HOST=manager",
 		"CF_IDENTITY_DOMAIN=apps.identity", "MANAGER_PACK_HOST=manager-pack.apps.identity",
 		"SANDBOX_BUILDPACKS=ruby_buildpack", "MANAGER_API_TOKEN=secret-token",
 	}
 	return fixture
+}
+
+func assertNoSecretOutputFile(t *testing.T, fixture *labDeployFixture, tmpdir string) {
+	t.Helper()
+	entries, err := os.ReadDir(tmpdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("DEPLOY_TMPDIR contains residual files: %#v", entries)
+	}
+	contents, err := os.ReadFile(envValue(fixture.env, "MKTEMP_LOG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(strings.TrimSpace(string(contents)), "\n") + 1; got != 1 {
+		t.Fatalf("mktemp was called %d times, want only the directory probe", got)
+	}
+}
+
+func envValue(env []string, name string) string {
+	prefix := name + "="
+	for _, value := range env {
+		if strings.HasPrefix(value, prefix) {
+			return strings.TrimPrefix(value, prefix)
+		}
+	}
+	return ""
 }
 
 func (fixture *labDeployFixture) run(t *testing.T) (string, error) {
