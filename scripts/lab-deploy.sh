@@ -69,8 +69,13 @@ if [[ -z "$MANAGER_ROUTE_HOST" || "$MANAGER_ROUTE_HOST" == "$MANAGER_PACK_HOST" 
 fi
 
 printf '==> push manager\n'
-"$CF_BIN" push "$MANAGER_APP_NAME" -f manifest.yml --no-route --no-start
+"$CF_BIN" push "$MANAGER_APP_NAME" --no-manifest -p dist -b binary_buildpack -c ./manager --no-route --no-start -u http --endpoint /manager/healthz --redact-env
 MANAGER_APP_GUID="$("$CF_BIN" app "$MANAGER_APP_NAME" --guid)"
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_WEB_DIR ./web
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_COLLIE_DIR ./sandbox/runtime/collie
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_RUNTIME_DIR ./manager-runtime
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_BUN_EXECUTABLE ./manager-runtime/bin/bun
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_COLLIE_EXECUTABLE ./manager-runtime/bin/collie
 "$CF_BIN" set-env "$MANAGER_APP_NAME" CF_IDENTITY_DOMAIN "$CF_IDENTITY_DOMAIN"
 "$CF_BIN" set-env "$MANAGER_APP_NAME" SANDBOX_BUILDPACKS "$SANDBOX_BUILDPACKS"
 "$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_APP_NAME "$MANAGER_APP_NAME"

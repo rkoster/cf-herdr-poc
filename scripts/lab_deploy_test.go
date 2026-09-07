@@ -142,8 +142,13 @@ func TestLabDeployPreservesBuildAndCFSequence(t *testing.T) {
 	}
 	want := []string{
 		"build",
-		"cf\tpush\tmanager\t-f\tmanifest.yml\t--no-route\t--no-start",
+		"cf\tpush\tmanager\t--no-manifest\t-p\tdist\t-b\tbinary_buildpack\t-c\t./manager\t--no-route\t--no-start\t-u\thttp\t--endpoint\t/manager/healthz\t--redact-env",
 		"cf\tapp\tmanager\t--guid",
+		"cf\tset-env\tmanager\tMANAGER_WEB_DIR\t./web",
+		"cf\tset-env\tmanager\tMANAGER_COLLIE_DIR\t./sandbox/runtime/collie",
+		"cf\tset-env\tmanager\tMANAGER_RUNTIME_DIR\t./manager-runtime",
+		"cf\tset-env\tmanager\tMANAGER_BUN_EXECUTABLE\t./manager-runtime/bin/bun",
+		"cf\tset-env\tmanager\tMANAGER_COLLIE_EXECUTABLE\t./manager-runtime/bin/collie",
 		"cf\tset-env\tmanager\tCF_IDENTITY_DOMAIN\tapps.identity",
 		"cf\tset-env\tmanager\tSANDBOX_BUILDPACKS\truby_buildpack",
 		"cf\tset-env\tmanager\tMANAGER_APP_NAME\tmanager",
@@ -164,8 +169,10 @@ func TestLabDeployPreservesBuildAndCFSequence(t *testing.T) {
 			t.Errorf("output missing phase %q: %s", phase, output)
 		}
 	}
-	if strings.Contains(output, "secret-token") {
-		t.Fatal("deploy output exposed MANAGER_API_TOKEN")
+	for _, secret := range []string{"old-secret-token", "secret-token"} {
+		if strings.Contains(output, secret) {
+			t.Fatalf("deploy output exposed %q", secret)
+		}
 	}
 }
 
@@ -256,6 +263,24 @@ func TestLabDeployDoesNotExposeTokenFromSuccessfulCFOutput(t *testing.T) {
 		t.Fatal("token-setting CF command was not called with the token")
 	}
 	assertNoSecretOutputFile(t, fixture, tmpdir)
+}
+
+func TestLabDeployRedactsExistingEnvironmentDuringPush(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	fixture.env = append(fixture.env, "FAKE_CF_EXISTING_TOKEN=old-secret-token")
+
+	output, err := fixture.run(t)
+	if err != nil {
+		t.Fatalf("lab-deploy.sh: %v: %s", err, output)
+	}
+	for _, secret := range []string{"old-secret-token", "secret-token"} {
+		if strings.Contains(output, secret) {
+			t.Fatalf("deploy output exposed %q: %s", secret, output)
+		}
+	}
+	if !containsEvent(fixture.events(t), "cf\tpush\tmanager\t--no-manifest\t-p\tdist\t-b\tbinary_buildpack\t-c\t./manager\t--no-route\t--no-start\t-u\thttp\t--endpoint\t/manager/healthz\t--redact-env") {
+		t.Fatal("push did not use the exact environment-preserving redacted arguments")
+	}
 }
 
 func TestLabDeployDoesNotExposeTokenFromFailedCFOutput(t *testing.T) {
@@ -355,6 +380,14 @@ printf '%s' "$CF_LABEL" >> "$EVENT_LOG"
 printf '\t%s' "$@" >> "$EVENT_LOG"
 printf '\n' >> "$EVENT_LOG"
 if [ "$1" = app ] && [ "$3" = --guid ]; then printf 'manager-guid\n'; fi
+if [ "$1" = push ] && [ "${FAKE_CF_EXISTING_TOKEN:-}" != "" ]; then
+  args=" $* "
+  case "$args" in *" --no-manifest "*) no_manifest=1;; *) no_manifest=0;; esac
+  case "$args" in *" --redact-env "*) redact_env=1;; *) redact_env=0;; esac
+  if [ "$no_manifest" != 1 ] || [ "$redact_env" != 1 ]; then
+    printf -- '- MANAGER_API_TOKEN: %s\n' "$FAKE_CF_EXISTING_TOKEN"
+  fi
+fi
 if [ "$1" = set-env ] && [ "$3" = MANAGER_API_TOKEN ] && [ "${FAKE_CF_ECHO_TOKEN:-}" = 1 ]; then
   printf 'cf echoed token argument: %s\n' "$4"
   printf 'cf echoed token error: %s\n' "$4" >&2

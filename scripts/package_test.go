@@ -158,8 +158,10 @@ func TestDeploymentMapsOnlyManagerPublicAndIdentityRoutes(t *testing.T) {
 			t.Errorf("deploy.sh missing %q", required)
 		}
 	}
-	if strings.Contains(deploy, "sandbox") {
-		t.Fatal("deploy.sh must not create or map sandbox routes")
+	for _, line := range strings.Split(deploy, "\n") {
+		if (strings.Contains(line, "create-route") || strings.Contains(line, "map-route")) && strings.Contains(line, "sandbox") {
+			t.Fatalf("deploy.sh must not create or map sandbox routes: %q", line)
+		}
 	}
 	for _, required := range []string{`MANAGER_ROUTE_HOST="${MANAGER_PACK_HOST%.$CF_IDENTITY_DOMAIN}"`, `"$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"`} {
 		if !strings.Contains(deploy, required) {
@@ -175,6 +177,11 @@ func TestDeployUsesExactCFCLISequence(t *testing.T) {
 printf '%s\t' "$@" >> "$CF_LOG"
 printf '\n' >> "$CF_LOG"
 if [ "$1" = app ] && [ "$3" = --guid ]; then printf 'manager-guid\n'; fi
+if [ "$1" = push ]; then
+  args=" $* "
+  case "$args" in *" --no-manifest "*" --redact-env "*) ;; *) printf -- '- MANAGER_API_TOKEN: old-secret\n';; esac
+fi
+if [ "$1" = set-env ] && [ "$3" = MANAGER_API_TOKEN ]; then printf 'new token: %s\n' "$4"; fi
 `)
 	command := exec.Command("bash", filepath.Join(packageRoot(t), "scripts", "deploy.sh"))
 	command.Dir = packageRoot(t)
@@ -184,12 +191,23 @@ if [ "$1" = app ] && [ "$3" = --guid ]; then printf 'manager-guid\n'; fi
 		"CF_IDENTITY_DOMAIN=apps.identity", "MANAGER_PACK_HOST=manager-pack.apps.identity",
 		"SANDBOX_BUILDPACKS=ruby_buildpack", "MANAGER_API_TOKEN=secret",
 	}
-	if output, err := command.CombinedOutput(); err != nil {
+	output, err := command.CombinedOutput()
+	if err != nil {
 		t.Fatalf("deploy.sh: %v: %s", err, output)
 	}
+	for _, secret := range []string{"old-secret", "secret"} {
+		if strings.Contains(string(output), secret) {
+			t.Fatalf("deploy output exposed %q: %s", secret, output)
+		}
+	}
 	want := [][]string{
-		{"push", "manager", "-f", "manifest.yml", "--no-route", "--no-start"},
+		{"push", "manager", "--no-manifest", "-p", "dist", "-b", "binary_buildpack", "-c", "./manager", "--no-route", "--no-start", "-u", "http", "--endpoint", "/manager/healthz", "--redact-env"},
 		{"app", "manager", "--guid"},
+		{"set-env", "manager", "MANAGER_WEB_DIR", "./web"},
+		{"set-env", "manager", "MANAGER_COLLIE_DIR", "./sandbox/runtime/collie"},
+		{"set-env", "manager", "MANAGER_RUNTIME_DIR", "./manager-runtime"},
+		{"set-env", "manager", "MANAGER_BUN_EXECUTABLE", "./manager-runtime/bin/bun"},
+		{"set-env", "manager", "MANAGER_COLLIE_EXECUTABLE", "./manager-runtime/bin/collie"},
 		{"set-env", "manager", "CF_IDENTITY_DOMAIN", "apps.identity"},
 		{"set-env", "manager", "SANDBOX_BUILDPACKS", "ruby_buildpack"},
 		{"set-env", "manager", "MANAGER_APP_NAME", "manager"},
