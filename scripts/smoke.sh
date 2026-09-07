@@ -273,7 +273,7 @@ assert_public_api_safe() {
   if jq -e 'paths as $p | ($p[-1]|strings|ascii_downcase) as $k | select($k|test("appguid|internalhost|certificate|certpath|keypath|secret|token|password"))' "$RESPONSE_JSON" >/dev/null; then
     printf 'smoke: manager API exposed a forbidden key\n' >&2; return 1
   fi
-  if jq -e --arg domain "$IDENTITY_DOMAIN" '..|strings|select(endswith("."+$domain) or test("-----BEGIN |(?i)(bearer|token|password|secret)[=: ]+|(^|/)(cert|certificate|key)(/|$)|join[_ -]?token";"i"))' "$RESPONSE_JSON" >/dev/null; then
+  if jq -e --arg domain "$IDENTITY_DOMAIN" '..|strings|select(endswith("."+$domain) or test("-----BEGIN |(?i)(bearer|token|password|secret)[=: ]+\\S+|join[_ -]?token[=: ]+\\S+|(^|/)(cert|certificate|key)(/|$)";"i"))' "$RESPONSE_JSON" >/dev/null; then
     printf 'smoke: manager API exposed identity or secret material\n' >&2; return 1
   fi
 }

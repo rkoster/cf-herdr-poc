@@ -76,7 +76,8 @@ case "$url $method" in
     elif [[ ${FAKE_SCENARIO:-happy} == failed || ${FAKE_SCENARIO:-happy} == failed_record_sticks ]]; then body='[{"name":"smoke-fixed","phase":"failed","lastError":"safe failure"}]'
     elif [[ ${FAKE_SCENARIO:-happy} == timeout ]]; then body='[{"name":"smoke-fixed","phase":"creating"}]'
     elif [[ ${FAKE_SCENARIO:-happy} == api_leak ]]; then body='[{"name":"smoke-fixed","phase":"creating","appGuid":"private-guid"}]'
-    else body='[{"name":"smoke-fixed","repository":"https://example.invalid/repo.git","buildpack":"binary_buildpack","desired":"present","phase":"ready","packMemberId":"smoke-fixed","operations":[{"name":"stage","duration":3000000000,"success":true},{"name":"start-app","duration":4000000000,"success":true},{"name":"secure-route","duration":5000000000,"success":true},{"name":"trigger-enrollment","duration":6000000000,"success":true}],"createdAt":"2026-09-04T00:00:00Z","updatedAt":"2026-09-04T00:00:07Z"}]'
+     elif [[ ${FAKE_SCENARIO:-happy} == secret_contexts ]]; then body='[{"name":"smoke-fixed","phase":"creating","message":"JOIN_TOKEN=real-secret bearer=real-bearer -----BEGIN PRIVATE KEY-----"}]'
+     else body='[{"name":"smoke-fixed","repository":"https://example.invalid/repo.git","buildpack":"binary_buildpack","desired":"present","phase":"ready","packMemberId":"smoke-fixed","operations":[{"name":"stage","duration":3000000000,"success":true},{"name":"Setting env variable COLLIE_JOIN_TOKEN_FILE","duration":4000000000,"success":true},{"name":"secure-route","duration":5000000000,"success":true},{"name":"trigger-enrollment","duration":6000000000,"success":true}],"createdAt":"2026-09-04T00:00:00Z","updatedAt":"2026-09-04T00:00:07Z"}]'
     fi
     ;;
   */collie/api/snapshot?host=smoke-fixed\ GET)
@@ -313,6 +314,13 @@ test_full_flow_and_exact_identity_checks() {
   if [[ $commands == *'cf <map-route>'* ]]; then fail 'mapped public route'; fi
 }
 
+test_secret_value_contexts_still_fail_closed() {
+  make_fakes
+  local output
+  output=$(FAKE_SCENARIO=secret_contexts run_failure)
+  assert_contains "$output" 'identity or secret material'
+}
+
 test_public_ca_is_limited_to_manager_curl() {
   make_fakes
   local ca_cert="$TEST_DIR/lab-ca.pem" output commands
@@ -536,6 +544,7 @@ test_explicit_cf_bin_works_without_cf_in_path
 test_missing_cf_error_is_actionable
 test_smoke_has_no_bare_cf_invocations
 test_full_flow_and_exact_identity_checks
+test_secret_value_contexts_still_fail_closed
 test_public_ca_is_limited_to_manager_curl
 test_insecure_public_tls_is_explicit_and_limited_to_manager_curl
 test_public_tls_configuration_fails_closed
