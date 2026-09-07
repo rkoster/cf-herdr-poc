@@ -25,6 +25,7 @@ func TestCFLinuxFS5BuilderContract(t *testing.T) {
 		"CF_URL is required",
 		"/work/dist/manager",
 		"sandbox/runtime/bin/herdr",
+		"sandbox/runtime/start.sh",
 		"manager-runtime/bin/cf",
 		"extract-cf-cli.sh",
 		"cf_format=tgz",
@@ -63,11 +64,19 @@ func TestCFLinuxFS5BuilderCleanupIsIdempotent(t *testing.T) {
 	root := packageRoot(t)
 	dockerfile := readFile(t, filepath.Join(root, "docker", "cflinuxfs5-builder", "Dockerfile"))
 	for _, required := range []string{
-		"test -e /work/dist/sandbox/runtime/collie/.git && rm -rf /work/dist/sandbox/runtime/collie/.git || true",
-		"test -e /work/dist/sandbox/runtime/collie/web/node_modules && rm -rf /work/dist/sandbox/runtime/collie/web/node_modules || true",
+		"rm -rf /work/dist/sandbox/runtime/collie/.git",
+		"rm -rf /work/dist/sandbox/runtime/collie/web/node_modules",
 	} {
 		if !strings.Contains(dockerfile, required) {
 			t.Errorf("Dockerfile cleanup missing idempotent removal %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"test -e /work/dist/sandbox/runtime/collie/.git",
+		"test -e /work/dist/sandbox/runtime/collie/web/node_modules",
+	} {
+		if strings.Contains(dockerfile, forbidden) {
+			t.Errorf("Dockerfile cleanup probes missing paths with %q", forbidden)
 		}
 	}
 }
