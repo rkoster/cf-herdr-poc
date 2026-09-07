@@ -15,7 +15,9 @@ func TestCFLinuxFS5BuilderContract(t *testing.T) {
 	for _, required := range []string{
 		"BASE_IMAGE=ghcr.io/cloudfoundry/k8s/cflinuxfs5:0.53.0",
 		"FROM cflinuxfs5-tools AS build",
-		"FROM ${BASE_IMAGE} AS output",
+		"FROM scratch AS output",
+		"COPY --from=build /work/dist/ /",
+		"ARG TARGETARCH",
 		"sha256sum -c",
 		"unzip",
 		"tar -xzf",
@@ -29,6 +31,30 @@ func TestCFLinuxFS5BuilderContract(t *testing.T) {
 	}
 	for _, forbidden := range []string{"COPY .git", "COPY tests", "apt-get install", "latest"} {
 		if strings.Contains(dockerfile, forbidden) { t.Errorf("Dockerfile contains forbidden %q", forbidden) }
+	}
+}
+
+func TestBuildDefaultsToDockerAndLegacyRequiresExplicitMode(t *testing.T) {
+	script := readFile(t, filepath.Join(packageRoot(t), "scripts", "build.sh"))
+	if !strings.Contains(script, `BUILD_MODE="${BUILD_MODE:-cflinuxfs5}"`) {
+		t.Fatal("build.sh does not default BUILD_MODE to cflinuxfs5")
+	}
+	if strings.Contains(script, "BUILD_RUNTIME_SCRIPT") && strings.Contains(script, "BUILD_MODE=nix-relocation") {
+		t.Fatal("build.sh selects Nix relocation from BUILD_RUNTIME_SCRIPT")
+	}
+}
+
+func TestCFLinuxFS5BuildPropagatesTargetArchitecture(t *testing.T) {
+	script := readFile(t, filepath.Join(packageRoot(t), "scripts", "build-cflinuxfs5.sh"))
+	for _, required := range []string{"TARGETARCH", "amd64", "arm64", "--build-arg", "GOARCH"} {
+		if !strings.Contains(script, required) { t.Errorf("builder script missing architecture contract %q", required) }
+	}
+}
+
+func TestCFLinuxFS5ArtifactManifestHasPerArchitectureBunInputs(t *testing.T) {
+	manifest := readFile(t, filepath.Join(packageRoot(t), "docker", "cflinuxfs5-builder", "artifacts.env"))
+	for _, required := range []string{"BUN_URL_AMD64", "BUN_SHA256_AMD64", "BUN_URL_ARM64", "BUN_SHA256_ARM64", "HERDR_URL_AMD64", "CF_URL_AMD64"} {
+		if !strings.Contains(manifest, required) { t.Errorf("artifact manifest missing %q", required) }
 	}
 }
 

@@ -7,7 +7,7 @@ BUILD_RUNTIME_SCRIPT="${BUILD_RUNTIME_SCRIPT:-$ROOT/scripts/build-runtime.sh}"
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
 
-if [[ -z "${BUILD_MODE:-}" && -n "${BUILD_RUNTIME_SCRIPT:-}" ]]; then BUILD_MODE=nix-relocation; else BUILD_MODE="${BUILD_MODE:-cflinuxfs5}"; fi
+BUILD_MODE="${BUILD_MODE:-cflinuxfs5}"
 case "$BUILD_MODE" in
  cflinuxfs5) exec bash "$ROOT/scripts/build-cflinuxfs5.sh" ;;
  nix-relocation) : ;;

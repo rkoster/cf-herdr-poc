@@ -1,19 +1,21 @@
 # syntax=docker/dockerfile:1.7
 ARG BASE_IMAGE=ghcr.io/cloudfoundry/k8s/cflinuxfs5:0.53.0
 FROM ${BASE_IMAGE} AS cflinuxfs5-tools
-ARG TARGETARCH=amd64
-ARG BUN_URL=https://github.com/oven-sh/bun/releases/download/bun-v1.3.13/bun-linux-x64.zip
-ARG BUN_SHA256=79c0771fa8b92c33aae41e15a0e0d307ea99d0e2f00317c71c6c53237a78e25a
+ARG TARGETARCH
+ARG BUN_URL
+ARG BUN_SHA256
 ARG HERDR_URL
 ARG HERDR_SHA256
 ARG CF_URL
 ARG CF_SHA256
 RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -v tar; \
+    test "$TARGETARCH" = amd64 || test "$TARGETARCH" = arm64 || { echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 2; }; \
+    test -n "${BUN_URL:-}" || { echo 'BUN_URL is required for the selected architecture' >&2; exit 2; }; \
+    test -n "${BUN_SHA256:-}" || { echo 'BUN_SHA256 is required' >&2; exit 2; }; \
     test -n "${HERDR_URL:-}" || { echo 'HERDR_URL is required; official Herdr v0.8.2 asset is unresolved' >&2; exit 2; }; \
     test -n "${HERDR_SHA256:-}" || { echo 'HERDR_SHA256 is required' >&2; exit 2; }; \
     test -n "${CF_URL:-}" || { echo 'CF_URL is required; local CF version metadata is unresolved' >&2; exit 2; }; \
     test -n "${CF_SHA256:-}" || { echo 'CF_SHA256 is required' >&2; exit 2; }; \
-    case "$TARGETARCH" in amd64|arm64) ;; *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 2;; esac; \
     mkdir -p /tools/downloads /tools/bin; \
     curl --fail --location --retry 3 --output /tools/downloads/bun.zip "$BUN_URL"; \
     printf '%s  %s\n' "$BUN_SHA256" /tools/downloads/bun.zip | sha256sum -c -; \
@@ -48,6 +50,5 @@ RUN set -eux; command -v go || { echo 'cflinuxfs5 image lacks Go; provide a buil
     for f in manager-runtime/bin/bun manager-runtime/bin/cf manager-runtime/bin/collie sandbox/runtime/bin/bun sandbox/runtime/bin/herdr sandbox/runtime/bin/collie sandbox/runtime/bin/sandbox-bootstrap sandbox/start.sh; do test -x "/work/dist/$f"; done; \
     rm -rf /work/dist/sandbox/runtime/collie/.git /work/dist/sandbox/runtime/collie/web/node_modules
 
-FROM ${BASE_IMAGE} AS output
-COPY --from=build /work/dist /dist
-WORKDIR /dist
+FROM scratch AS output
+COPY --from=build /work/dist/ /
