@@ -104,8 +104,10 @@ func TestBuildAssemblesExpectedLayoutWithFixtureTools(t *testing.T) {
 
 func TestBuildPackagesManagerCFCLIAndRelocatedSmokeCheck(t *testing.T) {
 	script := readPackageFile(t, "scripts/build-runtime.sh")
-	if !strings.Contains(script, `bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/cf" version >/dev/null 2>&1`) {
-		t.Fatal("build-runtime.sh does not smoke-test the relocated manager CF CLI")
+	for _, required := range []string{`relocate_cf_wrapper "$cf_bin" "$MANAGER_RUNTIME_DIR/bin/cf"`, `"$MANAGER_RUNTIME_DIR/bin/cf" version >/dev/null 2>&1`} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("build-runtime.sh missing CF CLI wrapper contract %q", required)
+		}
 	}
 	dist, output, err := runFixtureBuild(t, false)
 	if err != nil {
@@ -113,6 +115,18 @@ func TestBuildPackagesManagerCFCLIAndRelocatedSmokeCheck(t *testing.T) {
 	}
 	if info, statErr := os.Stat(filepath.Join(dist, "manager-runtime/bin/cf")); statErr != nil || info.Mode()&0o111 == 0 {
 		t.Fatalf("manager CF CLI artifact is not executable: info=%v err=%v", info, statErr)
+	}
+	for _, artifact := range []string{"manager-runtime/bin/cf.real", "manager-runtime/bin/.cf-libs"} {
+		if _, statErr := os.Stat(filepath.Join(dist, filepath.FromSlash(artifact))); statErr != nil {
+			t.Fatalf("manager CF CLI wrapper artifact %s missing: %v", artifact, statErr)
+		}
+	}
+}
+
+func TestBuildKeepsNonCFManagerRuntimesAsDirectELFContract(t *testing.T) {
+	script := readPackageFile(t, "scripts/build-runtime.sh")
+	if !strings.Contains(script, `relocate_runtime "$bun_bin" "$MANAGER_RUNTIME_DIR/bin/bun"`) || !strings.Contains(script, `relocate_runtime "$collie_bin" "$MANAGER_RUNTIME_DIR/bin/collie"`) {
+		t.Fatal("manager Bun and Collie no longer use direct ELF relocation")
 	}
 }
 
@@ -401,8 +415,11 @@ for name in install-kind link sys; do printf fixture > "$RUNTIME_DIR/collie/cli/
 printf '{}' > "$RUNTIME_DIR/collie/package.json"
 printf '{}' > "$RUNTIME_DIR/collie/node_modules/fixture/package.json"
 printf '<html>collie</html>' > "$RUNTIME_DIR/collie/web/dist/index.html"
-mkdir -p "$MANAGER_RUNTIME_DIR/bin"
-for name in bun cf collie; do printf '#!/bin/sh\n' > "$MANAGER_RUNTIME_DIR/bin/$name"; chmod +x "$MANAGER_RUNTIME_DIR/bin/$name"; done
+ mkdir -p "$MANAGER_RUNTIME_DIR/bin/.cf-libs"
+ for name in bun collie; do printf '#!/bin/sh\n' > "$MANAGER_RUNTIME_DIR/bin/$name"; chmod +x "$MANAGER_RUNTIME_DIR/bin/$name"; done
+ printf '#!/bin/sh\n' > "$MANAGER_RUNTIME_DIR/bin/cf"
+ printf '#!/bin/sh\n' > "$MANAGER_RUNTIME_DIR/bin/cf.real"
+ chmod +x "$MANAGER_RUNTIME_DIR/bin/cf" "$MANAGER_RUNTIME_DIR/bin/cf.real"
 `
 	writeExecutable(t, runtimeScript, runtimeBody)
 	fakeRuntime := filepath.Join(temp, "portable")

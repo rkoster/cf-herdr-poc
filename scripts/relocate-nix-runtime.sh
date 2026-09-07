@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+wrapper_mode=0
+if [[ "${1:-}" == --wrapper ]]; then
+	wrapper_mode=1
+	shift
+fi
 if [[ $# -ne 2 ]]; then
-	printf 'usage: %s SOURCE DEST\n' "$0" >&2
+	printf 'usage: %s [--wrapper] SOURCE DEST\n' "$0" >&2
 	exit 2
 fi
 if [[ "$(uname -s)" != Linux ]]; then
@@ -105,6 +110,12 @@ destination_dir="$(dirname -- "$destination")"
 destination_name="$(basename -- "$destination")"
 library_dir="$destination_dir/.${destination_name}-libs"
 target_interpreter="$target_install_dir/.${destination_name}-libs/$loader_soname"
+payload_destination="$destination"
+if ((wrapper_mode)); then
+	library_dir="$destination_dir/.cf-libs"
+	target_interpreter="$target_install_dir/.cf-libs/$loader_soname"
+	payload_destination="$destination.real"
+fi
 mkdir -p "$destination_dir"
 rm -rf "$library_dir"
 mkdir -p "$library_dir"
@@ -206,5 +217,14 @@ for module in libnss_files.so.2 libnss_dns.so.2 libresolv.so.2; do
 	fi
 done
 
-install -m 0755 "$resolved_source" "$destination"
-patchelf --set-interpreter "$target_interpreter" --set-rpath "\$ORIGIN/.${destination_name}-libs" "$destination"
+install -m 0755 "$resolved_source" "$payload_destination"
+patchelf --set-interpreter "$target_interpreter" --set-rpath "\$ORIGIN/.${destination_name}-libs" "$payload_destination"
+if ((wrapper_mode)); then
+	cat >"$destination" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="\$(CDPATH= cd -- "\$(dirname -- "\${BASH_SOURCE[0]}")" && pwd)"
+exec "\$SCRIPT_DIR/.cf-libs/$loader_soname" --library-path "\$SCRIPT_DIR/.cf-libs" "\$SCRIPT_DIR/$(basename -- "$payload_destination")" "\$@"
+EOF
+	chmod 0755 "$destination"
+fi

@@ -61,6 +61,63 @@ func TestRelocateNixRuntimeExecutesWithExactArguments(t *testing.T) {
 	}
 }
 
+func TestRelocateNixRuntimeWrapperPreservesArgumentsAndExitStatus(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("ELF relocation is Linux-only")
+	}
+	for _, tool := range []string{"cc", "ldd", "patchelf"} {
+		requireHostTool(t, tool)
+	}
+	temp := t.TempDir()
+	source := compileArgvFixture(t, filepath.Join(temp, "nix", "store"))
+	destination := filepath.Join(temp, "bundle", "cf")
+	output, err := runRelocatorCommandWithArgs(source, destination, []string{"--wrapper", "TARGET_ARCH=" + runtimeArch()})
+	if err != nil {
+		t.Fatalf("relocate wrapper: %v\n%s", err, output)
+	}
+	if err := os.RemoveAll(filepath.Join(temp, "nix")); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(destination, "plain", "two words", "", "wild*card")
+	got, err := command.CombinedOutput()
+	if err != nil || string(got) != "plain\ntwo words\n\nwild*card\n" {
+		t.Fatalf("wrapper output=%q err=%v", got, err)
+	}
+	payload, err := os.Stat(destination + ".real")
+	if err != nil {
+		t.Fatalf("wrapper payload missing: %v", err)
+	}
+	if payload.Mode()&0o111 == 0 || string(mustReadFile(t, destination+".real")[:4]) != "\x7fELF" {
+		t.Fatalf("wrapper payload is not an executable ELF: mode=%v", payload.Mode())
+	}
+	entries, err := os.ReadDir(filepath.Join(filepath.Dir(destination), ".cf-libs"))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("private CF libraries missing: entries=%d err=%v", len(entries), err)
+	}
+	loader := filepath.Join(filepath.Dir(destination), ".cf-libs", "ld-linux-x86-64.so.2")
+	if runtime.GOARCH == "arm64" {
+		loader = filepath.Join(filepath.Dir(destination), ".cf-libs", "ld-linux-aarch64.so.1")
+	}
+	if info, err := os.Stat(loader); err != nil || info.Mode()&0o111 == 0 {
+		t.Fatalf("bundled loader missing or not executable: info=%v err=%v", info, err)
+	}
+	contents, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(contents), "/nix/store") {
+		t.Fatal("wrapper retains a Nix source path")
+	}
+	if info, err := os.Stat(destination); err != nil || info.Mode()&0o111 == 0 {
+		t.Fatalf("wrapper is not executable: info=%v err=%v", info, err)
+	}
+	if err := exec.Command(destination, "exit", "7").Run(); err == nil {
+		t.Fatal("wrapper did not preserve payload exit status")
+	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 7 {
+		t.Fatalf("wrapper exit error = %v, want exit status 7", err)
+	}
+}
+
 func TestRelocateNixRuntimeUsesIndependentLibraryDirectories(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("ELF relocation is Linux-only")
@@ -331,7 +388,7 @@ func compileArgvFixture(t *testing.T, dir string) string {
 		t.Fatal(err)
 	}
 	source := filepath.Join(dir, "argv.c")
-	program := "#include <stdio.h>\nint main(int argc, char **argv) { for (int i = 1; i < argc; i++) printf(\"%s\\n\", argv[i]); return 0; }\n"
+	program := "#include <stdio.h>\n#include <string.h>\nint main(int argc, char **argv) { for (int i = 1; i < argc; i++) printf(\"%s\\n\", argv[i]); return argc > 1 && strcmp(argv[1], \"exit\") == 0 ? 7 : 0; }\n"
 	if err := os.WriteFile(source, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -347,6 +404,15 @@ func writeFile(t *testing.T, path, contents string) {
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contents
 }
 
 func compile(t *testing.T, name string, args ...string) {
@@ -389,16 +455,34 @@ func runRelocator(t *testing.T, source, destination string, env []string) {
 }
 
 func runRelocatorCommand(source, destination string, env []string) (string, error) {
+	return runRelocatorCommandWithArgs(source, destination, append([]string{}, env...))
+}
+
+func runRelocatorCommandWithArgs(source, destination string, args []string) (string, error) {
 	hasTarget := false
-	for _, entry := range env {
+	for _, entry := range args {
 		if strings.HasPrefix(entry, "TARGET_INSTALL_DIR=") {
 			hasTarget = true
 		}
 	}
 	if !hasTarget {
-		env = append(env, "TARGET_INSTALL_DIR="+filepath.Dir(destination))
+		args = append(args, "TARGET_INSTALL_DIR="+filepath.Dir(destination))
 	}
-	return runRelocatorCommandRaw(source, destination, env)
+	_, filename, _, _ := runtime.Caller(0)
+	commandArgs := []string{}
+	env := os.Environ()
+	for _, arg := range args {
+		if strings.Contains(arg, "=") && !strings.HasPrefix(arg, "--") {
+			env = append(env, arg)
+		} else {
+			commandArgs = append(commandArgs, arg)
+		}
+	}
+	commandArgs = append(commandArgs, source, destination)
+	command := exec.Command("bash", append([]string{filepath.Join(filepath.Dir(filename), "relocate-nix-runtime.sh")}, commandArgs...)...)
+	command.Env = env
+	output, err := command.CombinedOutput()
+	return string(output), err
 }
 
 func runRelocatorCommandRaw(source, destination string, env []string) (string, error) {

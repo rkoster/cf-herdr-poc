@@ -99,6 +99,10 @@ relocate_runtime() {
 	TARGET_INSTALL_DIR="$3" TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/relocate-nix-runtime.sh" "$1" "$2"
 }
 
+relocate_cf_wrapper() {
+	TARGET_INSTALL_DIR="$3" TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/relocate-nix-runtime.sh" --wrapper "$1" "$2"
+}
+
 scan_elf_metadata() {
 	local root=$1 path interpreter rpath
 	shopt -s nullglob globstar
@@ -165,10 +169,10 @@ if [[ -n "$MANAGER_RUNTIME_DIR" ]]; then
 	if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" == 1 ]]; then
 		relocate_runtime "$bun_bin" "$MANAGER_RUNTIME_DIR/bin/bun" "$MANAGER_TARGET_INSTALL_DIR"
 		relocate_runtime "$collie_bin" "$MANAGER_RUNTIME_DIR/bin/collie" "$MANAGER_TARGET_INSTALL_DIR"
-	relocate_runtime "$cf_bin" "$MANAGER_RUNTIME_DIR/bin/cf" "$MANAGER_TARGET_INSTALL_DIR"
+		relocate_cf_wrapper "$cf_bin" "$MANAGER_RUNTIME_DIR/bin/cf" "$MANAGER_TARGET_INSTALL_DIR"
 		TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/bun" --version >/dev/null
 		TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/collie" --version >/dev/null
-		if ! TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/cf" version >/dev/null 2>&1; then
+		if ! "$MANAGER_RUNTIME_DIR/bin/cf" version >/dev/null 2>&1; then
 			printf 'error: relocated manager CF CLI smoke test failed: %s\n' "$MANAGER_RUNTIME_DIR/bin/cf" >&2
 			exit 1
 		fi

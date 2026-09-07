@@ -10,6 +10,8 @@ The relocation mode is a lab-only workaround. Direct execution with the cflinuxf
 
 The bundle is not proven to be a complete dynamic closure. Unobserved `dlopen` choices and absolute runtime asset paths can still escape the startup graph. Packaged ELF loader metadata is checked for actionable `/nix/store/` paths, but arbitrary embedded diagnostics strings are not rejected. A live cflinuxfs smoke test remains required.
 
+The manager CF CLI is deliberately packaged differently from Bun, Herdr, and Collie. `manager-runtime/bin/cf` is an executable wrapper around `cf.real`; it invokes the private `.cf-libs` loader with an explicit `--library-path`, forwards all arguments, and preserves the payload exit status through `exec`. CF CLI does not require `process.execPath` or self-spawn identity, so this wrapper avoids the relocated CF CLI's direct-ELF smoke failure while keeping the manager provider's configured executable path unchanged. The other runtimes retain direct ELF relocation because their process identity and self-spawn behavior must remain intact.
+
 ## Commands
 
 Run only after independently supplying portable binaries and selecting a disposable CF space. To evaluate the lab workaround instead, resolve the already-installed Nix runtimes, export `ALLOW_NIX_RUNTIME_RELOCATION=1`, and do not download replacements:

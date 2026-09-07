@@ -75,11 +75,20 @@ func TestBuildRuntimeRelocationIsExplicitAndCoversEveryNixRuntime(t *testing.T) 
 		`relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun" "$TARGET_INSTALL_DIR"`,
 		`relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr" "$TARGET_INSTALL_DIR"`,
 		`relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie" "$TARGET_INSTALL_DIR"`,
-		`relocate_runtime "$cf_bin" "$MANAGER_RUNTIME_DIR/bin/cf" "$MANAGER_TARGET_INSTALL_DIR"`,
-		`bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/cf" version >/dev/null 2>&1`,
+		`relocate_cf_wrapper "$cf_bin" "$MANAGER_RUNTIME_DIR/bin/cf" "$MANAGER_TARGET_INSTALL_DIR"`,
+		`"$MANAGER_RUNTIME_DIR/bin/cf" version >/dev/null 2>&1`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("build-runtime.sh missing relocation contract %q", required)
+		}
+	}
+}
+
+func TestBuildRuntimeDocumentsCFCLIWrapperException(t *testing.T) {
+	script := readBuildScript(t)
+	for _, required := range []string{"relocate_cf_wrapper", "--wrapper"} {
+		if !strings.Contains(script, required) {
+			t.Errorf("build-runtime.sh missing CF wrapper contract %q", required)
 		}
 	}
 }
