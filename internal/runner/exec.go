@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -32,6 +33,25 @@ func (Exec) RunEnv(ctx context.Context, environment []string, name string, args 
 		err = ctxErr
 	}
 	return output.Bytes(), err
+}
+
+func (Exec) RunEnvQuiet(ctx context.Context, environment []string, name string, args ...string) error {
+	command := exec.CommandContext(ctx, name, args...)
+	command.Env = environment
+	command.WaitDelay = waitDelay
+	configureCancellation(command)
+	device, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer device.Close()
+	command.Stdout = device
+	command.Stderr = device
+	err = command.Run()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return err
 }
 
 type cappedBuffer struct {

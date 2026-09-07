@@ -63,6 +63,12 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("initialize manager runtime directories: %w", err)
 	}
+	if info, statErr := os.Stat(cfg.CFExecutable); statErr != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+		return fmt.Errorf("validate MANAGER_CF_EXECUTABLE: executable is missing or not executable: %s", cfg.CFExecutable)
+	}
+	if err := authenticateCF(cfg, dirs); err != nil {
+		return err
+	}
 	host, port, err := loopbackAddress(cfg.CollieAddress)
 	if err != nil {
 		return err
@@ -80,10 +86,7 @@ func run() error {
 	collie := supervisor.New(supervisor.Config{Executable: cfg.BunExecutable, Dir: cfg.CollieDir, PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, PackTransport: "cf-identity"}, nil, nil)
 	packManager := pack.New(commandRunner, collie, pack.Config{Executable: cfg.CollieExecutable, TempDir: dirs.token, PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, TokenLifetime: 10 * time.Minute})
 	builder := runtimebundle.Builder{Run: commandRunner, RuntimeDir: cfg.RuntimeDir, WorkRoot: cfg.WorkRoot}
-	if info, statErr := os.Stat(cfg.CFExecutable); statErr != nil || info.IsDir() || info.Mode()&0o111 == 0 {
-		return fmt.Errorf("validate MANAGER_CF_EXECUTABLE: executable is missing or not executable: %s", cfg.CFExecutable)
-	}
-	cloud := cf.Provider{Run: commandRunner, Executable: cfg.CFExecutable, Buildpacks: cfg.Buildpacks, WorkRoot: cfg.WorkRoot}
+	cloud := cf.Provider{Run: commandRunner, Executable: cfg.CFExecutable, Buildpacks: cfg.Buildpacks, WorkRoot: cfg.WorkRoot, Environment: []string{"CF_HOME=" + dirs.cfHome}}
 	probe := identity.New(identity.Config{CertPath: cfg.InstanceCert, KeyPath: cfg.InstanceKey, Timeout: 10 * time.Second, MaxBodyBytes: 64 << 10})
 	reconciler := reconcile.New(reconcile.Config{WorkRoot: cfg.WorkRoot, IdentityDomain: cfg.IdentityDomain, ManagerRouteHost: cfg.ManagerRouteHost, ManagerPackHost: cfg.ManagerPackHost, ManagerAppGUID: cfg.ManagerAppGUID, PollAttempts: 30, PollInterval: time.Second, ScanInterval: cfg.ReconcileInterval}, state, reconcile.BundleRuntime{Builder: builder}, cloud, reconcile.ConcretePackManager{Manager: packManager}, probe, realClock{})
 	collieURL, _ := url.Parse("http://" + cfg.CollieAddress)
@@ -135,6 +138,7 @@ type managerDirs struct {
 	collieConfig string
 	collieState  string
 	token        string
+	cfHome       string
 }
 
 func ensureManagerDirs(cfg config.Config) (managerDirs, error) {
@@ -143,6 +147,7 @@ func ensureManagerDirs(cfg config.Config) (managerDirs, error) {
 		collieConfig: filepath.Join(base, "collie-config"),
 		collieState:  filepath.Join(base, "collie-state"),
 		token:        filepath.Join(base, "tokens"),
+		cfHome:       filepath.Join(base, "cf-home"),
 	}
 	for name, path := range map[string]string{
 		"state parent":  base,
@@ -150,12 +155,21 @@ func ensureManagerDirs(cfg config.Config) (managerDirs, error) {
 		"Collie config": dirs.collieConfig,
 		"Collie state":  dirs.collieState,
 		"token":         dirs.token,
+		"CF home":       dirs.cfHome,
 	} {
 		if err := ensurePrivateDir(path); err != nil {
 			return managerDirs{}, fmt.Errorf("ensure %s directory: %w", name, err)
 		}
 	}
 	return dirs, nil
+}
+
+func authenticateCF(cfg config.Config, dirs managerDirs) error {
+	authenticator := cf.Authenticator{Run: runner.Exec{}, Executable: cfg.CFExecutable, API: cfg.CFAPI, Username: cfg.CFUsername, Password: cfg.CFPassword, CFHome: dirs.cfHome, SkipSSLValidation: cfg.CFSkipSSLValidation}
+	if err := authenticator.Authenticate(context.Background()); err != nil {
+		return fmt.Errorf("authenticate manager CF CLI: %w", err)
+	}
+	return nil
 }
 
 func ensurePrivateDir(path string) error {
@@ -210,6 +224,15 @@ func canonicalizeManagerPaths(cfg *config.Config) error {
 		}
 		*path.value = absolute
 	}
+	canonical, err := filepath.EvalSymlinks(cfg.CFExecutable)
+	if err != nil {
+		return fmt.Errorf("resolve MANAGER_CF_EXECUTABLE %q: %w", cfg.CFExecutable, err)
+	}
+	abs, err := filepath.Abs(canonical)
+	if err != nil {
+		return fmt.Errorf("resolve MANAGER_CF_EXECUTABLE %q: %w", canonical, err)
+	}
+	cfg.CFExecutable = abs
 	return nil
 }
 

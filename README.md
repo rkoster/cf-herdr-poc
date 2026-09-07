@@ -132,6 +132,8 @@ rm -rf dist
 
 ## Verification
 
+Lab deployment requires `CF_API`, `CF_USERNAME`, and `CF_PASSWORD` in the caller environment. Set `CF_SKIP_SSL_VALIDATION=true` only for the lab when required; deployment passes these values to the manager without printing them. The manager authenticates the bundled CF CLI using a private isolated configuration directory.
+
 ```bash
 TMPDIR=/tmp go test -race ./...
 TMPDIR=/tmp go vet ./...

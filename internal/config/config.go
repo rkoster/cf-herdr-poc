@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -9,27 +10,31 @@ import (
 const defaultReconcileInterval = 2 * time.Second
 
 type Config struct {
-	Address           string
-	StatePath         string
-	WebDir            string
-	CollieDir         string
-	IdentityDomain    string
-	ManagerAppName    string
-	ManagerAppGUID    string
-	ManagerPackHost   string
-	ManagerRouteHost  string
-	Buildpacks        []string
-	ReconcileInterval time.Duration
-	APIToken          string
-	CollieAddress     string
-	WorkRoot          string
-	RuntimeDir        string
-	BunExecutable     string
-	CollieExecutable  string
-	HerdrExecutable   string
-	CFExecutable      string
-	InstanceCert      string
-	InstanceKey       string
+	Address             string
+	StatePath           string
+	WebDir              string
+	CollieDir           string
+	IdentityDomain      string
+	ManagerAppName      string
+	ManagerAppGUID      string
+	ManagerPackHost     string
+	ManagerRouteHost    string
+	Buildpacks          []string
+	ReconcileInterval   time.Duration
+	APIToken            string
+	CollieAddress       string
+	WorkRoot            string
+	RuntimeDir          string
+	BunExecutable       string
+	CollieExecutable    string
+	HerdrExecutable     string
+	CFExecutable        string
+	CFAPI               string
+	CFUsername          string
+	CFPassword          string
+	CFSkipSSLValidation bool
+	InstanceCert        string
+	InstanceKey         string
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -87,30 +92,42 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		reconcileInterval = parsed
 	}
+	cfSkipSSLValidation := false
+	if raw := value("CF_SKIP_SSL_VALIDATION"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("CF_SKIP_SSL_VALIDATION must be true or false")
+		}
+		cfSkipSSLValidation = parsed
+	}
 
 	runtimeDir := valueOrDefault("MANAGER_RUNTIME_DIR", "./sandbox/runtime")
 	return Config{
-		Address:           address,
-		StatePath:         valueOrDefault("MANAGER_STATE_PATH", "./data/sandboxes.json"),
-		WebDir:            valueOrDefault("MANAGER_WEB_DIR", "./web/dist"),
-		CollieDir:         valueOrDefault("MANAGER_COLLIE_DIR", "./collie"),
-		IdentityDomain:    identityDomain,
-		ManagerAppName:    value("MANAGER_APP_NAME"),
-		ManagerAppGUID:    value("MANAGER_APP_GUID"),
-		ManagerPackHost:   managerPackHost,
-		ManagerRouteHost:  managerRouteHost,
-		Buildpacks:        buildpacks,
-		ReconcileInterval: reconcileInterval,
-		APIToken:          value("MANAGER_API_TOKEN"),
-		CollieAddress:     valueOrDefault("MANAGER_COLLIE_ADDRESS", "127.0.0.1:9191"),
-		WorkRoot:          valueOrDefault("MANAGER_WORK_ROOT", "./data/work"),
-		RuntimeDir:        runtimeDir,
-		BunExecutable:     valueOrDefault("MANAGER_BUN_EXECUTABLE", runtimeDir+"/bin/bun"),
-		CollieExecutable:  valueOrDefault("MANAGER_COLLIE_EXECUTABLE", runtimeDir+"/bin/collie"),
-		HerdrExecutable:   valueOrDefault("MANAGER_HERDR_EXECUTABLE", runtimeDir+"/bin/herdr"),
-		CFExecutable:      valueOrDefault("MANAGER_CF_EXECUTABLE", "./manager-runtime/bin/cf"),
-		InstanceCert:      valueOrDefault("CF_INSTANCE_CERT", "/etc/cf-instance-credentials/instance.crt"),
-		InstanceKey:       valueOrDefault("CF_INSTANCE_KEY", "/etc/cf-instance-credentials/instance.key"),
+		Address:             address,
+		StatePath:           valueOrDefault("MANAGER_STATE_PATH", "./data/sandboxes.json"),
+		WebDir:              valueOrDefault("MANAGER_WEB_DIR", "./web/dist"),
+		CollieDir:           valueOrDefault("MANAGER_COLLIE_DIR", "./collie"),
+		IdentityDomain:      identityDomain,
+		ManagerAppName:      value("MANAGER_APP_NAME"),
+		ManagerAppGUID:      value("MANAGER_APP_GUID"),
+		ManagerPackHost:     managerPackHost,
+		ManagerRouteHost:    managerRouteHost,
+		Buildpacks:          buildpacks,
+		ReconcileInterval:   reconcileInterval,
+		APIToken:            value("MANAGER_API_TOKEN"),
+		CollieAddress:       valueOrDefault("MANAGER_COLLIE_ADDRESS", "127.0.0.1:9191"),
+		WorkRoot:            valueOrDefault("MANAGER_WORK_ROOT", "./data/work"),
+		RuntimeDir:          runtimeDir,
+		BunExecutable:       valueOrDefault("MANAGER_BUN_EXECUTABLE", runtimeDir+"/bin/bun"),
+		CollieExecutable:    valueOrDefault("MANAGER_COLLIE_EXECUTABLE", runtimeDir+"/bin/collie"),
+		HerdrExecutable:     valueOrDefault("MANAGER_HERDR_EXECUTABLE", runtimeDir+"/bin/herdr"),
+		CFExecutable:        valueOrDefault("MANAGER_CF_EXECUTABLE", "./manager-runtime/bin/cf"),
+		CFAPI:               value("CF_API"),
+		CFUsername:          value("CF_USERNAME"),
+		CFPassword:          value("CF_PASSWORD"),
+		CFSkipSSLValidation: cfSkipSSLValidation,
+		InstanceCert:        valueOrDefault("CF_INSTANCE_CERT", "/etc/cf-instance-credentials/instance.crt"),
+		InstanceKey:         valueOrDefault("CF_INSTANCE_KEY", "/etc/cf-instance-credentials/instance.key"),
 	}, nil
 }
 
@@ -132,7 +149,7 @@ func validDNSName(value string) bool {
 }
 
 func (c Config) ValidateProduction() error {
-	for key, value := range map[string]string{"MANAGER_APP_NAME": c.ManagerAppName, "MANAGER_APP_GUID": c.ManagerAppGUID, "MANAGER_PACK_HOST": c.ManagerPackHost, "MANAGER_API_TOKEN": c.APIToken} {
+	for key, value := range map[string]string{"MANAGER_APP_NAME": c.ManagerAppName, "MANAGER_APP_GUID": c.ManagerAppGUID, "MANAGER_PACK_HOST": c.ManagerPackHost, "MANAGER_API_TOKEN": c.APIToken, "CF_API": c.CFAPI, "CF_USERNAME": c.CFUsername, "CF_PASSWORD": c.CFPassword} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s is required", key)
 		}

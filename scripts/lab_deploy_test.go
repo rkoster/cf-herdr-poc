@@ -188,6 +188,9 @@ func TestLabDeployPreservesBuildAndCFSequence(t *testing.T) {
 		"cf\tset-env\tmanager\tMANAGER_APP_NAME\tmanager",
 		"cf\tset-env\tmanager\tMANAGER_APP_GUID\tmanager-guid",
 		"cf\tset-env\tmanager\tMANAGER_PACK_HOST\tmanager-pack.apps.identity",
+		"cf\tset-env\tmanager\tCF_API\thttps://api.example",
+		"cf\tset-env\tmanager\tCF_USERNAME\tmanager",
+		"cf\tset-env\tmanager\tCF_PASSWORD\tdeploy-password",
 		"cf\tset-env\tmanager\tMANAGER_API_TOKEN\tsecret-token",
 		"cf\tcreate-route\tapps.example\t--hostname\tmanager",
 		"cf\tmap-route\tmanager\tapps.example\t--hostname\tmanager",
@@ -403,6 +406,7 @@ printf '%s\n' "$path"
 		"MANAGER_APP_NAME=manager", "PUBLIC_DOMAIN=apps.example", "MANAGER_PUBLIC_HOST=manager",
 		"CF_IDENTITY_DOMAIN=apps.identity", "MANAGER_PACK_HOST=manager-pack.apps.identity",
 		"SANDBOX_BUILDPACKS=ruby_buildpack", "MANAGER_API_TOKEN=secret-token",
+		"CF_API=https://api.example", "CF_USERNAME=manager", "CF_PASSWORD=deploy-password",
 	}
 	return fixture
 }

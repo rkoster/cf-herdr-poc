@@ -78,10 +78,11 @@ type CloudFoundry interface {
 }
 
 type Provider struct {
-	Run        runner.Runner
-	Executable string
-	Buildpacks []string
-	WorkRoot   string
+	Run         runner.Runner
+	Executable  string
+	Buildpacks  []string
+	WorkRoot    string
+	Environment []string
 }
 
 type Error struct {
@@ -435,7 +436,19 @@ func (p Provider) execute(ctx context.Context, operationName string, args ...str
 		operation.Error = "command runner is required"
 		return operation, nil, errors.New(operation.Error)
 	}
-	output, err := p.Run.Run(ctx, executable, args...)
+	var output []byte
+	var err error
+	if len(p.Environment) > 0 {
+		if envRunner, ok := p.Run.(runner.EnvRunner); ok {
+			output, err = envRunner.RunEnv(ctx, p.Environment, executable, args...)
+		} else {
+			operation.Duration = time.Since(started)
+			operation.Error = "environment-capable command runner is required"
+			return operation, nil, errors.New(operation.Error)
+		}
+	} else {
+		output, err = p.Run.Run(ctx, executable, args...)
+	}
 	operation.Duration = time.Since(started)
 	operation.Success = err == nil
 	operation.Summary = sanitizeOutput(output)

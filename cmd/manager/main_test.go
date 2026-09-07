@@ -48,6 +48,12 @@ func TestManagerWebServesAssetsAndFallsBackToIndex(t *testing.T) {
 
 func TestCanonicalizeManagerPathsUsesManagerStartupDirectory(t *testing.T) {
 	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "manager-runtime", "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "manager-runtime", "bin", "cf"), nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	originalDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -86,13 +92,20 @@ func TestCanonicalizeManagerPathsUsesManagerStartupDirectory(t *testing.T) {
 		t.Fatalf("canonicalized config = %#v", cfg)
 	}
 
-	absolute := filepath.Join(root, "already-absolute")
+	absolute := filepath.Join(root, "manager-runtime", "bin", "cf")
 	cfg = config.Config{StatePath: absolute, WebDir: absolute, CollieDir: absolute, WorkRoot: absolute, RuntimeDir: absolute, BunExecutable: absolute, CollieExecutable: absolute, HerdrExecutable: absolute, CFExecutable: absolute}
 	if err := canonicalizeManagerPaths(&cfg); err != nil {
 		t.Fatal(err)
 	}
 	if cfg.StatePath != absolute || cfg.WebDir != absolute || cfg.CollieDir != absolute || cfg.WorkRoot != absolute || cfg.RuntimeDir != absolute || cfg.BunExecutable != absolute || cfg.CollieExecutable != absolute || cfg.HerdrExecutable != absolute || cfg.CFExecutable != absolute {
 		t.Fatalf("absolute paths changed: %#v", cfg)
+	}
+}
+
+func TestCanonicalizeManagerPathsRequiresCFExecutableResolution(t *testing.T) {
+	cfg := config.Config{CFExecutable: filepath.Join(t.TempDir(), "missing-cf")}
+	if err := canonicalizeManagerPaths(&cfg); err == nil || !strings.Contains(err.Error(), "MANAGER_CF_EXECUTABLE") {
+		t.Fatalf("canonicalizeManagerPaths() error = %v, want CF executable resolution error", err)
 	}
 }
 

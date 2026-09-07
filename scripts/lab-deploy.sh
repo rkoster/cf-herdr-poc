@@ -67,6 +67,9 @@ bash scripts/build.sh
 : "${MANAGER_PACK_HOST:?MANAGER_PACK_HOST is required}"
 : "${SANDBOX_BUILDPACKS:?SANDBOX_BUILDPACKS is required}"
 : "${MANAGER_API_TOKEN:?MANAGER_API_TOKEN is required}"
+: "${CF_API:?CF_API is required}"
+: "${CF_USERNAME:?CF_USERNAME is required}"
+: "${CF_PASSWORD:?CF_PASSWORD is required}"
 
 MANAGER_ROUTE_HOST="${MANAGER_PACK_HOST%.$CF_IDENTITY_DOMAIN}"
 if [[ -z "$MANAGER_ROUTE_HOST" || "$MANAGER_ROUTE_HOST" == "$MANAGER_PACK_HOST" || "$MANAGER_ROUTE_HOST" == *.* || "$MANAGER_ROUTE_HOST.$CF_IDENTITY_DOMAIN" != "$MANAGER_PACK_HOST" || ! "$MANAGER_ROUTE_HOST" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
@@ -77,17 +80,23 @@ fi
 printf '==> push manager\n'
 "$CF_BIN" push "$MANAGER_APP_NAME" --no-manifest -p dist -b binary_buildpack -c ./manager --no-route --no-start -u http --endpoint /manager/healthz --redact-env
 MANAGER_APP_GUID="$("$CF_BIN" app "$MANAGER_APP_NAME" --guid)"
-"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_WEB_DIR ./web
-"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_COLLIE_DIR ./sandbox/runtime/collie
-"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_RUNTIME_DIR ./manager-runtime
-"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_BUN_EXECUTABLE ./manager-runtime/bin/bun
-"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_COLLIE_EXECUTABLE ./manager-runtime/bin/collie
-"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_CF_EXECUTABLE ./manager-runtime/bin/cf
-"$CF_BIN" set-env "$MANAGER_APP_NAME" CF_IDENTITY_DOMAIN "$CF_IDENTITY_DOMAIN"
-"$CF_BIN" set-env "$MANAGER_APP_NAME" SANDBOX_BUILDPACKS "$SANDBOX_BUILDPACKS"
-"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_APP_NAME "$MANAGER_APP_NAME"
-"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_APP_GUID "$MANAGER_APP_GUID"
-"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_PACK_HOST "$MANAGER_PACK_HOST"
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_WEB_DIR ./web >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_COLLIE_DIR ./sandbox/runtime/collie >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_RUNTIME_DIR ./manager-runtime >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_BUN_EXECUTABLE ./manager-runtime/bin/bun >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_COLLIE_EXECUTABLE ./manager-runtime/bin/collie >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_CF_EXECUTABLE ./manager-runtime/bin/cf >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" CF_IDENTITY_DOMAIN "$CF_IDENTITY_DOMAIN" >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" SANDBOX_BUILDPACKS "$SANDBOX_BUILDPACKS" >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_APP_NAME "$MANAGER_APP_NAME" >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_APP_GUID "$MANAGER_APP_GUID" >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_PACK_HOST "$MANAGER_PACK_HOST" >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" CF_API "$CF_API" >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" CF_USERNAME "$CF_USERNAME" >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" CF_PASSWORD "$CF_PASSWORD" >/dev/null 2>&1
+if [[ -n "${CF_SKIP_SSL_VALIDATION:-}" ]]; then
+	"$CF_BIN" set-env "$MANAGER_APP_NAME" CF_SKIP_SSL_VALIDATION "$CF_SKIP_SSL_VALIDATION" >/dev/null 2>&1
+fi
 if "$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_API_TOKEN "$MANAGER_API_TOKEN" >/dev/null 2>&1; then
 	printf 'MANAGER_API_TOKEN configured\n'
 else
