@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -229,6 +230,63 @@ func TestStartConfiguresManagedLoopbackProcess(t *testing.T) {
 	}
 	if err := s.Stop(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStartResolvesRelativeExecutableBeforeApplyingChildDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable shell script")
+	}
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	collieDir := filepath.Join(root, "collie")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(collieDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tool := filepath.Join(binDir, "tool")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\npwd > \"$TOOL_CWD_FILE\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalDir); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+
+	cwdFile := filepath.Join(root, "tool-cwd")
+	t.Setenv("TOOL_CWD_FILE", cwdFile)
+	s := New(Config{Executable: "./bin/tool", Dir: collieDir}, nil, func(context.Context, string) error { return nil })
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitForFile(t, cwdFile)
+	got, err := os.ReadFile(cwdFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != collieDir {
+		t.Fatalf("tool cwd = %q, want %q", strings.TrimSpace(string(got)), collieDir)
+	}
+}
+
+func TestNewPreservesAbsoluteAndBareExecutables(t *testing.T) {
+	for _, executable := range []string{filepath.Join(string(filepath.Separator), "opt", "bin", "bun"), "sh"} {
+		t.Run(executable, func(t *testing.T) {
+			s := New(Config{Executable: executable}, nil, nil)
+			if s.config.Executable != executable {
+				t.Fatalf("executable = %q, want %q", s.config.Executable, executable)
+			}
+		})
 	}
 }
 

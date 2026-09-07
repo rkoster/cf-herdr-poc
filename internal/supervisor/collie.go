@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -165,8 +166,12 @@ func (s *Supervisor) startLocked(ctx context.Context) error {
 	if !isLoopback(s.config.Host) {
 		return fmt.Errorf("Collie host %q must be loopback", s.config.Host)
 	}
+	executable, err := resolveExecutable(s.config.Executable)
+	if err != nil {
+		return fmt.Errorf("resolve Collie executable: %w", err)
+	}
 	env := collieruntime.Environment(collieruntime.Runtime{ConfigDir: s.config.ConfigDir, StateDir: s.config.StateDir, SocketPath: s.config.SocketPath, Host: s.config.Host, Port: s.config.Port, PackTransport: s.config.PackTransport}, os.Environ())
-	process := s.factory(ProcessConfig{Name: s.config.Executable, Args: append([]string(nil), s.config.Args...), Dir: s.config.Dir, Env: env, Stdout: s.config.Stdout, Stderr: s.config.Stderr})
+	process := s.factory(ProcessConfig{Name: executable, Args: append([]string(nil), s.config.Args...), Dir: s.config.Dir, Env: env, Stdout: s.config.Stdout, Stderr: s.config.Stderr})
 	if err := process.Start(); err != nil {
 		return fmt.Errorf("start collie: %w", err)
 	}
@@ -192,6 +197,18 @@ func (s *Supervisor) startLocked(ctx context.Context) error {
 		s.mu.Unlock()
 	}()
 	return nil
+}
+
+func resolveExecutable(executable string) (string, error) {
+	if filepath.IsAbs(executable) {
+		return executable, nil
+	}
+	for index := range len(executable) {
+		if os.IsPathSeparator(executable[index]) {
+			return filepath.Abs(executable)
+		}
+	}
+	return executable, nil
 }
 
 func (s *Supervisor) Errors() <-chan error { return s.errors }
