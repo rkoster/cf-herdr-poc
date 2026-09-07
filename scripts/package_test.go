@@ -46,7 +46,7 @@ func TestBuildForwardsExplicitNixRelocationMode(t *testing.T) {
 	}
 }
 
-func TestDevboxDeployBuildsRelocatedRuntimeBeforePush(t *testing.T) {
+func TestDevboxDeployDelegatesToLabDeployScript(t *testing.T) {
 	var config struct {
 		Packages []string `json:"packages"`
 		Shell    struct {
@@ -57,14 +57,18 @@ func TestDevboxDeployBuildsRelocatedRuntimeBeforePush(t *testing.T) {
 		t.Fatal(err)
 	}
 	deploy := config.Shell.Scripts["deploy"]
-	build := strings.Index(deploy, "bash scripts/build.sh")
-	push := strings.Index(deploy, "cf push")
-	if build < 0 || push < 0 || build > push {
-		t.Fatalf("deploy must build before push: %q", deploy)
+	if deploy != "bash scripts/lab-deploy.sh" {
+		t.Fatalf("deploy script = %q, want external lab deploy delegation", deploy)
 	}
-	for _, required := range []string{"command -v bun", "command -v herdr", "BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "ALLOW_NIX_RUNTIME_RELOCATION=1"} {
-		if !strings.Contains(deploy, required) {
-			t.Errorf("deploy script missing %q", required)
+	labDeploy := readPackageFile(t, "scripts/lab-deploy.sh")
+	build := strings.Index(labDeploy, "scripts/build.sh")
+	push := strings.Index(labDeploy, "cf push")
+	if build < 0 || push < 0 || build > push {
+		t.Fatalf("lab deploy must build before push")
+	}
+	for _, required := range []string{"BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "ALLOW_NIX_RUNTIME_RELOCATION=1", "DEPLOY_TMPDIR", "build distribution", "push manager", "configure routes", "start manager"} {
+		if !strings.Contains(labDeploy, required) {
+			t.Errorf("lab deploy script missing %q", required)
 		}
 	}
 	for _, required := range []string{"patchelf", "binutils", "gcc"} {
