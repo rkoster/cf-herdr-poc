@@ -127,7 +127,7 @@ func TestCFLinuxFS5DockerfileBootstrapsGoWithoutNode(t *testing.T) {
 		"ARG GO_SHA256",
 		"/usr/local/go",
 		"sha256sum -c",
-		"PATH=/usr/local/go/bin:/tools/bin:$PATH",
+		"PATH=/usr/local/go/bin:/tools/bin:/usr/local/bin:$PATH",
 		"go build",
 	} {
 		if !strings.Contains(dockerfile, required) {

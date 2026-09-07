@@ -30,6 +30,8 @@ func TestCFLinuxFS5BuilderContract(t *testing.T) {
 		"cf_format=tgz",
 		"cf_format=zip",
 		"/usr/local/bin/extract-cf-cli.sh /tools/downloads/cf /tools/bin \"$cf_format\"",
+		"ln -s /tools/bin/bun /usr/local/bin/bunx",
+		"ENV PATH=/usr/local/go/bin:/tools/bin:/usr/local/bin:$PATH",
 	} {
 		if !strings.Contains(dockerfile, required) {
 			t.Errorf("Dockerfile missing %q", required)

@@ -28,6 +28,9 @@ RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -
     unzip -q /tools/downloads/bun.zip -d /tools/bun; \
     find /tools/bun -type f -name bun -exec install -m 0755 {} /tools/bin/bun \;; \
      test -x /tools/bin/bun; \
+     ln -s /tools/bin/bun /usr/local/bin/bunx; \
+     test -x /usr/local/bin/bunx; \
+     /usr/local/bin/bunx --version; \
      curl --fail --location --retry 3 --output /tools/downloads/go.tar.gz "$GO_URL"; \
      printf '%s  %s\n' "$GO_SHA256" /tools/downloads/go.tar.gz | sha256sum -c -; \
      rm -rf /usr/local/go; tar -C /usr/local -xzf /tools/downloads/go.tar.gz; \
@@ -42,7 +45,7 @@ RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -
 FROM cflinuxfs5-tools AS build
 ARG GOOS=linux
 ARG GOARCH=amd64
-ENV PATH=/usr/local/go/bin:/tools/bin:$PATH
+ENV PATH=/usr/local/go/bin:/tools/bin:/usr/local/bin:$PATH
 COPY . /src
 COPY --from=cflinuxfs5-tools /tools /tools
 WORKDIR /src
