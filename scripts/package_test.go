@@ -41,6 +41,41 @@ func TestBuildUsesTransactionalStagingAndValidatesArtifactContract(t *testing.T)
 	}
 }
 
+func TestCFLinuxFS5DockerignoreExcludesGeneratedCollieFiles(t *testing.T) {
+	ignore := readPackageFile(t, ".dockerignore")
+	for _, required := range []string{
+		".git",
+		"collie/node_modules/",
+		"collie/web/node_modules/",
+		"collie/bin/",
+		"collie/web/dist/",
+		"collie/dist-staging/",
+		"collie/.devbox/",
+		"dist/",
+		"sandbox/runtime/",
+		"manager-runtime/",
+		"tmp.*",
+		"nix-*/",
+		"collie-activity-*/",
+	} {
+		if !strings.Contains(ignore, required) {
+			t.Errorf(".dockerignore missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"collie/bridge",
+		"collie/cli",
+		"collie/web/src",
+		"collie/package.json",
+		"collie/bun.lock",
+	} {
+		if !strings.Contains(ignore, required) {
+			continue
+		}
+		t.Errorf(".dockerignore excludes required Collie source %q", required)
+	}
+}
+
 func TestManifestPinsVerifiedHerdrArtifacts(t *testing.T) {
 	manifest := readPackageFile(t, "docker/cflinuxfs5-builder/artifacts.env")
 	for _, required := range []string{

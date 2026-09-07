@@ -52,7 +52,6 @@ COPY . /src
 COPY --from=cflinuxfs5-tools /tools /tools
 WORKDIR /src
 RUN set -eux; command -v go; \
-    test -d collie/.git || { echo 'nested Collie checkout is required in the build context' >&2; exit 2; }; \
     /tools/bin/bun install --cwd web --frozen-lockfile; /tools/bin/bun run --cwd web build; \
     BUN_RUNTIME_BIN=/tools/bin/bun HERDR_RUNTIME_BIN=/tools/bin/herdr CF_BIN=/tools/bin/cf GOOS="$GOOS" GOARCH="$GOARCH" \
       RUNTIME_DIR=/work/dist/sandbox/runtime MANAGER_RUNTIME_DIR=/work/dist/manager-runtime \

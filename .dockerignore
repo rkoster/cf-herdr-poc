@@ -1,7 +1,9 @@
 .git
 .env
 .envrc
-dist
+dist/
+manager-runtime/
+sandbox/runtime/
 *.previous
 *.staging.*
 *.log
@@ -12,6 +14,13 @@ ops-enable-mtls-app-routing.yml
 tmp.*
 nix-*/
 collie-activity-*/
+.devbox/
+collie/.devbox/
+collie/node_modules/
+collie/web/node_modules/
+collie/bin/
+collie/web/dist/
+collie/dist-staging/
 web/node_modules
 web/dist
 data/
