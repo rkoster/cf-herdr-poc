@@ -27,6 +27,9 @@ func TestCFLinuxFS5BuilderContract(t *testing.T) {
 		"sandbox/runtime/bin/herdr",
 		"manager-runtime/bin/cf",
 		"extract-cf-cli.sh",
+		"cf_format=tgz",
+		"cf_format=zip",
+		"/usr/local/bin/extract-cf-cli.sh /tools/downloads/cf /tools/bin \"$cf_format\"",
 	} {
 		if !strings.Contains(dockerfile, required) {
 			t.Errorf("Dockerfile missing %q", required)
@@ -38,8 +41,10 @@ func TestCFLinuxFS5BuilderContract(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"*.tar.gz|*.tgz)",
-		"*.zip)",
+		`case "$format" in`,
+		"tgz)",
+		"zip)",
+		`usage: extract-cf-cli.sh ARCHIVE DESTINATION FORMAT`,
 		"$extract_dir/cf",
 		"$extract_dir/cf8",
 		"find \"$extract_dir\" -type f",
@@ -52,31 +57,35 @@ func TestCFLinuxFS5BuilderContract(t *testing.T) {
 	}
 }
 
-func TestCFCLIExtractionAcceptsArchiveRootBinary(t *testing.T) {
+func TestCFCLIExtractionAcceptsArchiveRootBinariesWithExplicitFormat(t *testing.T) {
 	root := packageRoot(t)
-	archiveDir := t.TempDir()
-	archiveRoot := filepath.Join(archiveDir, "archive")
-	if err := os.Mkdir(archiveRoot, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cf := filepath.Join(archiveRoot, "cf")
-	if err := os.WriteFile(cf, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	archive := filepath.Join(archiveDir, "cf.tgz")
-	command := exec.Command("tar", "-czf", archive, "-C", archiveRoot, "cf")
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("create archive: %v\n%s", err, output)
-	}
+	for _, name := range []string{"cf", "cf8"} {
+		t.Run(name, func(t *testing.T) {
+			archiveDir := t.TempDir()
+			archiveRoot := filepath.Join(archiveDir, "archive")
+			if err := os.Mkdir(archiveRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			binary := filepath.Join(archiveRoot, name)
+			if err := os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			archive := filepath.Join(archiveDir, "cf-archive")
+			command := exec.Command("tar", "-czf", archive, "-C", archiveRoot, name)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("create archive: %v\n%s", err, output)
+			}
 
-	outputDir := filepath.Join(t.TempDir(), "bin")
-	command = exec.Command("bash", filepath.Join(root, "docker", "cflinuxfs5-builder", "extract-cf-cli.sh"), archive, outputDir)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("extract root cf binary: %v\n%s", err, output)
-	}
-	installed := filepath.Join(outputDir, "cf")
-	if info, err := os.Stat(installed); err != nil || info.Mode()&0o111 == 0 {
-		t.Fatalf("installed CF CLI is not executable: info=%v err=%v", info, err)
+			outputDir := filepath.Join(t.TempDir(), "bin")
+			command = exec.Command("bash", filepath.Join(root, "docker", "cflinuxfs5-builder", "extract-cf-cli.sh"), archive, outputDir, "tgz")
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("extract root %s binary: %v\n%s", name, err, output)
+			}
+			installed := filepath.Join(outputDir, "cf")
+			if info, err := os.Stat(installed); err != nil || info.Mode()&0o111 == 0 {
+				t.Fatalf("installed CF CLI is not executable: info=%v err=%v", info, err)
+			}
+		})
 	}
 }
 

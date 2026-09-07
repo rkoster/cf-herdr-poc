@@ -3,14 +3,20 @@ set -eu
 
 archive=$1
 destination=$2
+format=${3:-}
 extract_dir=${destination}.extract
+
+if [ "$#" -ne 3 ]; then
+  echo 'usage: extract-cf-cli.sh ARCHIVE DESTINATION FORMAT' >&2
+  exit 2
+fi
 
 rm -rf "$extract_dir"
 mkdir -p "$extract_dir" "$destination"
-case "$archive" in
-  *.tar.gz|*.tgz) tar -xzf "$archive" -C "$extract_dir" ;;
-  *.zip) unzip -q "$archive" -d "$extract_dir" ;;
-  *) echo 'CF_URL must be a .tgz, .tar.gz, or .zip archive' >&2; exit 2 ;;
+case "$format" in
+  tgz) tar -xzf "$archive" -C "$extract_dir" ;;
+  zip) unzip -q "$archive" -d "$extract_dir" ;;
+  *) echo 'archive format must be tgz or zip' >&2; exit 2 ;;
 esac
 
 candidate=

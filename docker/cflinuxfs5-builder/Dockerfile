@@ -15,9 +15,10 @@ RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -
     test -n "${BUN_SHA256:-}" || { echo 'BUN_SHA256 is required' >&2; exit 2; }; \
     test -n "${HERDR_URL:-}" || { echo 'HERDR_URL is required; use the verified Herdr v0.8.2 release asset' >&2; exit 2; }; \
     test -n "${HERDR_SHA256:-}" || { echo 'HERDR_SHA256 is required' >&2; exit 2; }; \
-    test -n "${CF_URL:-}" || { echo 'CF_URL is required; local CF version metadata is unresolved' >&2; exit 2; }; \
-    test -n "${CF_SHA256:-}" || { echo 'CF_SHA256 is required' >&2; exit 2; }; \
-    mkdir -p /tools/downloads /tools/bin; \
+     test -n "${CF_URL:-}" || { echo 'CF_URL is required; local CF version metadata is unresolved' >&2; exit 2; }; \
+     test -n "${CF_SHA256:-}" || { echo 'CF_SHA256 is required' >&2; exit 2; }; \
+     case "$CF_URL" in *.tar.gz|*.tgz) cf_format=tgz ;; *.zip) cf_format=zip ;; *) echo 'CF_URL must end in .tgz, .tar.gz, or .zip' >&2; exit 2 ;; esac; \
+     mkdir -p /tools/downloads /tools/bin; \
     curl --fail --location --retry 3 --output /tools/downloads/bun.zip "$BUN_URL"; \
     printf '%s  %s\n' "$BUN_SHA256" /tools/downloads/bun.zip | sha256sum -c -; \
     unzip -q /tools/downloads/bun.zip -d /tools/bun; \
@@ -28,7 +29,7 @@ RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -
      install -m 0755 /tools/downloads/herdr /tools/bin/herdr; \
      curl --fail --location --retry 3 --output /tools/downloads/cf "$CF_URL"; \
      printf '%s  %s\n' "$CF_SHA256" /tools/downloads/cf | sha256sum -c -; \
-     /usr/local/bin/extract-cf-cli.sh /tools/downloads/cf /tools/bin
+     /usr/local/bin/extract-cf-cli.sh /tools/downloads/cf /tools/bin "$cf_format"
 
 FROM cflinuxfs5-tools AS build
 ARG GOOS=linux
