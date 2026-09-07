@@ -25,20 +25,24 @@ time GOOS=linux GOARCH=amd64 bash scripts/build.sh
 du -sh dist dist/sandbox/runtime
 file dist/manager dist/manager-runtime/bin/* dist/sandbox/runtime/bin/*
 ldd dist/manager dist/sandbox/runtime/bin/sandbox-bootstrap
+rm -rf dist/runtime-spike
+mkdir -p dist/runtime-spike
+cp -R dist/sandbox/runtime dist/runtime-spike/.sandbox
 cf version
 cf buildpacks
-cf push cf-herdr-runtime-spike -p dist --no-route -b binary_buildpack -c './manager' --no-start
+cf push cf-herdr-runtime-spike -p dist/runtime-spike --no-route -b binary_buildpack -c './.sandbox/start.sh' --no-start
 cf app cf-herdr-runtime-spike --guid
 cf start cf-herdr-runtime-spike
 cf logs cf-herdr-runtime-spike --recent
-cf ssh cf-herdr-runtime-spike -c 'pwd; test -x app/manager; test -x app/sandbox/runtime/bin/bun; test -x app/sandbox/runtime/bin/herdr; app/sandbox/runtime/bin/bun --version; app/sandbox/runtime/bin/herdr --version; touch /home/vcap/data/write-test; test -f /home/vcap/data/write-test'
+cf ssh cf-herdr-runtime-spike -c 'pwd; test -x app/.sandbox/start.sh; test -x app/.sandbox/bin/bun; test -x app/.sandbox/bin/herdr; app/.sandbox/bin/bun --version; app/.sandbox/bin/herdr --version; touch /home/vcap/data/write-test; test -f /home/vcap/data/write-test'
 cf delete cf-herdr-runtime-spike -f
+rm -rf dist/runtime-spike
 ```
 
 ## Assertions
 
 - Staging preserves executable bits for manager, bootstrap, Bun, Herdr, and Collie.
-- Manager and bootstrap have no dynamic dependencies. Portable runtime binaries have no unresolved or `/nix/store` dependencies; lab-relocated executables use cflinuxfs interpreters and origin-relative private library paths.
+- Manager and bootstrap have no dynamic dependencies. Portable runtime binaries have no unresolved or `/nix/store` dependencies; on amd64 the lab-relocated sandbox Bun interpreter is exactly `/home/vcap/app/.sandbox/bin/.bun-libs/ld-linux-x86-64.so.2`, with corresponding executable-specific bundled Nix loaders and origin-relative private library paths for the other relocated binaries.
 - The binary buildpack starts the exact configured command without downloading artifacts.
 - Bundled Bun and Herdr execute in the Diego cell.
 - Application bits are readable and `/home/vcap/data` is writable.

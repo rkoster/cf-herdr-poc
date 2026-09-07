@@ -254,6 +254,23 @@ func TestRuntimeDocsDescribeNeededClosureAndResidualDlopenRisk(t *testing.T) {
 	}
 }
 
+func TestRuntimeSpikeExercisesPackagedSandboxAtItsTargetAppLayout(t *testing.T) {
+	doc := readPackageFile(t, "docs/spikes/cf-buildpack-runtime.md")
+	for _, required := range []string{
+		"cp -R dist/sandbox/runtime dist/runtime-spike/.sandbox",
+		"-p dist/runtime-spike",
+		"-c './.sandbox/start.sh'",
+		"/home/vcap/app/.sandbox/bin/.bun-libs/ld-linux-x86-64.so.2",
+	} {
+		if !strings.Contains(doc, required) {
+			t.Errorf("runtime spike missing sandbox layout contract %q", required)
+		}
+	}
+	if strings.Contains(doc, "lab-relocated executables use cflinuxfs interpreters") {
+		t.Fatal("runtime spike incorrectly asserts the cflinuxfs interpreter for Nix relocation")
+	}
+}
+
 func TestDeploymentDocsUseExplicitCFCLIPath(t *testing.T) {
 	readme := readPackageFile(t, "README.md")
 	start := strings.Index(readme, "## Deploy")
