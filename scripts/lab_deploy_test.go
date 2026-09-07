@@ -17,11 +17,119 @@ func TestLabDeployReportsMissingHerdrBeforeBuildOrCF(t *testing.T) {
 	if err == nil {
 		t.Fatal("lab-deploy.sh succeeded without herdr")
 	}
-	if !strings.Contains(output, "required runtime herdr was not found in PATH") || !strings.Contains(output, "HERDR_RUNTIME_BIN") {
+	if !strings.Contains(output, "required tool herdr was not found") || !strings.Contains(output, "HERDR_RUNTIME_BIN") {
 		t.Fatalf("output = %q, want actionable herdr error", output)
 	}
 	if events := fixture.events(t); len(events) != 0 {
 		t.Fatalf("events = %#v, want no build or CF calls", events)
+	}
+}
+
+func TestLabDeployUsesExplicitCFBinaryOutsidePATH(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	os.Remove(filepath.Join(fixture.bin, "cf"))
+	explicitCF := filepath.Join(t.TempDir(), "explicit cf")
+	writeFakeCF(t, explicitCF, "explicit-cf")
+	fixture.env = append(fixture.env, "CF_BIN="+explicitCF)
+
+	output, err := fixture.run(t)
+	if err != nil {
+		t.Fatalf("lab-deploy.sh: %v: %s", err, output)
+	}
+	for _, event := range fixture.events(t) {
+		if strings.HasPrefix(event, "cf\t") && !strings.HasPrefix(event, "explicit-cf\t") {
+			t.Fatalf("CF event = %q, want explicit CF binary", event)
+		}
+	}
+	if !containsEvent(fixture.events(t), "explicit-cf\tstart\tmanager") {
+		t.Fatal("explicit CF binary did not execute the full deployment")
+	}
+}
+
+func TestLabDeployDiscoversOperatorProfileTools(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	profileBin := filepath.Join(t.TempDir(), "profile bin")
+	if err := os.Mkdir(profileBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(fixture.bin, "cf"))
+	os.Remove(filepath.Join(fixture.bin, "herdr"))
+	writeFakeCF(t, filepath.Join(profileBin, "cf"), "profile-cf")
+	writeExecutable(t, filepath.Join(profileBin, "herdr"), "#!/bin/sh\nexit 0\n")
+	fixture.env = append(fixture.env, "LAB_PROFILE_BIN_DIR="+profileBin)
+
+	output, err := fixture.run(t)
+	if err != nil {
+		t.Fatalf("lab-deploy.sh: %v: %s", err, output)
+	}
+	buildEnv, err := os.ReadFile(fixture.buildEnvLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "bun=" + filepath.Join(fixture.bin, "bun") + "\nherdr=" + filepath.Join(profileBin, "herdr") + "\n"
+	if string(buildEnv) != want {
+		t.Fatalf("build runtime paths = %q, want %q", buildEnv, want)
+	}
+	if !containsEvent(fixture.events(t), "profile-cf\tstart\tmanager") {
+		t.Fatal("profile CF binary was not used")
+	}
+}
+
+func TestLabDeployExplicitRuntimeOverridesPATH(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	explicitDir := t.TempDir()
+	explicitBun := filepath.Join(explicitDir, "explicit bun")
+	explicitHerdr := filepath.Join(explicitDir, "explicit herdr")
+	writeExecutable(t, explicitBun, "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, explicitHerdr, "#!/bin/sh\nexit 0\n")
+	fixture.env = append(fixture.env, "BUN_RUNTIME_BIN="+explicitBun, "HERDR_RUNTIME_BIN="+explicitHerdr)
+
+	output, err := fixture.run(t)
+	if err != nil {
+		t.Fatalf("lab-deploy.sh: %v: %s", err, output)
+	}
+	buildEnv, err := os.ReadFile(fixture.buildEnvLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "bun=" + explicitBun + "\nherdr=" + explicitHerdr + "\n"
+	if string(buildEnv) != want {
+		t.Fatalf("build runtime paths = %q, want explicit paths %q", buildEnv, want)
+	}
+}
+
+func TestLabDeployRejectsInvalidExplicitTool(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	invalid := filepath.Join(t.TempDir(), "cf-directory")
+	if err := os.Mkdir(invalid, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture.env = append(fixture.env, "CF_BIN="+invalid)
+
+	output, err := fixture.run(t)
+	if err == nil {
+		t.Fatal("lab-deploy.sh succeeded with a directory as CF_BIN")
+	}
+	if !strings.Contains(output, "CF_BIN must name an executable file") || !strings.Contains(output, invalid) {
+		t.Fatalf("output = %q, want actionable CF_BIN error", output)
+	}
+	if events := fixture.events(t); len(events) != 0 {
+		t.Fatalf("events = %#v, want no build or CF calls", events)
+	}
+}
+
+func TestLabDeployAcceptsExecutableSymlink(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	target := filepath.Join(t.TempDir(), "herdr-target")
+	link := filepath.Join(t.TempDir(), "herdr-link")
+	writeExecutable(t, target, "#!/bin/sh\nexit 0\n")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	fixture.env = append(fixture.env, "HERDR_RUNTIME_BIN="+link)
+
+	if output, err := fixture.run(t); err != nil {
+		t.Fatalf("lab-deploy.sh rejected executable symlink: %v: %s", err, output)
 	}
 }
 
@@ -184,19 +292,21 @@ func TestLabDeployBuildFailurePreventsCFCalls(t *testing.T) {
 }
 
 type labDeployFixture struct {
-	bin       string
-	eventLog  string
-	tmpdirLog string
-	env       []string
+	bin         string
+	eventLog    string
+	tmpdirLog   string
+	buildEnvLog string
+	env         []string
 }
 
 func newLabDeployFixture(t *testing.T) *labDeployFixture {
 	t.Helper()
 	temp := t.TempDir()
 	fixture := &labDeployFixture{
-		bin:       filepath.Join(temp, "bin"),
-		eventLog:  filepath.Join(temp, "events.log"),
-		tmpdirLog: filepath.Join(temp, "tmpdir.log"),
+		bin:         filepath.Join(temp, "bin"),
+		eventLog:    filepath.Join(temp, "events.log"),
+		tmpdirLog:   filepath.Join(temp, "tmpdir.log"),
+		buildEnvLog: filepath.Join(temp, "build-env.log"),
 	}
 	if err := os.Mkdir(fixture.bin, 0o755); err != nil {
 		t.Fatal(err)
@@ -204,19 +314,10 @@ func newLabDeployFixture(t *testing.T) *labDeployFixture {
 	writeExecutable(t, filepath.Join(fixture.bin, "bash"), `#!/bin/sh
 printf 'build\n' >> "$EVENT_LOG"
 printf '%s\n' "$TMPDIR" > "$TMPDIR_LOG"
+printf 'bun=%s\nherdr=%s\n' "$BUN_RUNTIME_BIN" "$HERDR_RUNTIME_BIN" > "$BUILD_ENV_LOG"
 exit "${FAKE_BUILD_STATUS:-0}"
 `)
-	writeExecutable(t, filepath.Join(fixture.bin, "cf"), `#!/bin/sh
-printf 'cf' >> "$EVENT_LOG"
-printf '\t%s' "$@" >> "$EVENT_LOG"
-printf '\n' >> "$EVENT_LOG"
-if [ "$1" = app ] && [ "$3" = --guid ]; then printf 'manager-guid\n'; fi
-if [ "$1" = set-env ] && [ "$3" = MANAGER_API_TOKEN ] && [ "${FAKE_CF_ECHO_TOKEN:-}" = 1 ]; then
-  printf 'cf echoed token argument: %s\n' "$4"
-  printf 'cf echoed token error: %s\n' "$4" >&2
-  exit "${FAKE_CF_TOKEN_STATUS:-0}"
-fi
-`)
+	writeFakeCF(t, filepath.Join(fixture.bin, "cf"), "cf")
 	writeExecutable(t, filepath.Join(fixture.bin, "mktemp"), `#!/bin/sh
 if [ "${FAKE_MKTEMP_STATUS:-}" != "" ]; then exit "$FAKE_MKTEMP_STATUS"; fi
 template=$1
@@ -237,12 +338,30 @@ printf '%s\n' "$path"
 	}
 	fixture.env = []string{
 		"PATH=" + fixture.bin, "EVENT_LOG=" + fixture.eventLog, "TMPDIR_LOG=" + fixture.tmpdirLog,
+		"BUILD_ENV_LOG=" + fixture.buildEnvLog,
 		"MKTEMP_LOG=" + filepath.Join(temp, "mktemp.log"),
 		"MANAGER_APP_NAME=manager", "PUBLIC_DOMAIN=apps.example", "MANAGER_PUBLIC_HOST=manager",
 		"CF_IDENTITY_DOMAIN=apps.identity", "MANAGER_PACK_HOST=manager-pack.apps.identity",
 		"SANDBOX_BUILDPACKS=ruby_buildpack", "MANAGER_API_TOKEN=secret-token",
 	}
 	return fixture
+}
+
+func writeFakeCF(t *testing.T, path, label string) {
+	t.Helper()
+	body := `#!/bin/sh
+CF_LABEL='__LABEL__'
+printf '%s' "$CF_LABEL" >> "$EVENT_LOG"
+printf '\t%s' "$@" >> "$EVENT_LOG"
+printf '\n' >> "$EVENT_LOG"
+if [ "$1" = app ] && [ "$3" = --guid ]; then printf 'manager-guid\n'; fi
+if [ "$1" = set-env ] && [ "$3" = MANAGER_API_TOKEN ] && [ "${FAKE_CF_ECHO_TOKEN:-}" = 1 ]; then
+  printf 'cf echoed token argument: %s\n' "$4"
+  printf 'cf echoed token error: %s\n' "$4" >&2
+  exit "${FAKE_CF_TOKEN_STATUS:-0}"
+fi
+`
+	writeExecutable(t, path, strings.Replace(body, "__LABEL__", label, 1))
 }
 
 func assertNoSecretOutputFile(t *testing.T, fixture *labDeployFixture, tmpdir string) {

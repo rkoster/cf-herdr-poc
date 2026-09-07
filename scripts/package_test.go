@@ -62,11 +62,11 @@ func TestDevboxDeployDelegatesToLabDeployScript(t *testing.T) {
 	}
 	labDeploy := readPackageFile(t, "scripts/lab-deploy.sh")
 	build := strings.Index(labDeploy, "scripts/build.sh")
-	push := strings.Index(labDeploy, "cf push")
+	push := strings.Index(labDeploy, `"$CF_BIN" push`)
 	if build < 0 || push < 0 || build > push {
 		t.Fatalf("lab deploy must build before push")
 	}
-	for _, required := range []string{"BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "ALLOW_NIX_RUNTIME_RELOCATION=1", "DEPLOY_TMPDIR", "build distribution", "push manager", "configure routes", "start manager"} {
+	for _, required := range []string{"CF_BIN", "BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "ALLOW_NIX_RUNTIME_RELOCATION=1", "DEPLOY_TMPDIR", "build distribution", "push manager", "configure routes", "start manager"} {
 		if !strings.Contains(labDeploy, required) {
 			t.Errorf("lab deploy script missing %q", required)
 		}

@@ -82,7 +82,7 @@ devbox run deploy
 export MANAGER_APP_GUID="$(cf app "$MANAGER_APP_NAME" --guid)"
 ```
 
-`manifest.yml` has `no-route: true`; `devbox run deploy` first builds `dist/` from the locally installed Nix runtimes using the explicit lab relocation mode, then maps exactly one public manager route and one manager identity route, and no sandbox route. It does not generate or persist `MANAGER_API_TOKEN`; supply that ephemeral secret externally.
+`manifest.yml` has `no-route: true`; `devbox run deploy` first builds `dist/` from the locally installed Nix runtimes using the explicit lab relocation mode, then maps exactly one public manager route and one manager identity route, and no sandbox route. On NixOS, the command automatically discovers `cf`, `herdr`, and (after Devbox's Bun) Bun in the normal per-user Nix profiles. Set `CF_BIN`, `HERDR_RUNTIME_BIN`, or `BUN_RUNTIME_BIN` to override discovery with an explicit executable path. It does not generate or persist `MANAGER_API_TOKEN`; supply that ephemeral secret externally.
 
 For each manager-created sandbox, obtain its GUID and apply both exact route policies after its identity route exists:
 
@@ -120,7 +120,7 @@ rm -rf dist
 TMPDIR=/tmp go test -race ./...
 TMPDIR=/tmp go vet ./...
 (cd web && bun run test && bun run typecheck && bun run build)
-bash -n scripts/build.sh scripts/build-runtime.sh scripts/relocate-nix-runtime.sh scripts/smoke-relocated-runtime.sh scripts/deploy.sh sandbox/start.sh
+bash -n scripts/build.sh scripts/build-runtime.sh scripts/relocate-nix-runtime.sh scripts/smoke-relocated-runtime.sh scripts/deploy.sh scripts/lab-deploy.sh sandbox/start.sh
 ```
 
 Artifact tests use fake executable fixtures only; they do not establish that any real Bun or Herdr binary is portable. Real portable artifact execution and live CF behavior remain pending.
