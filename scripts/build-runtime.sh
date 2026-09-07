@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 COLLIE_DIR="$ROOT/collie"
 RUNTIME_DIR="${RUNTIME_DIR:-$ROOT/sandbox/runtime}"
+TARGET_INSTALL_DIR="${TARGET_INSTALL_DIR:-}"
+MANAGER_RUNTIME_DIR="${MANAGER_RUNTIME_DIR:-}"
+MANAGER_TARGET_INSTALL_DIR="${MANAGER_TARGET_INSTALL_DIR:-}"
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
 TOOLS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cf-herdr-tools.XXXXXX")"
@@ -19,6 +22,19 @@ require_tool() {
   fi
   printf '%s' "$path"
 }
+
+validate_target_install_dir() {
+	local variable=$1 path=${!1:-}
+	if [[ -z "$path" || "$path" != /* || "$path" =~ [[:space:][:cntrl:]] || "$path" == *//* || "$path" == */./* || "$path" == */../* || "$path" == */. || "$path" == */.. ]]; then
+		printf 'error: %s must be an absolute normalized path without whitespace or traversal: %s\n' "$variable" "$path" >&2
+		exit 1
+	fi
+}
+
+validate_target_install_dir TARGET_INSTALL_DIR
+if [[ -n "$MANAGER_RUNTIME_DIR" ]]; then
+	validate_target_install_dir MANAGER_TARGET_INSTALL_DIR
+fi
 
 validate_runtime_binary() {
 	local variable=$1
@@ -79,7 +95,7 @@ if [[ -n "${ALLOW_NIX_RUNTIME_RELOCATION:-}" && "${ALLOW_NIX_RUNTIME_RELOCATION:
 fi
 
 relocate_runtime() {
-	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/relocate-nix-runtime.sh" "$1" "$2"
+	TARGET_INSTALL_DIR="$3" TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/relocate-nix-runtime.sh" "$1" "$2"
 }
 
 scan_elf_metadata() {
@@ -122,9 +138,9 @@ mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie"
 CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o "$RUNTIME_DIR/bin/sandbox-bootstrap" ./cmd/sandbox-bootstrap
 test -x "$RUNTIME_DIR/bin/sandbox-bootstrap"
 if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" == 1 ]]; then
-	relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun"
-	relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr"
-	relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie"
+	relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun" "$TARGET_INSTALL_DIR"
+	relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr" "$TARGET_INSTALL_DIR"
+	relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie" "$TARGET_INSTALL_DIR"
 	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$RUNTIME_DIR/bin/bun" --version >/dev/null
 	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$RUNTIME_DIR/bin/herdr" --version >/dev/null
 	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$RUNTIME_DIR/bin/collie" --version >/dev/null
@@ -132,6 +148,21 @@ else
 	install -m 0755 "$bun_bin" "$RUNTIME_DIR/bin/bun"
 	install -m 0755 "$herdr_bin" "$RUNTIME_DIR/bin/herdr"
 	install -m 0755 "$collie_bin" "$RUNTIME_DIR/bin/collie"
+fi
+
+if [[ -n "$MANAGER_RUNTIME_DIR" ]]; then
+	rm -rf "$MANAGER_RUNTIME_DIR"
+	mkdir -p "$MANAGER_RUNTIME_DIR/bin"
+	if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" == 1 ]]; then
+		relocate_runtime "$bun_bin" "$MANAGER_RUNTIME_DIR/bin/bun" "$MANAGER_TARGET_INSTALL_DIR"
+		relocate_runtime "$collie_bin" "$MANAGER_RUNTIME_DIR/bin/collie" "$MANAGER_TARGET_INSTALL_DIR"
+		TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/bun" --version >/dev/null
+		TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$MANAGER_RUNTIME_DIR/bin/collie" --version >/dev/null
+	else
+		install -m 0755 "$bun_bin" "$MANAGER_RUNTIME_DIR/bin/bun"
+		install -m 0755 "$collie_bin" "$MANAGER_RUNTIME_DIR/bin/collie"
+	fi
+	scan_elf_metadata "$MANAGER_RUNTIME_DIR"
 fi
 install -m 0755 "$ROOT/sandbox/start.sh" "$RUNTIME_DIR/start.sh"
 

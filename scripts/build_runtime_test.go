@@ -71,12 +71,22 @@ func TestBuildRuntimeRelocationIsExplicitAndCoversEveryNixRuntime(t *testing.T) 
 	script := readBuildScript(t)
 	for _, required := range []string{
 		"ALLOW_NIX_RUNTIME_RELOCATION", "relocate-nix-runtime.sh",
-		`relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun"`,
-		`relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr"`,
-		`relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie"`,
+		`TARGET_INSTALL_DIR="$3"`,
+		`relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun" "$TARGET_INSTALL_DIR"`,
+		`relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr" "$TARGET_INSTALL_DIR"`,
+		`relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie" "$TARGET_INSTALL_DIR"`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("build-runtime.sh missing relocation contract %q", required)
+		}
+	}
+}
+
+func TestBuildRuntimeRequiresAbsoluteNormalizedTargetInstallDir(t *testing.T) {
+	for _, target := range []string{"", "relative", "/home/vcap/app/../bin", "/home/vcap/app/with space"} {
+		output, err := runBuild(t, []string{"TARGET_INSTALL_DIR=" + target})
+		if err == nil || !strings.Contains(output, "TARGET_INSTALL_DIR") {
+			t.Fatalf("target %q: output=%q err=%v", target, output, err)
 		}
 	}
 }
@@ -132,6 +142,15 @@ func runBuild(t *testing.T, env []string) (string, error) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("locate test file")
+	}
+	hasTarget := false
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "TARGET_INSTALL_DIR=") {
+			hasTarget = true
+		}
+	}
+	if !hasTarget {
+		env = append(env, "TARGET_INSTALL_DIR=/home/vcap/app/.sandbox/bin")
 	}
 	command := exec.Command("bash", filepath.Join(filepath.Dir(filename), "build-runtime.sh"))
 	command.Env = append([]string{"PATH=" + os.Getenv("PATH")}, env...)

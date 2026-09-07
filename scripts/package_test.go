@@ -30,7 +30,8 @@ func TestBuildUsesTransactionalStagingAndValidatesArtifactContract(t *testing.T)
 	for _, required := range []string{
 		"mktemp -d", "DIST_STAGING", "trap", "mv", "CGO_ENABLED=0", "GOOS=", "GOARCH=",
 		"scripts/build-runtime.sh", "BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "RUNTIME_DIR=",
-		"web/dist", "sandbox/runtime", "collie/bridge", "collie/node_modules", "collie/package.json",
+		"TARGET_INSTALL_DIR=", "MANAGER_RUNTIME_DIR=", "MANAGER_TARGET_INSTALL_DIR=",
+		"web/dist", "sandbox/runtime", "manager-runtime", "collie/bridge", "collie/node_modules", "collie/package.json",
 		"test -x", "test -f", "${name}.previous",
 	} {
 		if !strings.Contains(script, required) {
@@ -83,7 +84,7 @@ func TestBuildAssemblesExpectedLayoutWithFixtureTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build.sh failed: %v\n%s", err, output)
 	}
-	for _, executable := range []string{"manager", "sandbox/runtime/bin/bun", "sandbox/runtime/bin/herdr", "sandbox/runtime/bin/collie", "sandbox/runtime/bin/sandbox-bootstrap", "sandbox/runtime/start.sh"} {
+	for _, executable := range []string{"manager", "manager-runtime/bin/bun", "manager-runtime/bin/collie", "sandbox/runtime/bin/bun", "sandbox/runtime/bin/herdr", "sandbox/runtime/bin/collie", "sandbox/runtime/bin/sandbox-bootstrap", "sandbox/runtime/start.sh"} {
 		info, statErr := os.Stat(filepath.Join(dist, filepath.FromSlash(executable)))
 		if statErr != nil || info.Mode()&0o111 == 0 {
 			t.Errorf("executable %s: info=%v err=%v", executable, info, statErr)
@@ -92,6 +93,32 @@ func TestBuildAssemblesExpectedLayoutWithFixtureTools(t *testing.T) {
 	for _, file := range []string{"web/index.html", "sandbox/runtime/collie/bridge/index.ts", "sandbox/runtime/collie/package.json", "sandbox/runtime/collie/node_modules/fixture/package.json", "sandbox/runtime/collie/web/dist/index.html"} {
 		if _, statErr := os.Stat(filepath.Join(dist, filepath.FromSlash(file))); statErr != nil {
 			t.Errorf("artifact %s: %v", file, statErr)
+		}
+	}
+}
+
+func TestManifestUsesManagerSpecificExecutablesAndSharedCollieAssets(t *testing.T) {
+	manifest := readPackageFile(t, "manifest.yml")
+	for _, required := range []string{
+		"MANAGER_COLLIE_DIR: ./sandbox/runtime/collie",
+		"MANAGER_RUNTIME_DIR: ./manager-runtime",
+		"MANAGER_BUN_EXECUTABLE: ./manager-runtime/bin/bun",
+		"MANAGER_COLLIE_EXECUTABLE: ./manager-runtime/bin/collie",
+	} {
+		if !strings.Contains(manifest, required) {
+			t.Errorf("manifest.yml missing %q", required)
+		}
+	}
+}
+
+func TestBuildBindsSandboxAndManagerExecutablesToDifferentCFLayouts(t *testing.T) {
+	script := readPackageFile(t, "scripts/build.sh")
+	for _, required := range []string{
+		"TARGET_INSTALL_DIR=/home/vcap/app/.sandbox/bin",
+		"MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin",
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("build.sh missing %q", required)
 		}
 	}
 }
@@ -219,7 +246,7 @@ func TestDeferredSpikeDocumentsRecordCommandsWithoutObservations(t *testing.T) {
 func TestRuntimeDocsDescribeNeededClosureAndResidualDlopenRisk(t *testing.T) {
 	for _, name := range []string{"README.md", "docs/spikes/cf-buildpack-runtime.md"} {
 		doc := readPackageFile(t, name)
-		for _, required := range []string{"DT_NEEDED", "dlopen", "live"} {
+		for _, required := range []string{"DT_NEEDED", "dlopen", "live", "GLIBC_PRIVATE", "/home/vcap/app/.sandbox/bin", "/home/vcap/app/manager-runtime/bin"} {
 			if !strings.Contains(doc, required) {
 				t.Errorf("%s missing relocation limitation %q", name, required)
 			}
@@ -317,6 +344,8 @@ printf fixture > "$RUNTIME_DIR/collie/bridge/index.ts"
 printf '{}' > "$RUNTIME_DIR/collie/package.json"
 printf '{}' > "$RUNTIME_DIR/collie/node_modules/fixture/package.json"
 printf '<html>collie</html>' > "$RUNTIME_DIR/collie/web/dist/index.html"
+mkdir -p "$MANAGER_RUNTIME_DIR/bin"
+for name in bun collie; do printf '#!/bin/sh\n' > "$MANAGER_RUNTIME_DIR/bin/$name"; chmod +x "$MANAGER_RUNTIME_DIR/bin/$name"; done
 `
 	writeExecutable(t, runtimeScript, runtimeBody)
 	fakeRuntime := filepath.Join(temp, "portable")

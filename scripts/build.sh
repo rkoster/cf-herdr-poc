@@ -34,6 +34,9 @@ CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o "$DIST_STAGING/manager" 
 test -x "$DIST_STAGING/manager"
 
 RUNTIME_DIR="$DIST_STAGING/sandbox/runtime" GOOS="$GOOS" GOARCH="$GOARCH" \
+	TARGET_INSTALL_DIR=/home/vcap/app/.sandbox/bin \
+	MANAGER_RUNTIME_DIR="$DIST_STAGING/manager-runtime" \
+	MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin \
 	BUN_RUNTIME_BIN="$BUN_RUNTIME_BIN" HERDR_RUNTIME_BIN="$HERDR_RUNTIME_BIN" \
 	ALLOW_NIX_RUNTIME_RELOCATION="${ALLOW_NIX_RUNTIME_RELOCATION:-}" \
 	bash "$BUILD_RUNTIME_SCRIPT"
@@ -41,7 +44,7 @@ RUNTIME_DIR="$DIST_STAGING/sandbox/runtime" GOOS="$GOOS" GOARCH="$GOARCH" \
 mkdir -p "$DIST_STAGING/web"
 cp -R "$ROOT/web/dist/." "$DIST_STAGING/web/"
 
-for executable in manager sandbox/runtime/bin/bun sandbox/runtime/bin/herdr sandbox/runtime/bin/collie sandbox/runtime/bin/sandbox-bootstrap sandbox/runtime/start.sh; do
+for executable in manager manager-runtime/bin/bun manager-runtime/bin/collie sandbox/runtime/bin/bun sandbox/runtime/bin/herdr sandbox/runtime/bin/collie sandbox/runtime/bin/sandbox-bootstrap sandbox/runtime/start.sh; do
 	test -x "$DIST_STAGING/$executable" || { printf 'error: missing executable artifact %s\n' "$executable" >&2; exit 1; }
 done
 for artifact in web/index.html sandbox/runtime/collie/bridge/index.ts sandbox/runtime/collie/package.json sandbox/runtime/collie/web/dist/index.html; do

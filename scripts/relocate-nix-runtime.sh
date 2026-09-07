@@ -12,7 +12,12 @@ fi
 
 source_path=$1
 destination=$2
+target_install_dir="${TARGET_INSTALL_DIR:-}"
 target_arch="${TARGET_ARCH:-${GOARCH:-amd64}}"
+if [[ -z "$target_install_dir" || "$target_install_dir" != /* || "$target_install_dir" =~ [[:space:][:cntrl:]] || "$target_install_dir" == *//* || "$target_install_dir" == */./* || "$target_install_dir" == */../* || "$target_install_dir" == */. || "$target_install_dir" == */.. ]]; then
+	printf 'error: TARGET_INSTALL_DIR must be an absolute normalized path without whitespace or traversal: %s\n' "$target_install_dir" >&2
+	exit 1
+fi
 for tool in readlink readelf ldd install patchelf sha256sum; do
 	command -v "$tool" >/dev/null 2>&1 || { printf 'error: required tool %s was not found in PATH\n' "$tool" >&2; exit 1; }
 done
@@ -31,8 +36,8 @@ machine="$(printf '%s\n' "$elf_header" | while IFS= read -r line; do
 	if [[ "$line" =~ ^[[:space:]]*Machine:[[:space:]]*(.+)$ ]]; then printf '%s' "${BASH_REMATCH[1]}"; fi
 done)"
 case "$target_arch:$machine" in
-	amd64:Advanced\ Micro\ Devices\ X86-64) target_interpreter="${TARGET_INTERPRETER:-/lib64/ld-linux-x86-64.so.2}" ;;
-	arm64:AArch64) target_interpreter="${TARGET_INTERPRETER:-/lib/ld-linux-aarch64.so.1}" ;;
+	amd64:Advanced\ Micro\ Devices\ X86-64) loader_soname=ld-linux-x86-64.so.2 ;;
+	arm64:AArch64) loader_soname=ld-linux-aarch64.so.1 ;;
 	amd64:*|arm64:*) printf 'error: ELF architecture %s does not match target %s\n' "$machine" "$target_arch" >&2; exit 1 ;;
 	*) printf 'error: unsupported target architecture: %s\n' "$target_arch" >&2; exit 1 ;;
 esac
@@ -40,10 +45,6 @@ esac
 source_interpreter="$(patchelf --print-interpreter "$resolved_source" 2>/dev/null || true)"
 if [[ "$source_interpreter" != /* || ! -f "$source_interpreter" ]]; then
 	printf 'error: ELF interpreter is missing or nonabsolute: %s\n' "$source_interpreter" >&2
-	exit 1
-fi
-if [[ "$target_interpreter" != /* ]]; then
-	printf 'error: target ELF interpreter must be absolute: %s\n' "$target_interpreter" >&2
 	exit 1
 fi
 
@@ -103,6 +104,7 @@ fi
 destination_dir="$(dirname -- "$destination")"
 destination_name="$(basename -- "$destination")"
 library_dir="$destination_dir/.${destination_name}-libs"
+target_interpreter="$target_install_dir/.${destination_name}-libs/$loader_soname"
 mkdir -p "$destination_dir"
 rm -rf "$library_dir"
 mkdir -p "$library_dir"
@@ -178,7 +180,7 @@ resolve_needed() {
 
 declare -A inspected=()
 declare -a queue=("$resolved_source")
-copy_library "$source_interpreter" "$(basename -- "$source_interpreter")" >/dev/null
+copy_library "$source_interpreter" "$loader_soname" >/dev/null
 while ((${#queue[@]})); do
 	requester="${queue[0]}"
 	queue=("${queue[@]:1}")

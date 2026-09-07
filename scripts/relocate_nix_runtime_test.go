@@ -30,7 +30,7 @@ func TestRelocateNixRuntimeExecutesWithExactArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(temp, "bundle", "runtime")
-	runRelocator(t, link, destination, []string{"TARGET_INTERPRETER=" + interpreter, "TARGET_ARCH=" + runtimeArch()})
+	runRelocator(t, link, destination, []string{"TARGET_ARCH=" + runtimeArch()})
 
 	if err := os.RemoveAll(filepath.Join(temp, "nix")); err != nil {
 		t.Fatal(err)
@@ -49,8 +49,9 @@ func TestRelocateNixRuntimeExecutesWithExactArguments(t *testing.T) {
 	if len(elf) < 4 || string(elf[:4]) != "\x7fELF" {
 		t.Fatalf("destination is not a direct ELF executable: %x", elf[:4])
 	}
-	if got := printPatchelf(t, "--print-interpreter", destination); got != interpreter {
-		t.Fatalf("interpreter = %q, want %q", got, interpreter)
+	wantInterpreter := filepath.Join(filepath.Dir(destination), ".runtime-libs", filepath.Base(interpreter))
+	if got := printPatchelf(t, "--print-interpreter", destination); got != wantInterpreter {
+		t.Fatalf("interpreter = %q, want %q", got, wantInterpreter)
 	}
 	if got := printPatchelf(t, "--print-rpath", destination); got != "$ORIGIN/.runtime-libs" {
 		t.Fatalf("rpath = %q, want $ORIGIN/.runtime-libs", got)
@@ -71,8 +72,7 @@ func TestRelocateNixRuntimeUsesIndependentLibraryDirectories(t *testing.T) {
 	source := compileArgvFixture(t, filepath.Join(temp, "nix-like"))
 	first := filepath.Join(temp, "bundle", "bun")
 	second := filepath.Join(temp, "bundle", "herdr")
-	interpreter := printPatchelf(t, "--print-interpreter", source)
-	env := []string{"TARGET_INTERPRETER=" + interpreter, "TARGET_ARCH=" + runtimeArch()}
+	env := []string{"TARGET_ARCH=" + runtimeArch()}
 	runRelocator(t, source, first, env)
 	runRelocator(t, source, second, env)
 
@@ -164,7 +164,7 @@ func TestRelocateNixRuntimeRecursivelyCopiesNeededLibraries(t *testing.T) {
 	realLdd, _ := exec.LookPath("ldd")
 	writeExecutable(t, filepath.Join(tools, "ldd"), "#!/bin/sh\n\""+realLdd+"\" \"$1\" | grep -v libinner\n")
 	destination := filepath.Join(temp, "bundle", "runtime")
-	runRelocator(t, source, destination, []string{"PATH=" + tools + ":" + os.Getenv("PATH"), "TARGET_INTERPRETER=" + printPatchelf(t, "--print-interpreter", source), "TARGET_ARCH=" + runtimeArch()})
+	runRelocator(t, source, destination, []string{"PATH=" + tools + ":" + os.Getenv("PATH"), "TARGET_ARCH=" + runtimeArch()})
 	if _, err := os.Stat(filepath.Join(temp, "bundle", ".runtime-libs", "libinner.so")); err != nil {
 		t.Fatalf("recursive dependency missing: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestRelocateNixRuntimePreservesVersionedSONAMEAlias(t *testing.T) {
 	source := filepath.Join(temp, "runtime")
 	compile(t, "cc", "-Wl,-rpath,"+libs, "-L"+libs, "-o", source, filepath.Join(temp, "main.c"), "-l:libfoo.so.1")
 	destination := filepath.Join(temp, "bundle", "runtime")
-	runRelocator(t, source, destination, []string{"TARGET_INTERPRETER=" + printPatchelf(t, "--print-interpreter", source), "TARGET_ARCH=" + runtimeArch()})
+	runRelocator(t, source, destination, []string{"TARGET_ARCH=" + runtimeArch()})
 
 	alias := filepath.Join(temp, "bundle", ".runtime-libs", "libfoo.so.1")
 	info, err := os.Lstat(alias)
@@ -263,8 +263,9 @@ func TestRelocatedBunPreservesExecPathAndSelfSpawn(t *testing.T) {
 	if err != nil || !strings.HasPrefix(bun, "/nix/store/") {
 		t.Skip("Nix Bun unavailable")
 	}
-	destination := filepath.Join(t.TempDir(), "bun")
-	runRelocator(t, bun, destination, []string{"TARGET_INTERPRETER=" + printPatchelf(t, "--print-interpreter", bun), "TARGET_ARCH=" + runtimeArch()})
+	targetDir := t.TempDir()
+	destination := filepath.Join(targetDir, "bun")
+	runRelocator(t, bun, destination, []string{"TARGET_INSTALL_DIR=" + targetDir, "TARGET_ARCH=" + runtimeArch()})
 	program := `if (process.execPath !== process.argv[0]) throw new Error(process.execPath); const p=Bun.spawnSync([process.execPath,"--version"]); if (p.exitCode !== 0 || !p.stdout.toString().includes(Bun.version)) throw new Error(p.stdout.toString()); console.log(process.execPath)`
 	output, err := exec.Command(destination, "-e", program).CombinedOutput()
 	if err != nil {
@@ -272,6 +273,24 @@ func TestRelocatedBunPreservesExecPathAndSelfSpawn(t *testing.T) {
 	}
 	if strings.TrimSpace(string(output)) != destination {
 		t.Fatalf("process.execPath = %q, want %q", strings.TrimSpace(string(output)), destination)
+	}
+}
+
+func TestRelocateNixRuntimeRejectsInvalidTargetInstallDir(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("ELF relocation is Linux-only")
+	}
+	for _, tool := range []string{"cc", "ldd", "patchelf"} {
+		requireHostTool(t, tool)
+	}
+	source := compileArgvFixture(t, t.TempDir())
+	for _, target := range []string{"", "relative/bin", "/home/vcap/app/../escape", "/home/vcap//app/bin", "/home/vcap/app/with space"} {
+		t.Run(strings.ReplaceAll(target, "/", "_"), func(t *testing.T) {
+			output, err := runRelocatorCommandRaw(source, filepath.Join(t.TempDir(), "runtime"), []string{"TARGET_INSTALL_DIR=" + target, "TARGET_ARCH=" + runtimeArch()})
+			if err == nil || !strings.Contains(output, "TARGET_INSTALL_DIR") {
+				t.Fatalf("target %q: output=%q err=%v", target, output, err)
+			}
+		})
 	}
 }
 
@@ -355,12 +374,34 @@ func runtimeArch() string {
 
 func runRelocator(t *testing.T, source, destination string, env []string) {
 	t.Helper()
+	hasTarget := false
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "TARGET_INSTALL_DIR=") {
+			hasTarget = true
+		}
+	}
+	if !hasTarget {
+		env = append(env, "TARGET_INSTALL_DIR="+filepath.Dir(destination))
+	}
 	if output, err := runRelocatorCommand(source, destination, env); err != nil {
 		t.Fatalf("relocate runtime: %v\n%s", err, output)
 	}
 }
 
 func runRelocatorCommand(source, destination string, env []string) (string, error) {
+	hasTarget := false
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "TARGET_INSTALL_DIR=") {
+			hasTarget = true
+		}
+	}
+	if !hasTarget {
+		env = append(env, "TARGET_INSTALL_DIR="+filepath.Dir(destination))
+	}
+	return runRelocatorCommandRaw(source, destination, env)
+}
+
+func runRelocatorCommandRaw(source, destination string, env []string) (string, error) {
 	_, filename, _, _ := runtime.Caller(0)
 	command := exec.Command("bash", filepath.Join(filepath.Dir(filename), "relocate-nix-runtime.sh"), source, destination)
 	command.Env = append(os.Environ(), env...)

@@ -6,7 +6,7 @@ Date: 2026-09-04
 
 Reason: Portable Linux Bun and Herdr binaries are not available locally. The POC can now relocate already-installed Nix-linked runtimes without internet downloads, but live CF execution and production-portable artifact validation remain pending.
 
-The relocation mode is a lab-only workaround. `ALLOW_NIX_RUNTIME_RELOCATION=1` patches each runtime directly for the conventional cflinuxfs interpreter and an origin-relative RPATH, recursively bundles its startup `DT_NEEDED` graph, and includes available glibc NSS/DNS resolver modules in a private directory so incompatible runtime sets do not collide. This increases the upload substantially and is not the production recommendation; production should use official static or portable artifacts.
+The relocation mode is a lab-only workaround. Direct execution with the cflinuxfs loader and bundled Nix libc failed with undefined `__tunable_is_initialized@GLIBC_PRIVATE`; explicit execution through the bundled Nix loader succeeded. `ALLOW_NIX_RUNTIME_RELOCATION=1` therefore patches each direct ELF to an absolute private-loader interpreter and an origin-relative RPATH. Sandbox binaries are bound to `/home/vcap/app/.sandbox/bin`; independent manager Bun and Collie copies are bound to `/home/vcap/app/manager-runtime/bin`, while manager Collie reuses the sandbox Collie asset tree. Relocation recursively bundles each startup `DT_NEEDED` graph and available glibc NSS/DNS resolver modules. Exact install-path binding and duplicated private executable libraries increase build and upload friction and are not the production recommendation; production should use official static or portable artifacts.
 
 The bundle is not proven to be a complete dynamic closure. Unobserved `dlopen` choices and absolute runtime asset paths can still escape the startup graph. Packaged ELF loader metadata is checked for actionable `/nix/store/` paths, but arbitrary embedded diagnostics strings are not rejected. A live cflinuxfs smoke test remains required.
 
@@ -23,7 +23,7 @@ export HERDR_RUNTIME_BIN=/absolute/path/to/portable-linux-herdr
 # export ALLOW_NIX_RUNTIME_RELOCATION=1
 time GOOS=linux GOARCH=amd64 bash scripts/build.sh
 du -sh dist dist/sandbox/runtime
-file dist/manager dist/sandbox/runtime/bin/*
+file dist/manager dist/manager-runtime/bin/* dist/sandbox/runtime/bin/*
 ldd dist/manager dist/sandbox/runtime/bin/sandbox-bootstrap
 cf version
 cf buildpacks
