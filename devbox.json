@@ -17,7 +17,8 @@
       "scripts": {
         "test": "go test ./...",
         "setup": "bash -c 'set -euo pipefail; test -f bosh.env; test -f cf.yml; test -f ops-enable-mtls-app-routing.yml; source bosh.env; : \"${BOSH_ENVIRONMENT:?BOSH_ENVIRONMENT is required by bosh.env}\"; bosh -n -e \"$BOSH_ENVIRONMENT\" -d cf deploy cf.yml -o ops-enable-mtls-app-routing.yml; cf create-shared-domain apps.identity --enforce-route-policies --scope any'",
-        "deploy": "bash scripts/lab-deploy.sh"
+        "deploy": "bash scripts/lab-deploy.sh",
+        "token": "bash scripts/token.sh"
       }
     }
   }
