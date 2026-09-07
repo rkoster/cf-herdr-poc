@@ -16,6 +16,7 @@ func TestBuildRequiresPortableRuntimeBinaries(t *testing.T) {
 	command := exec.Command("bash", filepath.Join(root, "scripts", "build.sh"))
 	command.Dir = root
 	command.Env = []string{"PATH=" + os.Getenv("PATH")}
+	command.Env = append(command.Env, "BUILD_MODE=nix-relocation")
 	output, err := command.CombinedOutput()
 	if err == nil {
 		t.Fatal("build.sh succeeded without portable runtime binaries")
@@ -430,6 +431,7 @@ printf '<html>collie</html>' > "$RUNTIME_DIR/collie/web/dist/index.html"
 		"PATH=" + bin + ":" + os.Getenv("PATH"), "DIST_DIR=" + dist,
 		"BUILD_RUNTIME_SCRIPT=" + runtimeScript, "BUN_RUNTIME_BIN=" + fakeRuntime,
 		"HERDR_RUNTIME_BIN=" + fakeRuntime, "CF_BIN=" + fakeRuntime, "FIXTURE_WEB_DIST=" + filepath.Join(root, "web", "dist"),
+		"BUILD_MODE=nix-relocation",
 	}
 	if failRuntime {
 		command.Env = append(command.Env, "FAIL_RUNTIME=1")

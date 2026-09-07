@@ -40,17 +40,22 @@ resolve_tool() {
 	printf '%s' "$path"
 }
 
-BUN_RUNTIME_BIN="$(resolve_tool BUN_RUNTIME_BIN bun)"
-HERDR_RUNTIME_BIN="$(resolve_tool HERDR_RUNTIME_BIN herdr)"
-CF_BIN="$(resolve_tool CF_BIN cf)"
-export BUN_RUNTIME_BIN HERDR_RUNTIME_BIN ALLOW_NIX_RUNTIME_RELOCATION=1
-export CF_BIN
-for tool in go patchelf readelf ldd nix-store; do
-	if ! command -v "$tool" >/dev/null 2>&1; then
-		printf 'error: required build tool %s was not found in PATH\n' "$tool" >&2
-		exit 1
-	fi
-done
+BUILD_MODE="${BUILD_MODE:-cflinuxfs5}"
+if [[ "$BUILD_MODE" == nix-relocation ]]; then
+	BUN_RUNTIME_BIN="$(resolve_tool BUN_RUNTIME_BIN bun)"
+	HERDR_RUNTIME_BIN="$(resolve_tool HERDR_RUNTIME_BIN herdr)"
+	CF_BIN="$(resolve_tool CF_BIN cf)"
+	export BUN_RUNTIME_BIN HERDR_RUNTIME_BIN ALLOW_NIX_RUNTIME_RELOCATION=1 CF_BIN
+	for tool in go patchelf readelf ldd nix-store; do
+		if ! command -v "$tool" >/dev/null 2>&1; then
+			printf 'error: required build tool %s was not found in PATH\n' "$tool" >&2
+			exit 1
+		fi
+	done
+elif [[ "$BUILD_MODE" != cflinuxfs5 ]]; then
+	printf 'error: BUILD_MODE must be cflinuxfs5 or explicit nix-relocation\n' >&2
+	exit 2
+fi
 
 printf '==> build distribution\n'
 bash scripts/build.sh

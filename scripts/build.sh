@@ -7,6 +7,17 @@ BUILD_RUNTIME_SCRIPT="${BUILD_RUNTIME_SCRIPT:-$ROOT/scripts/build-runtime.sh}"
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
 
+if [[ -z "${BUN_RUNTIME_BIN:-}" && -z "${BUILD_RUNTIME_SCRIPT:-}" ]]; then
+ printf 'error: BUN_RUNTIME_BIN is required for the legacy build; use Docker with artifact inputs or set BUILD_MODE=nix-relocation\n' >&2
+ exit 1
+fi
+if [[ -z "${BUILD_MODE:-}" && -n "${BUILD_RUNTIME_SCRIPT:-}" ]]; then BUILD_MODE=nix-relocation; else BUILD_MODE="${BUILD_MODE:-cflinuxfs5}"; fi
+case "$BUILD_MODE" in
+ cflinuxfs5) exec bash "$ROOT/scripts/build-cflinuxfs5.sh" ;;
+ nix-relocation) : ;;
+ *) printf 'error: BUILD_MODE must be cflinuxfs5 or explicit nix-relocation\n' >&2; exit 2 ;;
+esac
+
 if [[ -z "${BUN_RUNTIME_BIN:-}" ]]; then
 	printf 'error: BUN_RUNTIME_BIN is required and must name a portable runtime executable\n' >&2
 	exit 1

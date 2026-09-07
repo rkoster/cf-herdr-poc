@@ -9,6 +9,53 @@ import (
 	"testing"
 )
 
+func TestCFLinuxFS5BuilderContract(t *testing.T) {
+	root := packageRoot(t)
+	dockerfile := readFile(t, filepath.Join(root, "docker", "cflinuxfs5-builder", "Dockerfile"))
+	for _, required := range []string{
+		"BASE_IMAGE=ghcr.io/cloudfoundry/k8s/cflinuxfs5:0.53.0",
+		"FROM cflinuxfs5-tools AS build",
+		"FROM ${BASE_IMAGE} AS output",
+		"sha256sum -c",
+		"unzip",
+		"tar -xzf",
+		"HERDR_URL is required",
+		"CF_URL is required",
+		"/work/dist/manager",
+		"sandbox/runtime/bin/herdr",
+		"manager-runtime/bin/cf",
+	} {
+		if !strings.Contains(dockerfile, required) { t.Errorf("Dockerfile missing %q", required) }
+	}
+	for _, forbidden := range []string{"COPY .git", "COPY tests", "apt-get install", "latest"} {
+		if strings.Contains(dockerfile, forbidden) { t.Errorf("Dockerfile contains forbidden %q", forbidden) }
+	}
+}
+
+func TestCFLinuxFS5BuildScriptUsesDockerAndDoesNotPassSecrets(t *testing.T) {
+	script := readFile(t, filepath.Join(packageRoot(t), "scripts", "build-cflinuxfs5.sh"))
+	for _, required := range []string{"docker", "--output", "dist", "BUILD_MODE", "Docker is required"} {
+		if !strings.Contains(script, required) { t.Errorf("builder script missing %q", required) }
+	}
+	if strings.Contains(script, "MANAGER_API_TOKEN") || strings.Contains(script, "--env-file") {
+		t.Fatal("builder script passes deployment secrets to Docker")
+	}
+}
+
+func TestCFLinuxFS5DockerignoreExcludesGeneratedAndSecrets(t *testing.T) {
+	ignore := readFile(t, filepath.Join(packageRoot(t), ".dockerignore"))
+	for _, required := range []string{".git", ".env", "dist", "*.previous", "*.staging.*", "bosh/", "cf.yml"} {
+		if !strings.Contains(ignore, required) { t.Errorf(".dockerignore missing %q", required) }
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil { t.Fatal(err) }
+	return string(contents)
+}
+
 func TestBuildRuntimeRequiresPortableBinaryPaths(t *testing.T) {
 	output, err := runBuild(t, nil)
 	if err == nil {

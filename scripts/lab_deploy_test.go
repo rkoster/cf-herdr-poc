@@ -365,6 +365,7 @@ printf '%s\n' "$path"
 	fixture.env = []string{
 		"PATH=" + fixture.bin, "EVENT_LOG=" + fixture.eventLog, "TMPDIR_LOG=" + fixture.tmpdirLog,
 		"BUILD_ENV_LOG=" + fixture.buildEnvLog,
+		"BUILD_MODE=nix-relocation",
 		"MKTEMP_LOG=" + filepath.Join(temp, "mktemp.log"),
 		"MANAGER_APP_NAME=manager", "PUBLIC_DOMAIN=apps.example", "MANAGER_PUBLIC_HOST=manager",
 		"CF_IDENTITY_DOMAIN=apps.identity", "MANAGER_PACK_HOST=manager-pack.apps.identity",
