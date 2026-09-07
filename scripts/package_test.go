@@ -56,6 +56,68 @@ func TestManifestPinsVerifiedHerdrArtifacts(t *testing.T) {
 	}
 }
 
+func TestCFLinuxFS5SelectorUsesPinnedBunAndHerdrDefaults(t *testing.T) {
+	root := packageRoot(t)
+	command := exec.Command("bash", filepath.Join(root, "scripts", "select-cflinuxfs5-artifacts.sh"), "amd64")
+	command.Dir = root
+	command.Env = []string{"PATH=" + os.Getenv("PATH")}
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("selector succeeded with unresolved CF metadata")
+	}
+	text := string(output)
+	for _, required := range []string{
+		"BUN_URL=https://github.com/oven-sh/bun/releases/download/bun-v1.3.13/bun-linux-x64.zip",
+		"BUN_SHA256=79c0771fa8b92c33aae41e15a0e0d307ea99d0e2f00317c71c6c53237a78e25a",
+		"HERDR_URL=https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-x86_64",
+		"HERDR_SHA256=976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4",
+		"CF_URL is required for amd64",
+		"CF_SHA256 is required for amd64",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("selector output missing %q: %s", required, text)
+		}
+	}
+}
+
+func TestCFLinuxFS5SelectorAllowsExplicitNonEmptyOverrides(t *testing.T) {
+	root := packageRoot(t)
+	command := exec.Command("bash", filepath.Join(root, "scripts", "select-cflinuxfs5-artifacts.sh"), "amd64")
+	command.Dir = root
+	command.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"BUN_URL=https://example.test/bun.zip", "BUN_SHA256=bun-override",
+		"HERDR_URL=https://example.test/herdr", "HERDR_SHA256=herdr-override",
+		"CF_URL=https://example.test/cf.tgz", "CF_SHA256=cf-override",
+	}
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("selector failed with explicit overrides: %v\n%s", err, output)
+	}
+	for _, required := range []string{
+		"BUN_URL=https://example.test/bun.zip", "BUN_SHA256=bun-override",
+		"HERDR_URL=https://example.test/herdr", "HERDR_SHA256=herdr-override",
+		"CF_URL=https://example.test/cf.tgz", "CF_SHA256=cf-override",
+	} {
+		if !strings.Contains(string(output), required) {
+			t.Errorf("selector output missing override %q: %s", required, output)
+		}
+	}
+}
+
+func TestCFLinuxFS5BuildDoesNotPassEmptyArtifactOverrides(t *testing.T) {
+	script := readPackageFile(t, "scripts/build-cflinuxfs5.sh")
+	for _, forbidden := range []string{
+		`BUN_URL="${BUN_URL:-}"`, `BUN_SHA256="${BUN_SHA256:-}"`,
+		`HERDR_URL="${HERDR_URL:-}"`, `HERDR_SHA256="${HERDR_SHA256:-}"`,
+		`CF_URL="${CF_URL:-}"`, `CF_SHA256="${CF_SHA256:-}"`,
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("build script still manufactures empty artifact override %q", forbidden)
+		}
+	}
+}
+
 func TestReadmeDocumentsPinnedHerdrBuilderArtifacts(t *testing.T) {
 	readme := readPackageFile(t, "README.md")
 	for _, required := range []string{

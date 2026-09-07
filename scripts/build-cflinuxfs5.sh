@@ -13,7 +13,7 @@ case "$GOARCH" in
 esac
 artifact_file="$(mktemp)"
 trap 'rm -f "$artifact_file"' EXIT
-if ! BUN_URL="${BUN_URL:-}" BUN_SHA256="${BUN_SHA256:-}" HERDR_URL="${HERDR_URL:-}" HERDR_SHA256="${HERDR_SHA256:-}" CF_URL="${CF_URL:-}" CF_SHA256="${CF_SHA256:-}" bash "$ROOT/scripts/select-cflinuxfs5-artifacts.sh" "$TARGETARCH" >"$artifact_file"; then
+if ! bash "$ROOT/scripts/select-cflinuxfs5-artifacts.sh" "$TARGETARCH" >"$artifact_file"; then
   exit 2
 fi
 artifact_args=()

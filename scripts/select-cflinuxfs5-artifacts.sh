@@ -8,8 +8,17 @@ case "$arch" in
   *) printf 'error: unsupported artifact architecture %s; expected amd64 or arm64\n' "$arch" >&2; exit 2 ;;
 esac
 
-# Indirect expansion keeps the manifest's uppercase architecture keys authoritative.
-source "$ROOT/docker/cflinuxfs5-builder/artifacts.env"
+# Read only literal manifest assignments; this file is data, not executable shell.
+while IFS='=' read -r key value; do
+  [[ -z "$key" || "$key" == \#* ]] && continue
+  if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    printf 'error: invalid manifest key %s\n' "$key" >&2
+    exit 2
+  fi
+  declare -g "$key=$value"
+done < "$ROOT/docker/cflinuxfs5-builder/artifacts.env"
+
+# Indirect expansion keeps architecture-specific manifest values as defaults.
 missing=0
 for name in BUN_URL BUN_SHA256 HERDR_URL HERDR_SHA256 CF_URL CF_SHA256; do
   key="${name}_${suffix}"
