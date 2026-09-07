@@ -24,7 +24,7 @@ The nested Collie fork is pinned at `e6c7d8b80e70267439d768ffc5b9e3d408b84cd0`. 
 - The default cflinuxfs5 builder downloads only the pinned, SHA-256-verified Bun and Herdr Linux
   artifacts from `docker/cflinuxfs5-builder/artifacts.env`; it fails closed when required metadata
   is missing. The explicit legacy `BUILD_MODE=nix-relocation` path requires externally supplied
-  runtime binaries, and unresolved CF CLI URL/checksum metadata remains fail-closed.
+  runtime binaries.
 
 ## Build
 
@@ -36,12 +36,14 @@ HERDR_URL_AMD64=https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr
 HERDR_SHA256_AMD64=976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4
 HERDR_URL_ARM64=https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-aarch64
 HERDR_SHA256_ARM64=f55610658e1c2e0d2aaef730b4b2ab885f7f8ba00285ab372bfb14f2e3d5b40d
-export CF_URL=https://example.invalid/cf8-cli-linux.tgz
-export CF_SHA256=obtain-from-official-release-metadata
+CF_URL_AMD64=https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_x86-64.tgz
+CF_SHA256_AMD64=98268ab3134bb3a1c97ffce797b4e6d35590a82e006cd098ad7a29f0a5cae7d8
+CF_URL_ARM64=https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_arm64.tgz
+CF_SHA256_ARM64=454c29a44a51c8edc9696678403e2e40808357a397033af5a018e6ca8ee32117
 GOOS=linux GOARCH=amd64 BUILD_MODE=cflinuxfs5 bash scripts/build.sh
 ```
 
-Bun 1.3.13 is pinned to `https://github.com/oven-sh/bun/releases/download/bun-v1.3.13/bun-linux-x64.zip` with SHA-256 `79c0771fa8b92c33aae41e15a0e0d307ea99d0e2f00317c71c6c53237a78e25a`. CF_URL and CF_SHA256 remain unresolved because the local CF CLI reports `0.0.0-unknown-version`; the builder fails closed rather than fabricate CF CLI values. Do not use the example CF CLI URL or checksum.
+Bun 1.3.13 and Cloud Foundry CLI v8.19.0 artifacts are verified against official GitHub release metadata and pinned with SHA-256 checksums. CF CLI v8.19.0 artifacts are verified. The builder extracts the CF tarball's `cf` binary into `dist/manager-runtime/bin/cf`, the stable executable path required by the manager provider.
 
 The build compiles the manager and sandbox bootstrap with `CGO_ENABLED=0`, builds both frontends, invokes `scripts/build-runtime.sh`, validates every required artifact, and transactionally replaces `dist/`. It stages first, renames the old tree to a backup, installs the new tree, and restores the backup on failure or interruption. Directory replacement is not fully atomic: there is a small rename window in which `dist/` is absent. `COLLIE_RUNTIME_BIN` may override the Collie CLI produced by the nested build, but must satisfy the same portable executable checks.
 

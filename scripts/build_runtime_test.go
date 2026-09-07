@@ -26,11 +26,18 @@ func TestCFLinuxFS5BuilderContract(t *testing.T) {
 		"/work/dist/manager",
 		"sandbox/runtime/bin/herdr",
 		"manager-runtime/bin/cf",
+		"*.tgz",
+		"find /tools/cf -type f -name cf",
+		"install -m 0755 {} /tools/bin/cf",
 	} {
-		if !strings.Contains(dockerfile, required) { t.Errorf("Dockerfile missing %q", required) }
+		if !strings.Contains(dockerfile, required) {
+			t.Errorf("Dockerfile missing %q", required)
+		}
 	}
 	for _, forbidden := range []string{"COPY .git", "COPY tests", "apt-get install", "latest"} {
-		if strings.Contains(dockerfile, forbidden) { t.Errorf("Dockerfile contains forbidden %q", forbidden) }
+		if strings.Contains(dockerfile, forbidden) {
+			t.Errorf("Dockerfile contains forbidden %q", forbidden)
+		}
 	}
 }
 
@@ -47,14 +54,18 @@ func TestBuildDefaultsToDockerAndLegacyRequiresExplicitMode(t *testing.T) {
 func TestCFLinuxFS5BuildPropagatesTargetArchitecture(t *testing.T) {
 	script := readFile(t, filepath.Join(packageRoot(t), "scripts", "build-cflinuxfs5.sh"))
 	for _, required := range []string{"TARGETARCH", "amd64", "arm64", "--build-arg", "GOARCH"} {
-		if !strings.Contains(script, required) { t.Errorf("builder script missing architecture contract %q", required) }
+		if !strings.Contains(script, required) {
+			t.Errorf("builder script missing architecture contract %q", required)
+		}
 	}
 }
 
 func TestCFLinuxFS5ArtifactManifestHasPerArchitectureBunInputs(t *testing.T) {
 	manifest := readFile(t, filepath.Join(packageRoot(t), "docker", "cflinuxfs5-builder", "artifacts.env"))
 	for _, required := range []string{"BUN_URL_AMD64", "BUN_SHA256_AMD64", "BUN_URL_ARM64", "BUN_SHA256_ARM64", "HERDR_URL_AMD64", "CF_URL_AMD64"} {
-		if !strings.Contains(manifest, required) { t.Errorf("artifact manifest missing %q", required) }
+		if !strings.Contains(manifest, required) {
+			t.Errorf("artifact manifest missing %q", required)
+		}
 	}
 }
 
@@ -63,11 +74,11 @@ func TestCFLinuxFS5ArtifactSelectorUsesManifestKeysForBothArchitectures(t *testi
 	for _, arch := range []string{"amd64", "arm64"} {
 		command := exec.Command("bash", filepath.Join(root, "scripts", "select-cflinuxfs5-artifacts.sh"), arch)
 		output, err := command.CombinedOutput()
-		if err == nil {
-			t.Fatalf("architecture %s unexpectedly succeeded without required Herdr/CF inputs: %s", arch, output)
+		if err != nil {
+			t.Fatalf("architecture %s selector failed: %v\n%s", arch, err, output)
 		}
 		if !strings.Contains(string(output), "HERDR_URL") || !strings.Contains(string(output), "CF_URL") {
-			t.Fatalf("architecture %s output = %q, want fail-closed Herdr/CF error", arch, output)
+			t.Fatalf("architecture %s output = %q, want Herdr/CF inputs", arch, output)
 		}
 	}
 }
@@ -75,7 +86,9 @@ func TestCFLinuxFS5ArtifactSelectorUsesManifestKeysForBothArchitectures(t *testi
 func TestCFLinuxFS5BuildScriptUsesDockerAndDoesNotPassSecrets(t *testing.T) {
 	script := readFile(t, filepath.Join(packageRoot(t), "scripts", "build-cflinuxfs5.sh"))
 	for _, required := range []string{"docker", "--output", "dist", "BUILD_MODE", "Docker is required"} {
-		if !strings.Contains(script, required) { t.Errorf("builder script missing %q", required) }
+		if !strings.Contains(script, required) {
+			t.Errorf("builder script missing %q", required)
+		}
 	}
 	if strings.Contains(script, "MANAGER_API_TOKEN") || strings.Contains(script, "--env-file") {
 		t.Fatal("builder script passes deployment secrets to Docker")
@@ -85,14 +98,18 @@ func TestCFLinuxFS5BuildScriptUsesDockerAndDoesNotPassSecrets(t *testing.T) {
 func TestCFLinuxFS5DockerignoreExcludesGeneratedAndSecrets(t *testing.T) {
 	ignore := readFile(t, filepath.Join(packageRoot(t), ".dockerignore"))
 	for _, required := range []string{".git", ".env", "dist", "*.previous", "*.staging.*", "bosh/", "cf.yml"} {
-		if !strings.Contains(ignore, required) { t.Errorf(".dockerignore missing %q", required) }
+		if !strings.Contains(ignore, required) {
+			t.Errorf(".dockerignore missing %q", required)
+		}
 	}
 }
 
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	contents, err := os.ReadFile(path)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	return string(contents)
 }
 

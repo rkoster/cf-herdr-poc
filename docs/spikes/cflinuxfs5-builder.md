@@ -16,14 +16,19 @@ Herdr `v0.8.2` is verified from the official GitHub release metadata:
 - ARM64 URL: `https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-aarch64`
 - ARM64 SHA-256: `f55610658e1c2e0d2aaef730b4b2ab885f7f8ba00285ab372bfb14f2e3d5b40d`
 
-The local CF executable reports `0.0.0-unknown-version`, so it cannot establish an exact CF CLI
-release artifact or checksum. CF CLI values remain required build arguments. The Dockerfile fails
-before download if a URL or checksum is absent; no floating URL, host binary, or fabricated checksum
-is accepted.
+Cloud Foundry CLI v8.19.0 is verified from the official GitHub release metadata:
+
+- AMD64 URL: `https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_x86-64.tgz`
+- AMD64 SHA-256: `98268ab3134bb3a1c97ffce797b4e6d35590a82e006cd098ad7a29f0a5cae7d8`
+- ARM64 URL: `https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_arm64.tgz`
+- ARM64 SHA-256: `454c29a44a51c8edc9696678403e2e40808357a397033af5a018e6ca8ee32117`
+
+The Dockerfile verifies and extracts the release tarball, then exports its `cf` binary as
+`dist/manager-runtime/bin/cf`, the path required by the manager provider. No floating URL, host
+binary, or fabricated checksum is accepted.
 
 The first real build remains blocked until operators provide:
 
-- `CF_URL` and `CF_SHA256` for an exact official CF CLI Linux release matching the target architecture.
 - Confirmation that the pinned cflinuxfs5 image contains Go and Node.js/Bun support required by the
   existing Collie build. If absent, the tools stage must add pinned package inputs rather than use
   floating package-manager downloads.

@@ -49,6 +49,11 @@ func TestManifestPinsVerifiedHerdrArtifacts(t *testing.T) {
 		"HERDR_SHA256_AMD64=976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4",
 		"HERDR_URL_ARM64=https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-aarch64",
 		"HERDR_SHA256_ARM64=f55610658e1c2e0d2aaef730b4b2ab885f7f8ba00285ab372bfb14f2e3d5b40d",
+		"CF_VERSION=8.19.0",
+		"CF_URL_AMD64=https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_x86-64.tgz",
+		"CF_SHA256_AMD64=98268ab3134bb3a1c97ffce797b4e6d35590a82e006cd098ad7a29f0a5cae7d8",
+		"CF_URL_ARM64=https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_arm64.tgz",
+		"CF_SHA256_ARM64=454c29a44a51c8edc9696678403e2e40808357a397033af5a018e6ca8ee32117",
 	} {
 		if !strings.Contains(manifest, required) {
 			t.Errorf("artifacts.env missing %q", required)
@@ -56,27 +61,30 @@ func TestManifestPinsVerifiedHerdrArtifacts(t *testing.T) {
 	}
 }
 
-func TestCFLinuxFS5SelectorUsesPinnedBunAndHerdrDefaults(t *testing.T) {
+func TestCFLinuxFS5SelectorUsesPinnedArtifactsForEachArchitecture(t *testing.T) {
 	root := packageRoot(t)
-	command := exec.Command("bash", filepath.Join(root, "scripts", "select-cflinuxfs5-artifacts.sh"), "amd64")
-	command.Dir = root
-	command.Env = []string{"PATH=" + os.Getenv("PATH")}
-	output, err := command.CombinedOutput()
-	if err == nil {
-		t.Fatal("selector succeeded with unresolved CF metadata")
-	}
-	text := string(output)
-	for _, required := range []string{
-		"BUN_URL=https://github.com/oven-sh/bun/releases/download/bun-v1.3.13/bun-linux-x64.zip",
-		"BUN_SHA256=79c0771fa8b92c33aae41e15a0e0d307ea99d0e2f00317c71c6c53237a78e25a",
-		"HERDR_URL=https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-x86_64",
-		"HERDR_SHA256=976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4",
-		"CF_URL is required for amd64",
-		"CF_SHA256 is required for amd64",
+	for _, test := range []struct {
+		arch  string
+		cfURL string
+		cfSHA string
+	}{
+		{"amd64", "https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_x86-64.tgz", "98268ab3134bb3a1c97ffce797b4e6d35590a82e006cd098ad7a29f0a5cae7d8"},
+		{"arm64", "https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_arm64.tgz", "454c29a44a51c8edc9696678403e2e40808357a397033af5a018e6ca8ee32117"},
 	} {
-		if !strings.Contains(text, required) {
-			t.Errorf("selector output missing %q: %s", required, text)
-		}
+		t.Run(test.arch, func(t *testing.T) {
+			command := exec.Command("bash", filepath.Join(root, "scripts", "select-cflinuxfs5-artifacts.sh"), test.arch)
+			command.Dir = root
+			command.Env = []string{"PATH=" + os.Getenv("PATH")}
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("selector failed: %v\n%s", err, output)
+			}
+			for _, required := range []string{"CF_URL=" + test.cfURL, "CF_SHA256=" + test.cfSHA} {
+				if !strings.Contains(string(output), required) {
+					t.Errorf("selector output missing %q: %s", required, output)
+				}
+			}
+		})
 	}
 }
 
@@ -126,7 +134,11 @@ func TestReadmeDocumentsPinnedHerdrBuilderArtifacts(t *testing.T) {
 		"HERDR_SHA256_AMD64=976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4",
 		"HERDR_URL_ARM64=https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-aarch64",
 		"HERDR_SHA256_ARM64=f55610658e1c2e0d2aaef730b4b2ab885f7f8ba00285ab372bfb14f2e3d5b40d",
-		"CF_URL and CF_SHA256 remain unresolved",
+		"CF CLI v8.19.0 artifacts are verified",
+		"CF_URL_AMD64=https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_x86-64.tgz",
+		"CF_SHA256_AMD64=98268ab3134bb3a1c97ffce797b4e6d35590a82e006cd098ad7a29f0a5cae7d8",
+		"CF_URL_ARM64=https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_arm64.tgz",
+		"CF_SHA256_ARM64=454c29a44a51c8edc9696678403e2e40808357a397033af5a018e6ca8ee32117",
 		"fails closed",
 	} {
 		if !strings.Contains(readme, required) {
