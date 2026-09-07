@@ -13,7 +13,11 @@ mkdir -p "$FAKE_BIN"
 cat >"$FAKE_BIN/cf" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >>"$FAKE_LOG"
+printf 'argv' >>"$FAKE_LOG"
+for arg in "$@"; do
+  printf ' <%s>' "$arg" >>"$FAKE_LOG"
+done
+printf '\n' >>"$FAKE_LOG"
 case "${FAKE_SCENARIO:-happy}:$1" in
   app-fails:app)
     printf 'secret-from-cf-error\n' >&2
@@ -62,8 +66,12 @@ set -e
 grep -q 'jq' "$TEST_DIR/no-jq.err" || fail 'missing jq was not actionable'
 [[ -z $output ]] || fail "missing jq wrote stdout: $output"
 
+: >"$LOG"
 output=$(run_token)
 [[ $output == manager-token-must-not-leak ]] || fail "unexpected token output: $output"
+mapfile -t happy_calls <"$LOG"
+[[ ${happy_calls[0]:-} == 'argv <app> <manager> <--guid>' ]] || fail "unexpected app lookup: ${happy_calls[0]:-}"
+[[ ${happy_calls[1]:-} == 'argv <curl> </v3/apps/123e4567-e89b-12d3-a456-426614174000/env>' ]] || fail "unexpected env lookup: ${happy_calls[1]:-}"
 
 for scenario in app-fails malformed missing empty nonstring curl-fails bad-guid; do
   set +e
@@ -76,6 +84,5 @@ for scenario in app-fails malformed missing empty nonstring curl-fails bad-guid;
 done
 
 ! grep -q 'set-env' "$LOG" || fail 'set-env was invoked'
-grep -q 'curl /v3/apps/123e4567-e89b-12d3-a456-426614174000/env' "$LOG" || fail 'safe UUID path was not used'
 
 printf 'token tests passed\n'
