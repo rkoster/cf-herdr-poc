@@ -21,10 +21,10 @@ The nested Collie fork is pinned at `e6c7d8b80e70267439d768ffc5b9e3d408b84cd0`. 
 - A Linux Cloud Foundry foundation with Diego, the binary buildpack, an identity domain, and app instance identity credentials.
 - A space developer able to push, start, stop, delete, inspect, and set environment variables on apps; create, map, unmap, and delete routes; and add/remove identity route policies.
 - Platform approval for the sandbox buildpack allow-list and enough app, route, and memory quota for the manager plus sandboxes.
-- Production builds require independently obtained, portable Linux Bun and Herdr executables. The
-  cflinuxfs5 builder pins verified Herdr v0.8.2 Linux artifacts in
-  `docker/cflinuxfs5-builder/artifacts.env`; build scripts never download binaries and default
-  builds reject Nix-linked or unresolved ELF executables.
+- The default cflinuxfs5 builder downloads only the pinned, SHA-256-verified Bun and Herdr Linux
+  artifacts from `docker/cflinuxfs5-builder/artifacts.env`; it fails closed when required metadata
+  is missing. The explicit legacy `BUILD_MODE=nix-relocation` path requires externally supplied
+  runtime binaries, and unresolved CF CLI URL/checksum metadata remains fail-closed.
 
 ## Build
 
