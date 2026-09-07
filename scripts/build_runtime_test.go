@@ -59,6 +59,19 @@ func TestCFLinuxFS5BuilderContract(t *testing.T) {
 	}
 }
 
+func TestCFLinuxFS5BuilderCleanupIsIdempotent(t *testing.T) {
+	root := packageRoot(t)
+	dockerfile := readFile(t, filepath.Join(root, "docker", "cflinuxfs5-builder", "Dockerfile"))
+	for _, required := range []string{
+		"test -e /work/dist/sandbox/runtime/collie/.git && rm -rf /work/dist/sandbox/runtime/collie/.git || true",
+		"test -e /work/dist/sandbox/runtime/collie/web/node_modules && rm -rf /work/dist/sandbox/runtime/collie/web/node_modules || true",
+	} {
+		if !strings.Contains(dockerfile, required) {
+			t.Errorf("Dockerfile cleanup missing idempotent removal %q", required)
+		}
+	}
+}
+
 func TestCFCLIExtractionAcceptsArchiveRootBinariesWithExplicitFormat(t *testing.T) {
 	root := packageRoot(t)
 	for _, name := range []string{"cf", "cf8"} {

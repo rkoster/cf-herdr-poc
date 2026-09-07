@@ -59,10 +59,11 @@ RUN set -eux; command -v go; \
       TARGET_INSTALL_DIR=/home/vcap/app/.sandbox/bin MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin \
       bash scripts/build-runtime.sh; \
     mkdir -p /work/dist/web; cp -R web/dist/. /work/dist/web/; \
-    CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o /work/dist/manager ./cmd/manager; \
-    test -x /work/dist/manager; \
-    for f in manager-runtime/bin/bun manager-runtime/bin/cf manager-runtime/bin/collie sandbox/runtime/bin/bun sandbox/runtime/bin/herdr sandbox/runtime/bin/collie sandbox/runtime/bin/sandbox-bootstrap sandbox/start.sh; do test -x "/work/dist/$f"; done; \
-    rm -rf /work/dist/sandbox/runtime/collie/.git /work/dist/sandbox/runtime/collie/web/node_modules
+     CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o /work/dist/manager ./cmd/manager; \
+     test -x /work/dist/manager; \
+     for f in manager-runtime/bin/bun manager-runtime/bin/cf manager-runtime/bin/collie sandbox/runtime/bin/bun sandbox/runtime/bin/herdr sandbox/runtime/bin/collie sandbox/runtime/bin/sandbox-bootstrap sandbox/start.sh; do test -x "/work/dist/$f"; done; \
+     test -e /work/dist/sandbox/runtime/collie/.git && rm -rf /work/dist/sandbox/runtime/collie/.git || true; \
+     test -e /work/dist/sandbox/runtime/collie/web/node_modules && rm -rf /work/dist/sandbox/runtime/collie/web/node_modules || true
 
 FROM scratch AS output
 COPY --from=build /work/dist/ /
