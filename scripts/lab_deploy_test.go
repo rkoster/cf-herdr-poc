@@ -46,6 +46,39 @@ func TestLabDeployUsesExplicitCFBinaryOutsidePATH(t *testing.T) {
 	}
 }
 
+func TestLabDeployCFLinuxUsesExplicitCFBinaryOutsidePATH(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	os.Remove(filepath.Join(fixture.bin, "cf"))
+	explicitCF := filepath.Join(t.TempDir(), "explicit cf")
+	writeFakeCF(t, explicitCF, "explicit-cflinux-cf")
+	fixture.env = append(fixture.env, "BUILD_MODE=cflinuxfs5", "CF_BIN="+explicitCF)
+
+	output, err := fixture.run(t)
+	if err != nil {
+		t.Fatalf("lab-deploy.sh: %v: %s", err, output)
+	}
+	if !containsEvent(fixture.events(t), "explicit-cflinux-cf\tpush\tmanager\t--no-manifest\t-p\tdist\t-b\tbinary_buildpack\t-c\t./manager\t--no-route\t--no-start\t-u\thttp\t--endpoint\t/manager/healthz\t--redact-env") {
+		t.Fatal("explicit CF binary did not reach the cflinux push")
+	}
+}
+
+func TestLabDeployCFLinuxReportsMissingCFBeforeBuild(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	os.Remove(filepath.Join(fixture.bin, "cf"))
+	fixture.env = append(fixture.env, "BUILD_MODE=cflinuxfs5")
+
+	output, err := fixture.run(t)
+	if err == nil {
+		t.Fatal("lab-deploy.sh succeeded without CF in cflinuxfs5 mode")
+	}
+	if !strings.Contains(output, "required tool cf was not found") || !strings.Contains(output, "CF_BIN") {
+		t.Fatalf("output = %q, want actionable CF error", output)
+	}
+	if events := fixture.events(t); len(events) != 0 {
+		t.Fatalf("events = %#v, want no build or CF calls", events)
+	}
+}
+
 func TestLabDeployDiscoversOperatorProfileTools(t *testing.T) {
 	fixture := newLabDeployFixture(t)
 	profileBin := filepath.Join(t.TempDir(), "profile bin")

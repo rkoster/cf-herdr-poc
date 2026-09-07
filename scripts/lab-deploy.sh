@@ -41,10 +41,10 @@ resolve_tool() {
 }
 
 BUILD_MODE="${BUILD_MODE:-cflinuxfs5}"
+CF_BIN="$(resolve_tool CF_BIN cf)"
 if [[ "$BUILD_MODE" == nix-relocation ]]; then
 	BUN_RUNTIME_BIN="$(resolve_tool BUN_RUNTIME_BIN bun)"
 	HERDR_RUNTIME_BIN="$(resolve_tool HERDR_RUNTIME_BIN herdr)"
-	CF_BIN="$(resolve_tool CF_BIN cf)"
 	export BUN_RUNTIME_BIN HERDR_RUNTIME_BIN ALLOW_NIX_RUNTIME_RELOCATION=1 CF_BIN
 	for tool in go patchelf readelf ldd nix-store; do
 		if ! command -v "$tool" >/dev/null 2>&1; then
