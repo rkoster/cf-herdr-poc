@@ -123,10 +123,12 @@ func TestLoadOverrides(t *testing.T) {
 		"MANAGER_CF_EXECUTABLE":      " /tmp/cf ",
 		"CF_INSTANCE_CERT":           " /tmp/cert ",
 		"CF_INSTANCE_KEY":            " /tmp/key ",
-		"CF_API":                      " https://api.example ",
-		"CF_USERNAME":                 " manager ",
-		"CF_PASSWORD":                 " in-memory-only ",
-		"CF_SKIP_SSL_VALIDATION":      " true ",
+		"CF_API":                     " https://api.example ",
+		"CF_USERNAME":                " manager ",
+		"CF_PASSWORD":                " in-memory-only ",
+		"CF_ORG":                     " poc ",
+		"CF_SPACE":                   " demo ",
+		"CF_SKIP_SSL_VALIDATION":     " true ",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -135,15 +137,15 @@ func TestLoadOverrides(t *testing.T) {
 	if got.StatePath != "/tmp/state.json" || got.WebDir != "/tmp/web" || got.CollieDir != "/tmp/collie" ||
 		got.ManagerAppName != "manager" || got.ManagerAppGUID != "app-guid" || got.ManagerPackHost != "pack.apps.identity" || got.ManagerRouteHost != "pack" ||
 		got.ReconcileInterval != 5*time.Second || got.APIToken != "operator-secret" || got.CollieAddress != "127.0.0.1:9191" ||
-		got.WorkRoot != "/tmp/work" || got.RuntimeDir != "/tmp/runtime" || got.BunExecutable != "/tmp/bun" || got.CollieExecutable != "/tmp/collie-bin" || got.HerdrExecutable != "/tmp/herdr-bin" || got.CFExecutable != "/tmp/cf" || got.InstanceCert != "/tmp/cert" || got.InstanceKey != "/tmp/key" || got.CFAPI != "https://api.example" || got.CFUsername != "manager" || got.CFPassword != "in-memory-only" || !got.CFSkipSSLValidation {
+		got.WorkRoot != "/tmp/work" || got.RuntimeDir != "/tmp/runtime" || got.BunExecutable != "/tmp/bun" || got.CollieExecutable != "/tmp/collie-bin" || got.HerdrExecutable != "/tmp/herdr-bin" || got.CFExecutable != "/tmp/cf" || got.InstanceCert != "/tmp/cert" || got.InstanceKey != "/tmp/key" || got.CFAPI != "https://api.example" || got.CFUsername != "manager" || got.CFPassword != "in-memory-only" || got.CFOrg != "poc" || got.CFSpace != "demo" || !got.CFSkipSSLValidation {
 		t.Fatalf("Load() overrides = %#v", got)
 	}
 }
 
 func TestLoadRejectsInvalidCFSkipSSLValidation(t *testing.T) {
 	_, err := Load(env(map[string]string{
-		"CF_IDENTITY_DOMAIN":    "apps.identity",
-		"SANDBOX_BUILDPACKS":    "ruby_buildpack",
+		"CF_IDENTITY_DOMAIN":     "apps.identity",
+		"SANDBOX_BUILDPACKS":     "ruby_buildpack",
 		"CF_SKIP_SSL_VALIDATION": "sometimes",
 	}))
 	if err == nil || !strings.Contains(err.Error(), "CF_SKIP_SSL_VALIDATION") {
@@ -167,14 +169,14 @@ func TestLoadRejectsManagerPackHostOutsideIdentityDomain(t *testing.T) {
 }
 
 func TestLoadRequiresProductionAssemblySettings(t *testing.T) {
-	base := Config{ManagerAppName: "manager", ManagerAppGUID: "guid", ManagerPackHost: "pack.apps.identity", APIToken: "secret", CFAPI: "https://api.example", CFUsername: "manager", CFPassword: "in-memory-only"}
+	base := Config{ManagerAppName: "manager", ManagerAppGUID: "guid", ManagerPackHost: "pack.apps.identity", APIToken: "secret", CFAPI: "https://api.example", CFUsername: "manager", CFPassword: "in-memory-only", CFOrg: "poc", CFSpace: "demo"}
 	for _, tt := range []struct {
 		name  string
 		clear func(*Config)
 	}{
 		{"MANAGER_APP_NAME", func(c *Config) { c.ManagerAppName = "" }}, {"MANAGER_APP_GUID", func(c *Config) { c.ManagerAppGUID = "" }},
 		{"MANAGER_PACK_HOST", func(c *Config) { c.ManagerPackHost = "" }}, {"MANAGER_API_TOKEN", func(c *Config) { c.APIToken = "" }},
-		{"CF_API", func(c *Config) { c.CFAPI = "" }}, {"CF_USERNAME", func(c *Config) { c.CFUsername = "" }}, {"CF_PASSWORD", func(c *Config) { c.CFPassword = "" }},
+		{"CF_API", func(c *Config) { c.CFAPI = "" }}, {"CF_USERNAME", func(c *Config) { c.CFUsername = "" }}, {"CF_PASSWORD", func(c *Config) { c.CFPassword = "" }}, {"CF_ORG", func(c *Config) { c.CFOrg = "" }}, {"CF_SPACE", func(c *Config) { c.CFSpace = "" }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			value := base

@@ -70,6 +70,8 @@ bash scripts/build.sh
 : "${CF_API:?CF_API is required}"
 : "${CF_USERNAME:?CF_USERNAME is required}"
 : "${CF_PASSWORD:?CF_PASSWORD is required}"
+: "${CF_ORG:?CF_ORG is required}"
+: "${CF_SPACE:?CF_SPACE is required}"
 
 MANAGER_ROUTE_HOST="${MANAGER_PACK_HOST%.$CF_IDENTITY_DOMAIN}"
 if [[ -z "$MANAGER_ROUTE_HOST" || "$MANAGER_ROUTE_HOST" == "$MANAGER_PACK_HOST" || "$MANAGER_ROUTE_HOST" == *.* || "$MANAGER_ROUTE_HOST.$CF_IDENTITY_DOMAIN" != "$MANAGER_PACK_HOST" || ! "$MANAGER_ROUTE_HOST" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
@@ -94,6 +96,8 @@ MANAGER_APP_GUID="$("$CF_BIN" app "$MANAGER_APP_NAME" --guid)"
 "$CF_BIN" set-env "$MANAGER_APP_NAME" CF_API "$CF_API" >/dev/null 2>&1
 "$CF_BIN" set-env "$MANAGER_APP_NAME" CF_USERNAME "$CF_USERNAME" >/dev/null 2>&1
 "$CF_BIN" set-env "$MANAGER_APP_NAME" CF_PASSWORD "$CF_PASSWORD" >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" CF_ORG "$CF_ORG" >/dev/null 2>&1
+"$CF_BIN" set-env "$MANAGER_APP_NAME" CF_SPACE "$CF_SPACE" >/dev/null 2>&1
 if [[ -n "${CF_SKIP_SSL_VALIDATION:-}" ]]; then
 	"$CF_BIN" set-env "$MANAGER_APP_NAME" CF_SKIP_SSL_VALIDATION "$CF_SKIP_SSL_VALIDATION" >/dev/null 2>&1
 fi

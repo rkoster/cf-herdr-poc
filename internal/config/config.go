@@ -32,6 +32,8 @@ type Config struct {
 	CFAPI               string
 	CFUsername          string
 	CFPassword          string
+	CFOrg               string
+	CFSpace             string
 	CFSkipSSLValidation bool
 	InstanceCert        string
 	InstanceKey         string
@@ -125,6 +127,8 @@ func Load(getenv func(string) string) (Config, error) {
 		CFAPI:               value("CF_API"),
 		CFUsername:          value("CF_USERNAME"),
 		CFPassword:          value("CF_PASSWORD"),
+		CFOrg:               value("CF_ORG"),
+		CFSpace:             value("CF_SPACE"),
 		CFSkipSSLValidation: cfSkipSSLValidation,
 		InstanceCert:        valueOrDefault("CF_INSTANCE_CERT", "/etc/cf-instance-credentials/instance.crt"),
 		InstanceKey:         valueOrDefault("CF_INSTANCE_KEY", "/etc/cf-instance-credentials/instance.key"),
@@ -149,7 +153,7 @@ func validDNSName(value string) bool {
 }
 
 func (c Config) ValidateProduction() error {
-	for key, value := range map[string]string{"MANAGER_APP_NAME": c.ManagerAppName, "MANAGER_APP_GUID": c.ManagerAppGUID, "MANAGER_PACK_HOST": c.ManagerPackHost, "MANAGER_API_TOKEN": c.APIToken, "CF_API": c.CFAPI, "CF_USERNAME": c.CFUsername, "CF_PASSWORD": c.CFPassword} {
+	for key, value := range map[string]string{"MANAGER_APP_NAME": c.ManagerAppName, "MANAGER_APP_GUID": c.ManagerAppGUID, "MANAGER_PACK_HOST": c.ManagerPackHost, "MANAGER_API_TOKEN": c.APIToken, "CF_API": c.CFAPI, "CF_USERNAME": c.CFUsername, "CF_PASSWORD": c.CFPassword, "CF_ORG": c.CFOrg, "CF_SPACE": c.CFSpace} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s is required", key)
 		}

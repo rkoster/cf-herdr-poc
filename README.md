@@ -65,6 +65,8 @@ Required at startup:
 | `MANAGER_APP_GUID` | Manager app GUID. |
 | `MANAGER_PACK_HOST` | Full direct-child FQDN for the manager identity route, for example `cf-herdr-manager-pack.apps.internal`. |
 | `MANAGER_API_TOKEN` | Operator API bearer token; set out of band and never commit it. |
+| `CF_ORG` | Cloud Foundry organization targeted by the manager CLI. |
+| `CF_SPACE` | Cloud Foundry space targeted by the manager CLI. |
 
 The manifest supplies nonsecret packaged paths: `MANAGER_WEB_DIR=./web`, `MANAGER_COLLIE_DIR=./sandbox/runtime/collie`, `MANAGER_RUNTIME_DIR=./manager-runtime`, `MANAGER_BUN_EXECUTABLE=./manager-runtime/bin/bun`, and `MANAGER_COLLIE_EXECUTABLE=./manager-runtime/bin/collie`. State defaults under `./data`; manager Collie listens only on `127.0.0.1:9191` and explicitly uses `COLLIE_PACK_TRANSPORT=cf-identity`. The sandbox provider does not set `COLLIE_PORT` with `cf set-env`: Cloud Foundry assigns `PORT` at runtime and the launcher derives Collie's port from it.
 
@@ -89,6 +91,11 @@ export MANAGER_PACK_HOST=cf-herdr-manager-pack.apps.internal
 export MANAGER_ROUTE_HOST="${MANAGER_PACK_HOST%.$CF_IDENTITY_DOMAIN}"
 export SANDBOX_BUILDPACKS=binary_buildpack,nodejs_buildpack
 export MANAGER_API_TOKEN=replace-with-externally-supplied-secret
+export CF_API=https://api.example.com
+export CF_USERNAME=manager
+export CF_PASSWORD=replace-with-externally-supplied-secret
+export CF_ORG=poc
+export CF_SPACE=demo
 
 devbox run deploy
 ```
@@ -132,7 +139,7 @@ rm -rf dist
 
 ## Verification
 
-Lab deployment requires `CF_API`, `CF_USERNAME`, and `CF_PASSWORD` in the caller environment. Set `CF_SKIP_SSL_VALIDATION=true` only for the lab when required; deployment passes these values to the manager without printing them. The manager authenticates the bundled CF CLI using a private isolated configuration directory.
+Lab deployment requires `CF_API`, `CF_USERNAME`, `CF_PASSWORD`, `CF_ORG`, and `CF_SPACE` in the caller environment. Set `CF_SKIP_SSL_VALIDATION=true` only for the lab when required; deployment passes these values to the manager without printing them. The manager authenticates the bundled CF CLI and targets the configured org and space using a private isolated configuration directory. The manager fails startup if any of these CF settings is absent.
 
 ```bash
 TMPDIR=/tmp go test -race ./...

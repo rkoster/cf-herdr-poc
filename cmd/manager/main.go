@@ -165,7 +165,7 @@ func ensureManagerDirs(cfg config.Config) (managerDirs, error) {
 }
 
 func authenticateCF(cfg config.Config, dirs managerDirs) error {
-	authenticator := cf.Authenticator{Run: runner.Exec{}, Executable: cfg.CFExecutable, API: cfg.CFAPI, Username: cfg.CFUsername, Password: cfg.CFPassword, CFHome: dirs.cfHome, SkipSSLValidation: cfg.CFSkipSSLValidation}
+	authenticator := cf.Authenticator{Run: runner.Exec{}, Executable: cfg.CFExecutable, API: cfg.CFAPI, Username: cfg.CFUsername, Password: cfg.CFPassword, Org: cfg.CFOrg, Space: cfg.CFSpace, CFHome: dirs.cfHome, SkipSSLValidation: cfg.CFSkipSSLValidation}
 	if err := authenticator.Authenticate(context.Background()); err != nil {
 		return fmt.Errorf("authenticate manager CF CLI: %w", err)
 	}

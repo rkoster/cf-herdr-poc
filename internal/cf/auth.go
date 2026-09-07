@@ -25,6 +25,8 @@ type Authenticator struct {
 	API               string
 	Username          string
 	Password          string
+	Org               string
+	Space             string
 	CFHome            string
 	SkipSSLValidation bool
 }
@@ -42,6 +44,9 @@ func (a Authenticator) Authenticate(ctx context.Context) error {
 		return errors.New("CF CLI authentication failed")
 	}
 	if err := a.run(ctx, environment, "auth", a.Username, a.Password); err != nil {
+		return errors.New("CF CLI authentication failed")
+	}
+	if err := a.run(ctx, environment, "target", "-o", a.Org, "-s", a.Space); err != nil {
 		return errors.New("CF CLI authentication failed")
 	}
 	return nil
