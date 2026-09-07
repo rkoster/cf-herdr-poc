@@ -35,7 +35,9 @@ GOOS=linux GOARCH=amd64 bash scripts/build.sh
 
 The build compiles the manager and sandbox bootstrap with `CGO_ENABLED=0`, builds both frontends, invokes `scripts/build-runtime.sh`, validates every required artifact, and transactionally replaces `dist/`. It stages first, renames the old tree to a backup, installs the new tree, and restores the backup on failure or interruption. Directory replacement is not fully atomic: there is a small rename window in which `dist/` is absent. `COLLIE_RUNTIME_BIN` may override the Collie CLI produced by the nested build, but must satisfy the same portable executable checks.
 
-For this POC lab only, `ALLOW_NIX_RUNTIME_RELOCATION=1` allows Linux Nix-linked Bun, Herdr, and built Collie inputs. `scripts/relocate-nix-runtime.sh` copies each ELF payload, its interpreter, and resolved libraries into an executable-specific private bundle and installs a relative loader wrapper. This performs no internet downloads, but bundling multiple glibc closures substantially increases artifact size. It is deliberate deployment friction, not a production packaging strategy; production should use official static or portable runtime artifacts.
+For this POC lab only, `ALLOW_NIX_RUNTIME_RELOCATION=1` allows Linux Nix-linked Bun, Herdr, and built Collie inputs. `scripts/relocate-nix-runtime.sh` installs each runtime as a direct ELF at its final path, patches the cflinuxfs interpreter and an origin-relative RPATH, recursively resolves its startup `DT_NEEDED` graph, and includes available glibc NSS/DNS resolver modules in an executable-specific private library directory. This preserves executable identity and performs no internet downloads, but bundling multiple glibc runtime sets substantially increases artifact size. It is deliberate deployment friction, not a production packaging strategy; production should use official static or portable runtime artifacts.
+
+This is not a claim of a complete dynamic runtime closure. Libraries loaded through unobserved `dlopen` paths and absolute runtime asset lookups may still be missing even though packaged ELF interpreter/RPATH metadata is scanned for actionable `/nix/store/` references. A live cflinuxfs smoke test is required before relying on the workaround.
 
 Expected layout includes `dist/manager`, `dist/web/`, `dist/sandbox/runtime/`, the runtime binaries, `collie/bridge`, Collie's root `package.json` and `node_modules`, and Collie's built `web/dist`. A constrained copier materializes internal Collie symlinks but rejects broken links and links escaping the Collie asset root. Only explicitly selected runtime trees are copied, excluding `.git`, environment files, credentials, state, and Collie's development-only `web/node_modules`. Generated `dist/`, `sandbox/runtime/`, and runtime state are ignored by Git.
 
@@ -118,7 +120,7 @@ rm -rf dist
 TMPDIR=/tmp go test -race ./...
 TMPDIR=/tmp go vet ./...
 (cd web && bun run test && bun run typecheck && bun run build)
-bash -n scripts/build.sh scripts/build-runtime.sh scripts/relocate-nix-runtime.sh scripts/deploy.sh sandbox/start.sh
+bash -n scripts/build.sh scripts/build-runtime.sh scripts/relocate-nix-runtime.sh scripts/smoke-relocated-runtime.sh scripts/deploy.sh sandbox/start.sh
 ```
 
 Artifact tests use fake executable fixtures only; they do not establish that any real Bun or Herdr binary is portable. Real portable artifact execution and live CF behavior remain pending.
@@ -128,7 +130,7 @@ Artifact tests use fake executable fixtures only; they do not establish that any
 - Deferred runtime and identity spike procedures are in [`docs/spikes/cf-buildpack-runtime.md`](docs/spikes/cf-buildpack-runtime.md) and [`docs/spikes/cf-pack-identity.md`](docs/spikes/cf-pack-identity.md). The original design and task log remain in `docs/superpowers/`.
 - The nested Collie checkout is intentionally a fork with POC changes and may be dirty; packaging must not modify its source or `.envrc`.
 - The source runtime requires a large copied Collie dependency tree, and portable Bun/Herdr acquisition is deliberately outside this repository.
-- Lab deployment relocates local Nix ELF closures without downloads. Separate private glibc bundles avoid collisions but materially increase `dist/`; official static or portable artifacts remain the production path.
+- Lab deployment relocates local Nix startup dependency graphs without downloads. Separate private glibc bundles avoid collisions but materially increase `dist/`; dynamic `dlopen` and absolute asset paths remain risks until a live smoke test, and official static or portable artifacts remain the production path.
 - The current CF target lacks an identity domain. Live route-policy, instance-identity, manager health, sandbox lifecycle, and browser-through-lead spikes are deferred and no successful result is claimed.
 - Sandbox staging checks `cf app NAME --guid` immediately before `cf push`, but separate CLI calls cannot make name reservation atomic. Another actor can still create the app in that lookup/push window; eliminating this race requires an atomic CAPI creation strategy.
 - Deletion never adopts an app GUID discovered by name. If a sandbox record has no persisted app GUID and that CF app name exists, stable manager-owned Pack state may be cleaned but the record remains failed with `ownership unknown`; an operator must investigate the potential orphan rather than risk deleting an unrelated app.

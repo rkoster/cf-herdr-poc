@@ -42,7 +42,7 @@ validate_runtime_binary() {
 		exit 1
 	fi
 	if [[ "$(uname -s)" == Linux ]]; then
-		local readelf_bin ldd_bin elf_details dependencies
+		local readelf_bin ldd_bin elf_details dependencies machine expected_machine
 		readelf_bin="$(require_tool readelf)"
 		ldd_bin="$(require_tool ldd)"
 		if ! "$readelf_bin" -h "$path" >/dev/null 2>&1; then
@@ -50,6 +50,16 @@ validate_runtime_binary() {
 			exit 1
 		fi
 		elf_details="$("$readelf_bin" -l "$path" 2>&1)"
+		machine="$("$readelf_bin" -h "$path" | while IFS= read -r line; do if [[ "$line" =~ ^[[:space:]]*Machine:[[:space:]]*(.+)$ ]]; then printf '%s' "${BASH_REMATCH[1]}"; fi; done)"
+		case "$GOARCH" in
+			amd64) expected_machine='Advanced Micro Devices X86-64' ;;
+			arm64) expected_machine='AArch64' ;;
+			*) printf 'error: unsupported GOARCH for runtime binaries: %s\n' "$GOARCH" >&2; exit 1 ;;
+		esac
+		if [[ "$machine" != "$expected_machine" ]]; then
+			printf 'error: %s ELF architecture %s does not match GOARCH %s\n' "$variable" "$machine" "$GOARCH" >&2
+			exit 1
+		fi
 		dependencies="$("$ldd_bin" "$path" 2>&1 || true)"
 		if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" != 1 && ( "$elf_details" == *'/nix/store/'* || "$dependencies" == *'/nix/store/'* ) ]]; then
 			printf 'error: %s has non-portable /nix/store ELF dependencies: %s\n' "$variable" "$path" >&2
@@ -69,7 +79,24 @@ if [[ -n "${ALLOW_NIX_RUNTIME_RELOCATION:-}" && "${ALLOW_NIX_RUNTIME_RELOCATION:
 fi
 
 relocate_runtime() {
-	bash "$ROOT/scripts/relocate-nix-runtime.sh" "$1" "$2"
+	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/relocate-nix-runtime.sh" "$1" "$2"
+}
+
+scan_elf_metadata() {
+	local root=$1 path interpreter rpath
+	shopt -s nullglob globstar
+	for path in "$root"/**/*; do
+		[[ -f "$path" ]] || continue
+		if readelf -h "$path" >/dev/null 2>&1; then
+			interpreter="$(patchelf --print-interpreter "$path" 2>/dev/null || true)"
+			rpath="$(patchelf --print-rpath "$path" 2>/dev/null || true)"
+			if [[ "$interpreter" == *'/nix/store/'* || "$rpath" == *'/nix/store/'* ]]; then
+				printf 'error: packaged ELF retains Nix loader metadata: %s\n' "$path" >&2
+				exit 1
+			fi
+		fi
+	done
+	shopt -u globstar
 }
 
 build_bun="$(require_tool bun)"
@@ -98,9 +125,9 @@ if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" == 1 ]]; then
 	relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun"
 	relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr"
 	relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie"
-	"$RUNTIME_DIR/bin/bun" --version >/dev/null
-	"$RUNTIME_DIR/bin/herdr" --version >/dev/null
-	"$RUNTIME_DIR/bin/collie" --version >/dev/null
+	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$RUNTIME_DIR/bin/bun" --version >/dev/null
+	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$RUNTIME_DIR/bin/herdr" --version >/dev/null
+	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$RUNTIME_DIR/bin/collie" --version >/dev/null
 else
 	install -m 0755 "$bun_bin" "$RUNTIME_DIR/bin/bun"
 	install -m 0755 "$herdr_bin" "$RUNTIME_DIR/bin/herdr"
@@ -114,5 +141,6 @@ install -m 0755 "$ROOT/sandbox/start.sh" "$RUNTIME_DIR/start.sh"
 "$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/node_modules" "$RUNTIME_DIR/collie/node_modules"
 mkdir -p "$RUNTIME_DIR/collie/web"
 "$TOOLS_DIR/copytree" "$COLLIE_DIR" "$COLLIE_DIR/web/dist" "$RUNTIME_DIR/collie/web/dist"
+scan_elf_metadata "$RUNTIME_DIR"
 
 printf 'sandbox runtime assembled at %s\n' "$RUNTIME_DIR"

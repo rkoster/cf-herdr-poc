@@ -212,6 +212,17 @@ func TestDeferredSpikeDocumentsRecordCommandsWithoutObservations(t *testing.T) {
 	}
 }
 
+func TestRuntimeDocsDescribeNeededClosureAndResidualDlopenRisk(t *testing.T) {
+	for _, name := range []string{"README.md", "docs/spikes/cf-buildpack-runtime.md"} {
+		doc := readPackageFile(t, name)
+		for _, required := range []string{"DT_NEEDED", "dlopen", "live"} {
+			if !strings.Contains(doc, required) {
+				t.Errorf("%s missing relocation limitation %q", name, required)
+			}
+		}
+	}
+}
+
 func TestProcfileStartsPackagedManager(t *testing.T) {
 	if got := strings.TrimSpace(readPackageFile(t, "Procfile")); got != "web: ./manager" {
 		t.Fatalf("Procfile = %q", got)

@@ -81,6 +81,24 @@ func TestBuildRuntimeRelocationIsExplicitAndCoversEveryNixRuntime(t *testing.T) 
 	}
 }
 
+func TestBuildRuntimeValidatesAndForwardsTargetArchitecture(t *testing.T) {
+	script := readBuildScript(t)
+	for _, required := range []string{"Machine:", "Advanced Micro Devices X86-64", "AArch64", `TARGET_ARCH="$GOARCH"`} {
+		if !strings.Contains(script, required) {
+			t.Errorf("build-runtime.sh missing architecture contract %q", required)
+		}
+	}
+}
+
+func TestBuildRuntimeScansPackagedELFMetadataForNixPaths(t *testing.T) {
+	script := readBuildScript(t)
+	for _, required := range []string{"scan_elf_metadata", "--print-interpreter", "--print-rpath", "$RUNTIME_DIR"} {
+		if !strings.Contains(script, required) {
+			t.Errorf("build-runtime.sh missing packaged ELF scan %q", required)
+		}
+	}
+}
+
 func TestBuildRuntimeBuildsStaticSandboxBootstrap(t *testing.T) {
 	script := readBuildScript(t)
 	for _, required := range []string{"CGO_ENABLED=0", "go build", "./cmd/sandbox-bootstrap", "$RUNTIME_DIR/bin/sandbox-bootstrap", "test -x"} {

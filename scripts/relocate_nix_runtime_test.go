@@ -23,12 +23,13 @@ func TestRelocateNixRuntimeExecutesWithExactArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := compileArgvFixture(t, sourceDir)
+	interpreter := printPatchelf(t, "--print-interpreter", source)
 	link := filepath.Join(temp, "runtime-link")
 	if err := os.Symlink(source, link); err != nil {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(temp, "bundle", "runtime")
-	runRelocator(t, link, destination, nil)
+	runRelocator(t, link, destination, []string{"TARGET_INTERPRETER=" + interpreter, "TARGET_ARCH=" + runtimeArch()})
 
 	if err := os.RemoveAll(filepath.Join(temp, "nix")); err != nil {
 		t.Fatal(err)
@@ -40,17 +41,21 @@ func TestRelocateNixRuntimeExecutesWithExactArguments(t *testing.T) {
 	if got, want := string(output), "plain\ntwo words\n\nwild*card\n"; got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
-	wrapper, err := os.ReadFile(destination)
+	elf, err := os.ReadFile(destination)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(wrapper), sourceDir) || strings.Contains(string(wrapper), "/nix/store/") {
-		t.Fatalf("wrapper embeds source path: %s", wrapper)
+	if len(elf) < 4 || string(elf[:4]) != "\x7fELF" {
+		t.Fatalf("destination is not a direct ELF executable: %x", elf[:4])
 	}
-	for _, path := range []string{destination + ".real", filepath.Join(filepath.Dir(destination), ".runtime-libs")} {
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("missing relocated artifact %s: %v", path, err)
-		}
+	if got := printPatchelf(t, "--print-interpreter", destination); got != interpreter {
+		t.Fatalf("interpreter = %q, want %q", got, interpreter)
+	}
+	if got := printPatchelf(t, "--print-rpath", destination); got != "$ORIGIN/.runtime-libs" {
+		t.Fatalf("rpath = %q, want $ORIGIN/.runtime-libs", got)
+	}
+	if _, err := os.Stat(destination + ".real"); !os.IsNotExist(err) {
+		t.Fatalf("unexpected payload sibling: %v", err)
 	}
 }
 
@@ -65,8 +70,10 @@ func TestRelocateNixRuntimeUsesIndependentLibraryDirectories(t *testing.T) {
 	source := compileArgvFixture(t, filepath.Join(temp, "nix-like"))
 	first := filepath.Join(temp, "bundle", "bun")
 	second := filepath.Join(temp, "bundle", "herdr")
-	runRelocator(t, source, first, nil)
-	runRelocator(t, source, second, nil)
+	interpreter := printPatchelf(t, "--print-interpreter", source)
+	env := []string{"TARGET_INTERPRETER=" + interpreter, "TARGET_ARCH=" + runtimeArch()}
+	runRelocator(t, source, first, env)
+	runRelocator(t, source, second, env)
 
 	for _, dir := range []string{".bun-libs", ".herdr-libs"} {
 		entries, err := os.ReadDir(filepath.Join(temp, "bundle", dir))
@@ -111,7 +118,7 @@ func TestRelocateNixRuntimeRejectsMalformedLddOutput(t *testing.T) {
 	}
 }
 
-func TestRelocateNixRuntimeUsesPTInterpInsteadOfLddLoaderMapping(t *testing.T) {
+func TestRelocateNixRuntimeRejectsArchitectureMismatch(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("ELF relocation is Linux-only")
 	}
@@ -120,26 +127,103 @@ func TestRelocateNixRuntimeUsesPTInterpInsteadOfLddLoaderMapping(t *testing.T) {
 	}
 	temp := t.TempDir()
 	source := compileArgvFixture(t, filepath.Join(temp, "source"))
-	realLdd, _ := exec.LookPath("ldd")
-	interpreterOutput, err := exec.Command("patchelf", "--print-interpreter", source).Output()
-	if err != nil {
+	want := "arm64"
+	if runtime.GOARCH == "arm64" {
+		want = "amd64"
+	}
+	output, err := runRelocatorCommand(source, filepath.Join(temp, "runtime"), []string{"TARGET_ARCH=" + want})
+	if err == nil || !strings.Contains(output, "ELF architecture") {
+		t.Fatalf("mismatch output=%q err=%v", output, err)
+	}
+}
+
+func TestRelocateNixRuntimeRecursivelyCopiesNeededLibraries(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("ELF relocation is Linux-only")
+	}
+	for _, tool := range []string{"cc", "ldd", "patchelf"} {
+		requireHostTool(t, tool)
+	}
+	temp := t.TempDir()
+	libs := filepath.Join(temp, "libs")
+	if err := os.Mkdir(libs, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	interpreter := strings.TrimSpace(string(interpreterOutput))
+	writeFile(t, filepath.Join(libs, "inner.c"), "int inner(void) { return 7; }\n")
+	compile(t, "cc", "-shared", "-fPIC", "-Wl,-soname,libinner.so", "-o", filepath.Join(libs, "libinner.so"), filepath.Join(libs, "inner.c"))
+	writeFile(t, filepath.Join(libs, "outer.c"), "extern int inner(void); int outer(void) { return inner(); }\n")
+	compile(t, "cc", "-shared", "-fPIC", "-Wl,-soname,libouter.so", "-Wl,-rpath,$ORIGIN", "-L"+libs, "-o", filepath.Join(libs, "libouter.so"), filepath.Join(libs, "outer.c"), "-linner")
+	writeFile(t, filepath.Join(temp, "main.c"), "extern int outer(void); int main(void) { return outer() != 7; }\n")
+	source := filepath.Join(temp, "runtime")
+	compile(t, "cc", "-Wl,-rpath,"+libs, "-L"+libs, "-o", source, filepath.Join(temp, "main.c"), "-louter")
 	tools := filepath.Join(temp, "tools")
 	if err := os.Mkdir(tools, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	otherLoader := filepath.Join(temp, filepath.Base(interpreter))
-	if err := os.WriteFile(otherLoader, []byte("different loader"), 0o755); err != nil {
+	realLdd, _ := exec.LookPath("ldd")
+	writeExecutable(t, filepath.Join(tools, "ldd"), "#!/bin/sh\n\""+realLdd+"\" \"$1\" | grep -v libinner\n")
+	destination := filepath.Join(temp, "bundle", "runtime")
+	runRelocator(t, source, destination, []string{"PATH=" + tools + ":" + os.Getenv("PATH"), "TARGET_INTERPRETER=" + printPatchelf(t, "--print-interpreter", source), "TARGET_ARCH=" + runtimeArch()})
+	if _, err := os.Stat(filepath.Join(temp, "bundle", ".runtime-libs", "libinner.so")); err != nil {
+		t.Fatalf("recursive dependency missing: %v", err)
+	}
+	if got := printPatchelf(t, "--print-rpath", filepath.Join(temp, "bundle", ".runtime-libs", "libouter.so")); strings.Contains(got, temp) {
+		t.Fatalf("copied library retains source RPATH %q", got)
+	}
+}
+
+func TestRelocatedBunPreservesExecPathAndSelfSpawn(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("ELF relocation is Linux-only")
+	}
+	bun, err := exec.LookPath("bun")
+	if err != nil {
+		t.Skip(err)
+	}
+	bun, err = filepath.EvalSymlinks(bun)
+	if err != nil || !strings.HasPrefix(bun, "/nix/store/") {
+		t.Skip("Nix Bun unavailable")
+	}
+	destination := filepath.Join(t.TempDir(), "bun")
+	runRelocator(t, bun, destination, []string{"TARGET_INTERPRETER=" + printPatchelf(t, "--print-interpreter", bun), "TARGET_ARCH=" + runtimeArch()})
+	program := `if (process.execPath !== process.argv[0]) throw new Error(process.execPath); const p=Bun.spawnSync([process.execPath,"--version"]); if (p.exitCode !== 0 || !p.stdout.toString().includes(Bun.version)) throw new Error(p.stdout.toString()); console.log(process.execPath)`
+	output, err := exec.Command(destination, "-e", program).CombinedOutput()
+	if err != nil {
+		t.Fatalf("relocated Bun self-spawn: %v\n%s", err, output)
+	}
+	if strings.TrimSpace(string(output)) != destination {
+		t.Fatalf("process.execPath = %q, want %q", strings.TrimSpace(string(output)), destination)
+	}
+}
+
+func TestRelocatedRuntimeRunsThroughBundledLoaderSmokeHelper(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("ELF relocation is Linux-only")
+	}
+	for _, tool := range []string{"cc", "ldd", "patchelf"} {
+		requireHostTool(t, tool)
+	}
+	temp := t.TempDir()
+	source := compileArgvFixture(t, filepath.Join(temp, "source"))
+	destination := filepath.Join(temp, "bundle", "runtime")
+	runRelocator(t, source, destination, []string{"TARGET_ARCH=" + runtimeArch()})
+	_, filename, _, _ := runtime.Caller(0)
+	command := exec.Command("bash", filepath.Join(filepath.Dir(filename), "smoke-relocated-runtime.sh"), destination, "smoke")
+	command.Env = append(os.Environ(), "TARGET_ARCH="+runtimeArch())
+	output, err := command.CombinedOutput()
+	if err != nil || string(output) != "smoke\n" {
+		t.Fatalf("bundled-loader smoke: output=%q err=%v", output, err)
+	}
+}
+
+func TestRelocatorIndexesClosuresOfResolvedNixLibraries(t *testing.T) {
+	_, filename, _, _ := runtime.Caller(0)
+	contents, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "relocate-nix-runtime.sh"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	lddScript := "#!/bin/sh\n\"" + realLdd + "\" \"$1\"\nprintf '%s => %s (0x1234)\\n' '" + interpreter + "' '" + otherLoader + "'\n"
-	writeExecutable(t, filepath.Join(tools, "ldd"), lddScript)
-	destination := filepath.Join(temp, "bundle", "runtime")
-	runRelocator(t, source, destination, []string{"PATH=" + tools + ":" + os.Getenv("PATH")})
-	if output, err := exec.Command(destination, "works").CombinedOutput(); err != nil || string(output) != "works\n" {
-		t.Fatalf("relocated runtime: output=%q err=%v", output, err)
+	if !strings.Contains(string(contents), `add_nix_closure "$path"`) {
+		t.Fatal("relocator does not index closures referenced by ldd")
 	}
 }
 
@@ -158,6 +242,36 @@ func compileArgvFixture(t *testing.T, dir string) string {
 		t.Fatalf("compile fixture: %v\n%s", err, output)
 	}
 	return binary
+}
+
+func writeFile(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func compile(t *testing.T, name string, args ...string) {
+	t.Helper()
+	if output, err := exec.Command(name, args...).CombinedOutput(); err != nil {
+		t.Fatalf("%s %v: %v\n%s", name, args, err, output)
+	}
+}
+
+func printPatchelf(t *testing.T, option, path string) string {
+	t.Helper()
+	output, err := exec.Command("patchelf", option, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("patchelf %s: %v\n%s", option, err, output)
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func runtimeArch() string {
+	if runtime.GOARCH == "arm64" {
+		return "arm64"
+	}
+	return "amd64"
 }
 
 func runRelocator(t *testing.T, source, destination string, env []string) {

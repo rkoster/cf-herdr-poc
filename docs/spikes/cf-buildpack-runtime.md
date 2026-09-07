@@ -6,7 +6,9 @@ Date: 2026-09-04
 
 Reason: Portable Linux Bun and Herdr binaries are not available locally. The POC can now relocate already-installed Nix-linked runtimes without internet downloads, but live CF execution and production-portable artifact validation remain pending.
 
-The relocation mode is a lab-only workaround. `ALLOW_NIX_RUNTIME_RELOCATION=1` bundles a private ELF interpreter and dependency directory for each of Bun, Herdr, and Collie so incompatible glibc closures do not collide. This increases the upload substantially and is not the production recommendation; production should use official static or portable artifacts.
+The relocation mode is a lab-only workaround. `ALLOW_NIX_RUNTIME_RELOCATION=1` patches each runtime directly for the conventional cflinuxfs interpreter and an origin-relative RPATH, recursively bundles its startup `DT_NEEDED` graph, and includes available glibc NSS/DNS resolver modules in a private directory so incompatible runtime sets do not collide. This increases the upload substantially and is not the production recommendation; production should use official static or portable artifacts.
+
+The bundle is not proven to be a complete dynamic closure. Unobserved `dlopen` choices and absolute runtime asset paths can still escape the startup graph. Packaged ELF loader metadata is checked for actionable `/nix/store/` paths, but arbitrary embedded diagnostics strings are not rejected. A live cflinuxfs smoke test remains required.
 
 ## Commands
 
@@ -36,7 +38,7 @@ cf delete cf-herdr-runtime-spike -f
 ## Assertions
 
 - Staging preserves executable bits for manager, bootstrap, Bun, Herdr, and Collie.
-- Manager and bootstrap have no dynamic dependencies. Portable runtime binaries have no unresolved or `/nix/store` dependencies; lab-relocated wrappers use only relative bundled payload and library paths.
+- Manager and bootstrap have no dynamic dependencies. Portable runtime binaries have no unresolved or `/nix/store` dependencies; lab-relocated executables use cflinuxfs interpreters and origin-relative private library paths.
 - The binary buildpack starts the exact configured command without downloading artifacts.
 - Bundled Bun and Herdr execute in the Diego cell.
 - Application bits are readable and `/home/vcap/data` is writable.

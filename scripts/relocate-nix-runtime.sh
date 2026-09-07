@@ -12,7 +12,8 @@ fi
 
 source_path=$1
 destination=$2
-for tool in readlink readelf ldd install; do
+target_arch="${TARGET_ARCH:-${GOARCH:-amd64}}"
+for tool in readlink readelf ldd install patchelf; do
 	command -v "$tool" >/dev/null 2>&1 || { printf 'error: required tool %s was not found in PATH\n' "$tool" >&2; exit 1; }
 done
 
@@ -21,21 +22,28 @@ if [[ -z "$resolved_source" || ! -f "$resolved_source" || ! -x "$resolved_source
 	printf 'error: source must resolve to a regular executable: %s\n' "$source_path" >&2
 	exit 1
 fi
-if ! readelf -h "$resolved_source" >/dev/null 2>&1; then
+elf_header="$(readelf -h "$resolved_source" 2>/dev/null || true)"
+if [[ -z "$elf_header" ]]; then
 	printf 'error: source must be a Linux ELF executable: %s\n' "$source_path" >&2
 	exit 1
 fi
+machine="$(printf '%s\n' "$elf_header" | while IFS= read -r line; do
+	if [[ "$line" =~ ^[[:space:]]*Machine:[[:space:]]*(.+)$ ]]; then printf '%s' "${BASH_REMATCH[1]}"; fi
+done)"
+case "$target_arch:$machine" in
+	amd64:Advanced\ Micro\ Devices\ X86-64) target_interpreter="${TARGET_INTERPRETER:-/lib64/ld-linux-x86-64.so.2}" ;;
+	arm64:AArch64) target_interpreter="${TARGET_INTERPRETER:-/lib/ld-linux-aarch64.so.1}" ;;
+	amd64:*|arm64:*) printf 'error: ELF architecture %s does not match target %s\n' "$machine" "$target_arch" >&2; exit 1 ;;
+	*) printf 'error: unsupported target architecture: %s\n' "$target_arch" >&2; exit 1 ;;
+esac
 
-interpreter=''
-if command -v patchelf >/dev/null 2>&1; then
-	interpreter="$(patchelf --print-interpreter "$resolved_source" 2>/dev/null || true)"
-else
-	interpreter="$(readelf -l "$resolved_source" | while IFS= read -r line; do
-		if [[ "$line" =~ Requesting\ program\ interpreter:\ ([^]]+) ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; fi
-	done)"
+source_interpreter="$(patchelf --print-interpreter "$resolved_source" 2>/dev/null || true)"
+if [[ "$source_interpreter" != /* || ! -f "$source_interpreter" ]]; then
+	printf 'error: ELF interpreter is missing or nonabsolute: %s\n' "$source_interpreter" >&2
+	exit 1
 fi
-if [[ "$interpreter" != /* || ! -f "$interpreter" ]]; then
-	printf 'error: ELF interpreter is missing or nonabsolute: %s\n' "$interpreter" >&2
+if [[ "$target_interpreter" != /* ]]; then
+	printf 'error: target ELF interpreter must be absolute: %s\n' "$target_interpreter" >&2
 	exit 1
 fi
 
@@ -48,50 +56,125 @@ if [[ "$dependencies" == *'not found'* ]]; then
 	exit 1
 fi
 
-declare -a libraries=("$interpreter")
+declare -A ldd_paths=()
 while IFS= read -r line; do
 	[[ -z "${line//[[:space:]]/}" ]] && continue
 	if [[ "$line" =~ ^[[:space:]]*linux-vdso[^[:space:]]*[[:space:]]+\(0x[[:xdigit:]]+\)[[:space:]]*$ ]]; then
 		continue
-	elif [[ "$line" =~ ^[[:space:]]*[^[:space:]]+[[:space:]]+\=\>[[:space:]]+(/[^[:space:]]+)[[:space:]]+\(0x[[:xdigit:]]+\)[[:space:]]*$ ]]; then
-		dependency="${BASH_REMATCH[1]}"
-		if [[ "$line" != *"$interpreter =>"* ]]; then libraries+=("$dependency"); fi
+	elif [[ "$line" =~ ^[[:space:]]*([^[:space:]]+)[[:space:]]+\=\>[[:space:]]+(/[^[:space:]]+)[[:space:]]+\(0x[[:xdigit:]]+\)[[:space:]]*$ ]]; then
+		soname="${BASH_REMATCH[1]}"
+		path="${BASH_REMATCH[2]}"
+		if [[ "$soname" != "$source_interpreter" ]]; then ldd_paths["$soname"]="$path"; fi
 	elif [[ "$line" =~ ^[[:space:]]*(/[^[:space:]]+)[[:space:]]+\(0x[[:xdigit:]]+\)[[:space:]]*$ ]]; then
-		libraries+=("${BASH_REMATCH[1]}")
+		path="${BASH_REMATCH[1]}"
+		ldd_paths["$(basename -- "$path")"]="$path"
 	else
 		printf 'error: malformed ldd output: %s\n' "$line" >&2
 		exit 1
 	fi
 done <<< "$dependencies"
 
+declare -A closure_candidates=()
+declare -a closure_roots=()
+declare -A indexed_closures=()
+add_nix_closure() {
+	local path=$1 root candidate name
+	[[ "$path" == /nix/store/* && -z "${indexed_closures[$path]:-}" ]] || return
+	indexed_closures["$path"]=1
+	while IFS= read -r root; do
+		closure_roots+=("$root")
+		shopt -s nullglob globstar
+		for candidate in "$root"/lib/lib*.so* "$root"/lib64/lib*.so* "$root"/lib/**/lib*.so* "$root"/lib64/**/lib*.so*; do
+			[[ -f "$candidate" ]] || continue
+			name="$(basename -- "$candidate")"
+			closure_candidates["$name"]+="${closure_candidates[$name]:+$'\n'}$candidate"
+		done
+		shopt -u globstar
+	done < <(nix-store -qR "$path")
+}
+if [[ "$resolved_source" == /nix/store/* ]]; then
+	command -v nix-store >/dev/null 2>&1 || { printf 'error: nix-store is required for Nix closure inspection\n' >&2; exit 1; }
+	add_nix_closure "$resolved_source"
+	for path in "${ldd_paths[@]}"; do
+		add_nix_closure "$path"
+	done
+fi
+
 destination_dir="$(dirname -- "$destination")"
 destination_name="$(basename -- "$destination")"
-payload="$destination.real"
 library_dir="$destination_dir/.${destination_name}-libs"
 mkdir -p "$destination_dir"
 rm -rf "$library_dir"
 mkdir -p "$library_dir"
-install -m 0755 "$resolved_source" "$payload"
+declare -A installed_sources=()
 
-for library in "${libraries[@]}"; do
-	resolved_library="$(readlink -f -- "$library" 2>/dev/null || true)"
-	if [[ -z "$resolved_library" || ! -f "$resolved_library" ]]; then
-		printf 'error: dependency does not resolve to a regular file: %s\n' "$library" >&2
+copy_library() {
+	local source=$1 name target resolved
+	resolved="$(readlink -f -- "$source" 2>/dev/null || true)"
+	[[ -n "$resolved" && -f "$resolved" ]] || { printf 'error: dependency does not resolve to a regular file: %s\n' "$source" >&2; exit 1; }
+	name="$(basename -- "$source")"
+	target="$library_dir/$name"
+	if [[ -n "${installed_sources[$name]:-}" ]] && ! cmp -s "$resolved" "${installed_sources[$name]}"; then
+		printf 'error: dependency basename collision: %s\n' "$name" >&2
 		exit 1
 	fi
-	target="$library_dir/$(basename -- "$library")"
-	if [[ -e "$target" ]] && ! cmp -s "$resolved_library" "$target"; then
-		printf 'error: dependency basename collision: %s\n' "$library" >&2
-		exit 1
+	if [[ ! -e "$target" ]]; then
+		installed_sources["$name"]="$resolved"
+		install -m 0755 "$resolved" "$target"
+		if [[ "$name" != "$(basename -- "$source_interpreter")" ]] && readelf -h "$target" >/dev/null 2>&1; then
+			patchelf --set-rpath '\$ORIGIN' "$target"
+		fi
 	fi
-	install -m 0755 "$resolved_library" "$target"
+	printf '%s' "$target"
+}
+
+resolve_needed() {
+	local soname=$1 requester=$2 requester_dir rpath entry candidate first=''
+	if [[ "$soname" == "$(basename -- "$source_interpreter")" ]]; then printf '%s' "$source_interpreter"; return; fi
+	requester_dir="$(dirname -- "$requester")"
+	if [[ -f "$requester_dir/$soname" ]]; then readlink -f -- "$requester_dir/$soname"; return; fi
+	rpath="$(patchelf --print-rpath "$requester" 2>/dev/null || true)"
+	IFS=: read -ra entries <<< "$rpath"
+	for entry in "${entries[@]}"; do
+		entry="${entry//\$ORIGIN/$requester_dir}"
+		if [[ "$entry" == /* && -f "$entry/$soname" ]]; then readlink -f -- "$entry/$soname"; return; fi
+	done
+	if [[ -n "${ldd_paths[$soname]:-}" ]]; then readlink -f -- "${ldd_paths[$soname]}"; return; fi
+	while IFS= read -r candidate; do
+		[[ -n "$candidate" ]] || continue
+		candidate="$(readlink -f -- "$candidate")"
+		if [[ -z "$first" ]]; then first="$candidate"; continue; fi
+		if ! cmp -s "$first" "$candidate"; then
+			printf 'error: ambiguous Nix closure dependency %s\n' "$soname" >&2
+			exit 1
+		fi
+	done <<< "${closure_candidates[$soname]:-}"
+	if [[ -n "$first" ]]; then printf '%s' "$first"; return; fi
+	printf 'error: unable to resolve DT_NEEDED dependency %s from %s\n' "$soname" "$requester" >&2
+	exit 1
+}
+
+declare -A inspected=()
+declare -a queue=("$resolved_source")
+copy_library "$source_interpreter" >/dev/null
+while ((${#queue[@]})); do
+	requester="${queue[0]}"
+	queue=("${queue[@]:1}")
+	[[ -z "${inspected[$requester]:-}" ]] || continue
+	inspected["$requester"]=1
+	while IFS= read -r needed; do
+		[[ -n "$needed" ]] || continue
+		resolved="$(resolve_needed "$needed" "$requester")"
+		copy_library "$resolved" >/dev/null
+		queue+=("$resolved")
+	done < <(patchelf --print-needed "$requester")
 done
 
-loader_name="$(basename -- "$interpreter")"
-cat > "$destination" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd -P)"
-exec "\$SCRIPT_DIR/.${destination_name}-libs/${loader_name}" --library-path "\$SCRIPT_DIR/.${destination_name}-libs" "\$SCRIPT_DIR/${destination_name}.real" "\$@"
-EOF
-chmod 0755 "$destination"
+for module in libnss_files.so.2 libnss_dns.so.2 libresolv.so.2; do
+	if [[ -n "${closure_candidates[$module]:-}" ]]; then
+		copy_library "$(resolve_needed "$module" "$source_interpreter")" >/dev/null
+	fi
+done
+
+install -m 0755 "$resolved_source" "$destination"
+patchelf --set-interpreter "$target_interpreter" --set-rpath "\$ORIGIN/.${destination_name}-libs" "$destination"
