@@ -35,8 +35,10 @@ case "${FAKE_SCENARIO:-happy}:$1" in
       missing) printf '{"environment_variables":{"run":{}}}\n' ;;
       empty) printf '{"environment_variables":{"run":{"MANAGER_API_TOKEN":""}}}\n' ;;
       nonstring) printf '{"environment_variables":{"run":{"MANAGER_API_TOKEN":42}}}\n' ;;
+      legacy) printf '{"environment_variables":{"run":{"MANAGER_API_TOKEN":"legacy-manager-token"}}}\n' ;;
+      conflict) printf '{"environment_variables":{"MANAGER_API_TOKEN":"current-manager-token","run":{"MANAGER_API_TOKEN":"legacy-manager-token"}}}\n' ;;
       curl-fails) printf 'secret-from-cf-error\n' >&2; exit 1 ;;
-      *) printf '{"environment_variables":{"run":{"MANAGER_API_TOKEN":"manager-token-must-not-leak"}}}\n' ;;
+      *) printf '{"environment_variables":{"MANAGER_API_TOKEN":"manager-token-must-not-leak","run":null}}\n' ;;
     esac
     ;;
   *:set-env)
@@ -73,7 +75,10 @@ mapfile -t happy_calls <"$LOG"
 [[ ${happy_calls[0]:-} == 'argv <app> <manager> <--guid>' ]] || fail "unexpected app lookup: ${happy_calls[0]:-}"
 [[ ${happy_calls[1]:-} == 'argv <curl> </v3/apps/123e4567-e89b-12d3-a456-426614174000/env>' ]] || fail "unexpected env lookup: ${happy_calls[1]:-}"
 
-for scenario in app-fails malformed missing empty nonstring curl-fails bad-guid; do
+output=$(run_token legacy)
+[[ $output == legacy-manager-token ]] || fail "legacy token was not accepted: $output"
+
+for scenario in app-fails malformed missing empty nonstring conflict curl-fails bad-guid; do
   set +e
   output=$(run_token "$scenario" 2>"$TEST_DIR/$scenario.err")
   status=$?

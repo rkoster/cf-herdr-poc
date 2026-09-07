@@ -56,7 +56,20 @@ environment=$(
 }
 
 token=$(printf '%s' "$environment" | "$JQ_BIN" -er '
-  .environment_variables.run.MANAGER_API_TOKEN
+  (.environment_variables // {}) as $environment_variables
+  | (($environment_variables | type) == "object" and ($environment_variables | has("MANAGER_API_TOKEN"))) as $current_present
+  | (($environment_variables | type) == "object" and ($environment_variables.run | type) == "object" and ($environment_variables.run | has("MANAGER_API_TOKEN"))) as $legacy_present
+  | $environment_variables.MANAGER_API_TOKEN as $current
+  | $environment_variables.run.MANAGER_API_TOKEN as $legacy
+  | if $current_present and $legacy_present and $current != $legacy then
+      error("conflicting token values")
+    elif $current_present then
+      $current
+    elif $legacy_present then
+      $legacy
+    else
+      error("missing token")
+    end
   | if type == "string" and length > 0 then . else error("invalid token") end
 ' 2>/dev/null) || {
   printf 'error: manager app environment did not contain a nonempty MANAGER_API_TOKEN\n' >&2
