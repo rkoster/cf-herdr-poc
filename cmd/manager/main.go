@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -91,7 +92,10 @@ func run() error {
 	reconciler := reconcile.New(reconcile.Config{WorkRoot: cfg.WorkRoot, IdentityDomain: cfg.IdentityDomain, ManagerRouteHost: cfg.ManagerRouteHost, ManagerPackHost: cfg.ManagerPackHost, ManagerAppGUID: cfg.ManagerAppGUID, PollAttempts: 30, PollInterval: time.Second, ScanInterval: cfg.ReconcileInterval}, state, reconcile.BundleRuntime{Builder: builder}, cloud, reconcile.ConcretePackManager{Manager: packManager}, probe, realClock{})
 	collieURL, _ := url.Parse("http://" + cfg.CollieAddress)
 	web := managerWeb(cfg.WebDir)
-	handler, err := httpapi.New(httpapi.Config{Store: state, Reconciler: reconciler, Buildpacks: cfg.Buildpacks, CollieURL: collieURL, ManagerPackHost: cfg.ManagerPackHost, ManagerToken: cfg.APIToken, TrustForwardedProto: true, Healthy: collie.Healthy, ErrorSink: func(err error) { log.Printf("manager API reconciliation: %v", err) }, Web: web})
+	var ready atomic.Bool
+	// CF liveness measures the manager control-plane process, not agent or mux reachability.
+	// Transient mux failures remain visible in Collie data and reconciliation instead of restarting the app.
+	handler, err := httpapi.New(httpapi.Config{Store: state, Reconciler: reconciler, Buildpacks: cfg.Buildpacks, CollieURL: collieURL, ManagerPackHost: cfg.ManagerPackHost, ManagerToken: cfg.APIToken, TrustForwardedProto: true, Healthy: ready.Load, ErrorSink: func(err error) { log.Printf("manager API reconciliation: %v", err) }, Web: web})
 	if err != nil {
 		return fmt.Errorf("build HTTP gateway: %w", err)
 	}
@@ -114,6 +118,7 @@ func run() error {
 		_ = herdr.Stop(context.Background())
 		return fmt.Errorf("wait for lead Collie: %w", err)
 	}
+	ready.Store(true)
 	reconciler.Start(ctx)
 	server := managerHTTPServer(cfg.Address, handler)
 	errorsChannel := make(chan error, 1)

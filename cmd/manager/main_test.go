@@ -6,14 +6,18 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"cf-herdr-poc/internal/config"
+	"cf-herdr-poc/internal/httpapi"
+	"cf-herdr-poc/internal/store"
 )
 
 func TestManagerWebServesAssetsAndFallsBackToIndex(t *testing.T) {
@@ -220,4 +224,60 @@ func TestWaitForShutdownReturnsSupervisorError(t *testing.T) {
 	if err := waitForShutdown(ctx, httpErrors, supervisorErrors); !errors.Is(err, want) {
 		t.Fatalf("waitForShutdown error = %v", err)
 	}
+}
+
+func TestManagerHealthLatchStaysReadyAfterCollieReportsUnhealthy(t *testing.T) {
+	var ready atomic.Bool
+	collieHealthy := true
+	healthy := func() bool {
+		return ready.Load()
+	}
+	handler, err := httpapi.New(httpapi.Config{
+		Store:           store.NewFile(filepath.Join(t.TempDir(), "state.json")),
+		Reconciler:      managerTestReconciler{},
+		Buildpacks:      []string{"ruby_buildpack"},
+		CollieURL:       mustURL(t, "http://127.0.0.1:9191"),
+		ManagerPackHost: "pack.identity.example",
+		ManagerToken:    "test-token",
+		Healthy:         healthy,
+		ErrorSink:       func(error) {},
+		Now:             func() time.Time { return time.Unix(100, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeReady := httptest.NewRecorder()
+	handler.ServeHTTP(beforeReady, httptest.NewRequest(http.MethodGet, "/manager/healthz", nil))
+	if beforeReady.Code != http.StatusServiceUnavailable {
+		t.Fatalf("health before manager readiness = %d, want 503", beforeReady.Code)
+	}
+	ready.Store(true)
+	before := httptest.NewRecorder()
+	handler.ServeHTTP(before, httptest.NewRequest(http.MethodGet, "/manager/healthz", nil))
+	if before.Code != http.StatusOK {
+		t.Fatalf("health before Collie transition = %d, want 200", before.Code)
+	}
+	collieHealthy = false
+	if collieHealthy {
+		t.Fatal("test did not simulate Collie becoming unhealthy")
+	}
+	after := httptest.NewRecorder()
+	handler.ServeHTTP(after, httptest.NewRequest(http.MethodGet, "/manager/healthz", nil))
+	if after.Code != http.StatusOK {
+		t.Fatalf("health after Collie transition = %d, want 200", after.Code)
+	}
+}
+
+type managerTestReconciler struct{}
+
+func (managerTestReconciler) ReconcileOne(context.Context, string) error { return nil }
+func (managerTestReconciler) Retry(context.Context, string) error        { return nil }
+
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }
