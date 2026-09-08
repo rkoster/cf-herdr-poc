@@ -19,7 +19,7 @@ func TestDirectSandboxPushesStandaloneAppWithExactContract(t *testing.T) {
 	if !containsPrefix(events, "git\tclone\t--depth\t1\t--\thttps://github.com/cloudfoundry-samples/cf-sample-app-nodejs.git\t") {
 		t.Fatalf("events = %#v, want safe clone arguments", events)
 	}
-	if !containsEvent(events, "cf\tpush\tdirect-sandbox\t--no-route\t--no-start\t-b\tnodejs_buildpack\t-p\tapp\t-c\t./.sandbox/start.sh") {
+	if !containsEvent(events, "cf\tpush\tdirect-sandbox\t--no-route\t--no-start\t-b\tnodejs_buildpack\t-p\tapp\t-c\t./sandbox-runtime/start.sh") {
 		t.Fatalf("events = %#v, want exact standalone push", events)
 	}
 	if containsPrefix(events, "cf\tcreate-route") || containsPrefix(events, "cf\tmap-route") {
@@ -103,7 +103,7 @@ func TestDirectSandboxStagesJoinTokenBeforePushWithoutPrintingIt(t *testing.T) {
 		t.Fatalf("direct-sandbox.sh: %v: %s", err, out)
 	}
 	events := f.events(t)
-	push := eventIndex(events, "cf\tpush\tdirect-sandbox\t--no-route\t--no-start\t-b\tnodejs_buildpack\t-p\tapp\t-c\t./.sandbox/start.sh")
+	push := eventIndex(events, "cf\tpush\tdirect-sandbox\t--no-route\t--no-start\t-b\tnodejs_buildpack\t-p\tapp\t-c\t./sandbox-runtime/start.sh")
 	if push < 0 {
 		t.Fatalf("events = %#v, want push", events)
 	}
@@ -120,7 +120,7 @@ func TestDirectSandboxStagesJoinTokenBeforePushWithoutPrintingIt(t *testing.T) {
 	if eventIndex(events, "token-staged") > push {
 		t.Fatalf("events = %#v, join token must be staged before push", events)
 	}
-	if eventIndex(events, "cf\tstart\tdirect-sandbox") <= eventIndex(events, "cf\tset-env\tdirect-sandbox\tCOLLIE_JOIN_TOKEN_FILE\t/home/vcap/app/.sandbox/.join-token") {
+	if eventIndex(events, "cf\tstart\tdirect-sandbox") <= eventIndex(events, "cf\tset-env\tdirect-sandbox\tCOLLIE_JOIN_TOKEN_FILE\t/home/vcap/app/sandbox-runtime/join-token") {
 		t.Fatalf("events = %#v, want start after join environment", events)
 	}
 	if !strings.Contains(out, "cf logs direct-sandbox") || strings.Contains(out, "secret-token") {
@@ -186,7 +186,7 @@ printf '\n' >> "$EVENTS"
 if [ "$1" = clone ]; then mkdir -p "$6"; fi
 `)
 	writeExecutable(t, filepath.Join(bin, "cf"), `#!/bin/sh
-if [ "$1" = push ] && [ -f app/.sandbox/.join-token ]; then printf 'token-staged\n' >> "$EVENTS"; fi
+if [ "$1" = push ] && [ -f app/sandbox-runtime/join-token ]; then printf 'token-staged\n' >> "$EVENTS"; fi
 printf 'cf' >> "$EVENTS"
 printf '\t%s' "$@" >> "$EVENTS"
 printf '\n' >> "$EVENTS"

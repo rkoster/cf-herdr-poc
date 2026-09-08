@@ -58,13 +58,13 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 git clone --depth 1 -- "$REPOSITORY" "$WORK_DIR/app"
-cp -a "$RUNTIME_DIR" "$WORK_DIR/app/.sandbox"
+cp -a "$RUNTIME_DIR" "$WORK_DIR/app/sandbox-runtime"
 while IFS= read -r -d '' link; do
   target="$(readlink -f -- "$link")"
-  case "$target" in "$WORK_DIR/app/.sandbox"/*) ;; *) printf 'error: runtime symlink escapes .sandbox: %s\n' "${link#"$WORK_DIR/app/.sandbox/"}" >&2; exit 2;; esac
-  done < <(find "$WORK_DIR/app/.sandbox" -type l -print0)
+  case "$target" in "$WORK_DIR/app/sandbox-runtime"/*) ;; *) printf 'error: runtime symlink escapes sandbox-runtime: %s\n' "${link#"$WORK_DIR/app/sandbox-runtime/"}" >&2; exit 2;; esac
+  done < <(find "$WORK_DIR/app/sandbox-runtime" -type l -print0)
 
-cat >"$WORK_DIR/app/.sandbox/start.sh" <<'LAUNCHER'
+cat >"$WORK_DIR/app/sandbox-runtime/start.sh" <<'LAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -86,20 +86,20 @@ while [[ ! -S "$HERDR_SOCKET_PATH" ]]; do
 done
 exec "$SCRIPT_DIR/bin/bun" run "$SCRIPT_DIR/collie/bridge/index.ts"
 LAUNCHER
-chmod +x "$WORK_DIR/app/.sandbox/start.sh"
+chmod +x "$WORK_DIR/app/sandbox-runtime/start.sh"
 if [[ -n "${COLLIE_JOIN_TOKEN_FILE:-}" ]]; then
-  cp -- "$COLLIE_JOIN_TOKEN_FILE" "$WORK_DIR/app/.sandbox/.join-token"
-  chmod 600 "$WORK_DIR/app/.sandbox/.join-token"
+  cp -- "$COLLIE_JOIN_TOKEN_FILE" "$WORK_DIR/app/sandbox-runtime/join-token"
+  chmod 600 "$WORK_DIR/app/sandbox-runtime/join-token"
 fi
 
 created=1
-(cd "$WORK_DIR" && "$CF_BIN" push "$APP_NAME" --no-route --no-start -b "$BUILDPACK" -p app -c ./.sandbox/start.sh)
+(cd "$WORK_DIR" && "$CF_BIN" push "$APP_NAME" --no-route --no-start -b "$BUILDPACK" -p app -c ./sandbox-runtime/start.sh)
 "$CF_BIN" set-env "$APP_NAME" COLLIE_PACK_TRANSPORT cf-identity >/dev/null 2>&1
 "$CF_BIN" set-env "$APP_NAME" COLLIE_HOST 0.0.0.0 >/dev/null 2>&1
 "$CF_BIN" set-env "$APP_NAME" SANDBOX_CWD "$SANDBOX_CWD" >/dev/null 2>&1
 if [[ -n "${COLLIE_JOIN_TOKEN_FILE:-}" ]]; then
   "$CF_BIN" set-env "$APP_NAME" COLLIE_PACK_LEAD_ADDRESS "${COLLIE_PACK_LEAD_ADDRESS:?COLLIE_PACK_LEAD_ADDRESS is required with a join token}" >/dev/null 2>&1
-  "$CF_BIN" set-env "$APP_NAME" COLLIE_JOIN_TOKEN_FILE /home/vcap/app/.sandbox/.join-token >/dev/null 2>&1
+  "$CF_BIN" set-env "$APP_NAME" COLLIE_JOIN_TOKEN_FILE /home/vcap/app/sandbox-runtime/join-token >/dev/null 2>&1
 fi
 "$CF_BIN" start "$APP_NAME"
 

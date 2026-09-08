@@ -8,7 +8,7 @@ Optional variables are `SANDBOX_NAME`, `SANDBOX_REPOSITORY`, `SANDBOX_BUILDPACK`
 
 `SANDBOX_NAME` must be a lowercase Cloud Foundry app name. The script checks `cf app <name> --guid` first and refuses to use an existing app; choose a different name rather than reusing one. If `COLLIE_JOIN_TOKEN_FILE` is set, `COLLIE_PACK_LEAD_ADDRESS` is also required. The token is copied into the staged app with restrictive permissions and is never printed.
 
-The direct workflow clones into a temporary directory, overlays the built runtime as `.sandbox`, pushes with `--no-route --no-start`, then starts the app. It creates no public route, identity route, route policy, or Pack enrollment. Manager-created sandboxes are different: they use CF instance identity, manager route policy, and Pack enrollment. Configure those through the manager workflow, not this script.
+The direct workflow clones into a temporary directory, overlays the built runtime as the visible `sandbox-runtime` directory, pushes with `--no-route --no-start`, then starts the app. The visible path is intentional: CF package handling omits hidden `.sandbox` trees, which causes the launcher to be absent from the staged app. Runtime state remains under `/home/vcap/app/.sandbox-state`; an optional join token is staged under the visible runtime directory. The direct workflow creates no public route, identity route, route policy, or Pack enrollment. Manager-created sandboxes are different: they use CF instance identity, manager route policy, and Pack enrollment. Configure those through the manager workflow, not this script.
 
 ## Inspect
 
@@ -24,9 +24,9 @@ Inside the app, check the direct runtime and process contract:
 
 ```bash
 cd /home/vcap/app
-.sandbox/bin/herdr server
-.sandbox/bin/bun --version
-./.sandbox/start.sh
+sandbox-runtime/bin/herdr server
+sandbox-runtime/bin/bun --version
+./sandbox-runtime/start.sh
 ```
 
 Delete a debug app with `cf delete "$SANDBOX_NAME" -f -r`. The script deletes its app on failure and on normal exit unless `SANDBOX_KEEP=1`.
