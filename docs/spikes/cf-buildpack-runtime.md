@@ -12,7 +12,7 @@ The deployed package was approximately 214.7 MiB. The manager's 1 GB quota was i
 
 After Herdr supervision and bundled CF authentication were in place, the manager reached `1/1` healthy. This does not establish a complete successful lifecycle smoke test; the remaining live result is recorded in `docs/smoke-test.md`.
 
-The relocation mode is a lab-only workaround. Direct execution with the cflinuxfs loader and bundled Nix libc failed with undefined `__tunable_is_initialized@GLIBC_PRIVATE`; explicit execution through the bundled Nix loader succeeded. `ALLOW_NIX_RUNTIME_RELOCATION=1` therefore patches each direct ELF to an absolute private-loader interpreter and an origin-relative RPATH. Manager builds bind sandbox binaries to `/home/vcap/app/.sandbox/bin`; independent manager Bun and Collie copies are bound to `/home/vcap/app/manager-runtime/bin`, while manager Collie reuses the sandbox Collie asset tree. A direct build must explicitly set `DIRECT_SANDBOX=1` or `SANDBOX_TARGET_INSTALL_DIR=/home/vcap/app/sandbox-runtime/bin`, which binds its interpreter to the visible direct runtime. Manager launch uses `./.sandbox/start.sh`; direct launch uses `./sandbox-runtime/start.sh`. Relocation recursively bundles each startup `DT_NEEDED` graph and available glibc NSS/DNS resolver modules. Exact install-path binding and duplicated private executable libraries increase build and upload friction and are not the production recommendation; production should use official static or portable artifacts.
+The relocation mode is a lab-only workaround. Direct execution with the cflinuxfs loader and bundled Nix libc failed with undefined `__tunable_is_initialized@GLIBC_PRIVATE`; explicit execution through the bundled Nix loader succeeded. `ALLOW_NIX_RUNTIME_RELOCATION=1` therefore patches each direct ELF to an absolute private-loader interpreter and an origin-relative RPATH. Manager and direct builds bind sandbox binaries to `/home/vcap/app/sandbox-runtime/bin`; independent manager Bun and Collie copies are bound to `/home/vcap/app/manager-runtime/bin`, while manager Collie reuses the sandbox Collie asset tree. The visible runtime is launched with `./sandbox-runtime/start.sh`. Relocation recursively bundles each startup `DT_NEEDED` graph and available glibc NSS/DNS resolver modules. Exact install-path binding and duplicated private executable libraries increase build and upload friction and are not the production recommendation; production should use official static or portable artifacts.
 
 The bundle is not proven to be a complete dynamic closure. Unobserved `dlopen` choices and absolute runtime asset paths can still escape the startup graph. Packaged ELF loader metadata is checked for actionable `/nix/store/` paths, but arbitrary embedded diagnostics strings are not rejected. The live cflinuxfs smoke test exercised deployment and several lifecycle prerequisites, but did not complete successfully.
 
@@ -38,13 +38,13 @@ mkdir -p dist/runtime-spike
 cp -R dist/sandbox/runtime dist/runtime-spike/.sandbox
 cf version
 cf buildpacks
-cf push cf-herdr-runtime-spike -p dist/runtime-spike --no-route -b binary_buildpack -c './.sandbox/start.sh' --no-start
+cf push cf-herdr-runtime-spike -p dist/runtime-spike --no-route -b binary_buildpack -c './sandbox-runtime/start.sh' --no-start
 cf app cf-herdr-runtime-spike --guid
 cf start cf-herdr-runtime-spike
 cf logs cf-herdr-runtime-spike --recent
-cf ssh cf-herdr-runtime-spike -c 'pwd; test -x app/.sandbox/start.sh; test -x app/.sandbox/bin/bun; test -x app/.sandbox/bin/herdr; app/.sandbox/bin/bun --version; app/.sandbox/bin/herdr --version; touch /home/vcap/data/write-test; test -f /home/vcap/data/write-test'
+cf ssh cf-herdr-runtime-spike -c 'pwd; test -x app/sandbox-runtime/start.sh; test -x app/sandbox-runtime/bin/bun; test -x app/sandbox-runtime/bin/herdr; app/sandbox-runtime/bin/bun --version; app/sandbox-runtime/bin/herdr --version; touch /home/vcap/data/write-test; test -f /home/vcap/data/write-test'
 
-For a direct sandbox, build separately with `DIRECT_SANDBOX=1 devbox run build`, then stage `dist/sandbox/runtime` as visible `sandbox-runtime` and launch `./sandbox-runtime/start.sh`; do not reuse a manager build because its relocated interpreter points at `/home/vcap/app/.sandbox/bin`.
+Build with `devbox run build`, then stage `dist/sandbox/runtime` as visible `sandbox-runtime` and launch `./sandbox-runtime/start.sh`.
 cf delete cf-herdr-runtime-spike -f
 rm -rf dist/runtime-spike
 ```
@@ -52,7 +52,7 @@ rm -rf dist/runtime-spike
 ## Assertions
 
 - Staging preserves executable bits for manager, bootstrap, Bun, Herdr, and Collie.
-- Manager and bootstrap have no dynamic dependencies. Portable runtime binaries have no unresolved or `/nix/store` dependencies; on amd64 the lab-relocated sandbox Bun interpreter is exactly `/home/vcap/app/.sandbox/bin/.bun-libs/ld-linux-x86-64.so.2`, with corresponding executable-specific bundled Nix loaders and origin-relative private library paths for the other relocated binaries.
+- Manager and bootstrap have no dynamic dependencies. Portable runtime binaries have no unresolved or `/nix/store` dependencies; on amd64 the lab-relocated sandbox Bun interpreter is exactly `/home/vcap/app/sandbox-runtime/bin/.bun-libs/ld-linux-x86-64.so.2`, with corresponding executable-specific bundled Nix loaders and origin-relative private library paths for the other relocated binaries.
 - The binary buildpack starts the exact configured command without downloading artifacts.
 - Bundled Bun and Herdr execute in the Diego cell.
 - Application bits are readable and `/home/vcap/data` is writable.

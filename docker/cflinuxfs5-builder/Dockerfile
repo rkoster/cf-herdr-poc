@@ -56,8 +56,7 @@ WORKDIR /src
 RUN set -eux; command -v go; \
     ln -sf /tools/bin/bun /usr/local/bin/bunx; command -v bunx; bunx --version; \
     /tools/bin/bun install --cwd web --frozen-lockfile; /tools/bin/bun run --cwd web build; \
-     sandbox_target=/home/vcap/app/.sandbox/bin; \
-       if test "${DIRECT_SANDBOX:-}" = 1; then sandbox_target=/home/vcap/app/sandbox-runtime/bin; fi; \
+	     sandbox_target=/home/vcap/app/sandbox-runtime/bin; \
        if test -n "${SANDBOX_TARGET_INSTALL_DIR:-}"; then sandbox_target="$SANDBOX_TARGET_INSTALL_DIR"; fi; \
      BUN_RUNTIME_BIN=/tools/bin/bun HERDR_RUNTIME_BIN=/tools/bin/herdr CF_BIN=/tools/bin/cf GOOS="$GOOS" GOARCH="$GOARCH" \
        RUNTIME_DIR=/work/dist/sandbox/runtime MANAGER_RUNTIME_DIR=/work/dist/manager-runtime \

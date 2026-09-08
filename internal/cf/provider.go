@@ -160,7 +160,7 @@ func (p Provider) Stage(ctx context.Context, request PushRequest) (model.Operati
 			return observation, &Error{Operation: "stage", Kind: "identity_mismatch"}
 		}
 	}
-	operation, _, err := p.execute(ctx, "stage", "push", request.Name, "--no-route", "--no-start", "-b", request.Buildpack, "-p", request.BitsPath, "-c", "./.sandbox/start.sh")
+	operation, _, err := p.execute(ctx, "stage", "push", request.Name, "--no-route", "--no-start", "-b", request.Buildpack, "-p", request.BitsPath, "-c", "./sandbox-runtime/start.sh")
 	return operation, err
 }
 
@@ -191,7 +191,7 @@ func (p Provider) ConfigureEnrollment(ctx context.Context, name, tokenAppPath, l
 	if err := validateName("app", name); err != nil {
 		return model.Operation{}, err
 	}
-	if tokenAppPath != "/home/vcap/app/.sandbox/join-token" || !validHTTPSAddress(leadAddress) {
+	if tokenAppPath != "/home/vcap/app/sandbox-runtime/join-token" || !validHTTPSAddress(leadAddress) {
 		return model.Operation{}, fmt.Errorf("invalid enrollment configuration")
 	}
 	return p.executeMany(ctx, "configure-enrollment", [][]string{{"set-env", name, "COLLIE_JOIN_TOKEN_FILE", tokenAppPath}, {"set-env", name, "COLLIE_PACK_LEAD_ADDRESS", leadAddress}, {"set-env", name, "SANDBOX_MEMBER_ID", name}})

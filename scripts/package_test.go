@@ -361,7 +361,7 @@ func TestManifestUsesManagerSpecificExecutablesAndSharedCollieAssets(t *testing.
 func TestBuildBindsSandboxAndManagerExecutablesToDifferentCFLayouts(t *testing.T) {
 	script := readPackageFile(t, "scripts/build.sh")
 	for _, required := range []string{
-		"SANDBOX_TARGET_INSTALL_DIR=\"${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/.sandbox/bin}\"",
+		"SANDBOX_TARGET_INSTALL_DIR=\"${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/sandbox-runtime/bin}\"",
 		"DIRECT_SANDBOX",
 		"/home/vcap/app/sandbox-runtime/bin",
 		"MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin",
@@ -514,7 +514,7 @@ func TestDeferredSpikeDocumentsRecordCommandsWithoutObservations(t *testing.T) {
 func TestRuntimeDocsDescribeNeededClosureAndResidualDlopenRisk(t *testing.T) {
 	for _, name := range []string{"README.md", "docs/spikes/cf-buildpack-runtime.md"} {
 		doc := readPackageFile(t, name)
-		for _, required := range []string{"DT_NEEDED", "dlopen", "live", "GLIBC_PRIVATE", "/home/vcap/app/.sandbox/bin", "/home/vcap/app/manager-runtime/bin"} {
+		for _, required := range []string{"DT_NEEDED", "dlopen", "live", "GLIBC_PRIVATE", "/home/vcap/app/sandbox-runtime/bin", "/home/vcap/app/manager-runtime/bin"} {
 			if !strings.Contains(doc, required) {
 				t.Errorf("%s missing relocation limitation %q", name, required)
 			}
@@ -527,8 +527,8 @@ func TestRuntimeSpikeExercisesPackagedSandboxAtItsTargetAppLayout(t *testing.T) 
 	for _, required := range []string{
 		"cp -R dist/sandbox/runtime dist/runtime-spike/.sandbox",
 		"-p dist/runtime-spike",
-		"-c './.sandbox/start.sh'",
-		"/home/vcap/app/.sandbox/bin/.bun-libs/ld-linux-x86-64.so.2",
+		"-c './sandbox-runtime/start.sh'",
+		"/home/vcap/app/sandbox-runtime/bin/.bun-libs/ld-linux-x86-64.so.2",
 	} {
 		if !strings.Contains(doc, required) {
 			t.Errorf("runtime spike missing sandbox layout contract %q", required)
@@ -625,7 +625,7 @@ if [ "${FAIL_RUNTIME:-}" = 1 ]; then exit 23; fi
 	mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie/bridge" "$RUNTIME_DIR/collie/cli" "$RUNTIME_DIR/collie/node_modules/fixture" "$RUNTIME_DIR/collie/web/dist"
 for name in bun herdr collie sandbox-bootstrap; do printf '#!/bin/sh\n' > "$RUNTIME_DIR/bin/$name"; chmod +x "$RUNTIME_DIR/bin/$name"; done
 printf '#!/bin/sh\n' > "$RUNTIME_DIR/start.sh"; chmod +x "$RUNTIME_DIR/start.sh"
-printf '%s\n' "${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/.sandbox/bin}" > "$RUNTIME_DIR/target-install-dir"
+printf '%s\n' "${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/sandbox-runtime/bin}" > "$RUNTIME_DIR/target-install-dir"
 printf fixture > "$RUNTIME_DIR/collie/bridge/index.ts"
 for name in install-kind link sys; do printf fixture > "$RUNTIME_DIR/collie/cli/$name.ts"; done
 printf '{}' > "$RUNTIME_DIR/collie/package.json"

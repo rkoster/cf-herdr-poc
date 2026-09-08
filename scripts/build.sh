@@ -44,7 +44,7 @@ CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o "$DIST_STAGING/manager" 
 test -x "$DIST_STAGING/manager"
 
 RUNTIME_DIR="$DIST_STAGING/sandbox/runtime" GOOS="$GOOS" GOARCH="$GOARCH" \
-	SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/.sandbox/bin}" \
+	SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/sandbox-runtime/bin}" \
 	MANAGER_RUNTIME_DIR="$DIST_STAGING/manager-runtime" \
 	MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin \
 	BUN_RUNTIME_BIN="$BUN_RUNTIME_BIN" HERDR_RUNTIME_BIN="$HERDR_RUNTIME_BIN" CF_BIN="${CF_BIN:?CF_BIN is required}" \

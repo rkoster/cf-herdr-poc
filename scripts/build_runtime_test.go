@@ -261,10 +261,10 @@ func TestBuildRuntimeRelocationIsExplicitAndCoversEveryNixRuntime(t *testing.T) 
 	}
 }
 
-func TestBuildTargetsUseVisibleDirectRuntimeAndSeparateManagerRuntime(t *testing.T) {
+func TestBuildTargetsUseVisibleSandboxRuntimeAndSeparateManagerRuntime(t *testing.T) {
 	build := readFile(t, filepath.Join(packageRoot(t), "scripts", "build.sh"))
-	if !strings.Contains(build, `SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/.sandbox/bin}"`) {
-		t.Fatal("build.sh does not default to the manager sandbox target")
+	if !strings.Contains(build, `SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/sandbox-runtime/bin}"`) {
+		t.Fatal("build.sh does not default to the visible sandbox target")
 	}
 	if !strings.Contains(build, "MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin") {
 		t.Fatal("build.sh changed the manager runtime target")
@@ -273,19 +273,19 @@ func TestBuildTargetsUseVisibleDirectRuntimeAndSeparateManagerRuntime(t *testing
 		t.Fatal("build.sh does not support an explicit direct sandbox target")
 	}
 	runtime := readBuildScript(t)
-	if !strings.Contains(runtime, `SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR-/home/vcap/app/.sandbox/bin}"`) || !strings.Contains(runtime, "/home/vcap/app/sandbox-runtime/bin") {
+	if !strings.Contains(runtime, `SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR-/home/vcap/app/sandbox-runtime/bin}"`) {
 		t.Fatal("build-runtime.sh does not expose the sandbox target override")
 	}
 }
 
-func TestCFLinuxFS5BuilderDefaultsToManagerSandboxInterpreter(t *testing.T) {
+func TestCFLinuxFS5BuilderDefaultsToVisibleSandboxInterpreter(t *testing.T) {
 	root := packageRoot(t)
 	dockerfile := readFile(t, filepath.Join(root, "docker", "cflinuxfs5-builder", "Dockerfile"))
 	build := readFile(t, filepath.Join(root, "scripts", "build-cflinuxfs5.sh"))
 	for _, required := range []string{
 		"ARG DIRECT_SANDBOX=",
 		"ARG SANDBOX_TARGET_INSTALL_DIR=",
-		"sandbox_target=/home/vcap/app/.sandbox/bin",
+		"sandbox_target=/home/vcap/app/sandbox-runtime/bin",
 		"DIRECT_SANDBOX=${DIRECT_SANDBOX:-}",
 		"SANDBOX_TARGET_INSTALL_DIR=${SANDBOX_TARGET_INSTALL_DIR:-}",
 	} {
@@ -295,13 +295,11 @@ func TestCFLinuxFS5BuilderDefaultsToManagerSandboxInterpreter(t *testing.T) {
 	}
 }
 
-func TestRuntimeLaunchersUseManagerAndDirectInterpreters(t *testing.T) {
+func TestRuntimeLaunchersUseVisibleSandboxInterpreter(t *testing.T) {
 	root := packageRoot(t)
 	spike := readFile(t, filepath.Join(root, "docs", "spikes", "cf-buildpack-runtime.md"))
 	for _, required := range []string{
-		"/home/vcap/app/.sandbox/bin",
 		"/home/vcap/app/sandbox-runtime/bin",
-		"./.sandbox/start.sh",
 		"./sandbox-runtime/start.sh",
 	} {
 		if !strings.Contains(spike, required) {
@@ -422,7 +420,7 @@ func runBuild(t *testing.T, env []string) (string, error) {
 		}
 	}
 	if !hasTarget {
-		env = append(env, "TARGET_INSTALL_DIR=/home/vcap/app/.sandbox/bin")
+		env = append(env, "TARGET_INSTALL_DIR=/home/vcap/app/sandbox-runtime/bin")
 	}
 	command := exec.Command("bash", filepath.Join(filepath.Dir(filename), "build-runtime.sh"))
 	command.Env = append([]string{"PATH=" + os.Getenv("PATH")}, env...)

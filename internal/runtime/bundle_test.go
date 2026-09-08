@@ -41,7 +41,7 @@ func TestPrepareClonesBeforeOverlayAndReturnsRevision(t *testing.T) {
 	recorder := &recordingRunner{}
 	recorder.run = func(name string, args []string) ([]byte, error) {
 		if reflect.DeepEqual(args, []string{"clone", "--depth", "1", "--", "https://git.example/demo.git", destination}) {
-			if _, err := os.Stat(filepath.Join(destination, ".sandbox")); !errors.Is(err, os.ErrNotExist) {
+			if _, err := os.Stat(filepath.Join(destination, "sandbox-runtime")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("runtime overlay existed before clone completed: %v", err)
 			}
 			if err := os.MkdirAll(destination, 0o755); err != nil {
@@ -72,7 +72,7 @@ func TestPrepareClonesBeforeOverlayAndReturnsRevision(t *testing.T) {
 		t.Fatalf("commands = %#v, want %#v", recorder.commands, wantCommands)
 	}
 	for path, mode := range map[string]os.FileMode{"start.sh": 0o755, filepath.Join("config", "default.json"): 0o640} {
-		info, err := os.Stat(filepath.Join(destination, ".sandbox", path))
+		info, err := os.Stat(filepath.Join(destination, "sandbox-runtime", path))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,7 +95,7 @@ func TestPrepareOverlaysManagerRuntimeWithManagerInterpreterPath(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(destination, ".sandbox", "bin", "bun")); err != nil {
+	if _, err := os.Stat(filepath.Join(destination, "sandbox-runtime", "bin", "bun")); err != nil {
 		t.Fatalf("manager runtime interpreter missing: %v", err)
 	}
 }
@@ -103,7 +103,7 @@ func TestPrepareOverlaysManagerRuntimeWithManagerInterpreterPath(t *testing.T) {
 func TestInstallEnrollmentCopiesPrivateTokenIntoPreparedRuntime(t *testing.T) {
 	root := t.TempDir()
 	destination := filepath.Join(root, "demo")
-	if err := os.MkdirAll(filepath.Join(destination, ".sandbox"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(destination, "sandbox-runtime"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	source := filepath.Join(root, "invite")
@@ -113,7 +113,7 @@ func TestInstallEnrollmentCopiesPrivateTokenIntoPreparedRuntime(t *testing.T) {
 	if err := (Builder{WorkRoot: root}).InstallEnrollment(destination, source); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filepath.Join(destination, ".sandbox", "join-token"))
+	info, err := os.Stat(filepath.Join(destination, "sandbox-runtime", "join-token"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestPreparePreservesInternalRuntimeSymlink(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(destination, ".sandbox", "bin", ".bun-libs", "libc.so.6")
+	link := filepath.Join(destination, "sandbox-runtime", "bin", ".bun-libs", "libc.so.6")
 	got, err := os.Readlink(link)
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +238,7 @@ func TestPrepareRejectsClonedSandboxSymlinkWithoutWritingOutside(t *testing.T) {
 		if err := os.MkdirAll(destination, 0o755); err != nil {
 			return nil, err
 		}
-		return nil, os.Symlink(outside, filepath.Join(destination, ".sandbox"))
+		return nil, os.Symlink(outside, filepath.Join(destination, "sandbox-runtime"))
 	}}
 
 	_, err := (Builder{Run: recorder, RuntimeDir: runtimeDir, WorkRoot: workRoot}).Prepare(
@@ -262,10 +262,10 @@ func TestPrepareRejectsSymlinkInExistingOverlayPath(t *testing.T) {
 		if args[0] != "clone" {
 			return []byte("abc123\n"), nil
 		}
-		if err := os.MkdirAll(filepath.Join(destination, ".sandbox"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(destination, "sandbox-runtime"), 0o755); err != nil {
 			return nil, err
 		}
-		return nil, os.Symlink(outside, filepath.Join(destination, ".sandbox", "config"))
+		return nil, os.Symlink(outside, filepath.Join(destination, "sandbox-runtime", "config"))
 	}}
 
 	_, err := (Builder{Run: recorder, RuntimeDir: runtimeDir, WorkRoot: workRoot}).Prepare(

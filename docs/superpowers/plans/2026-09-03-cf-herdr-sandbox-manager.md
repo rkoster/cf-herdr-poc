@@ -205,7 +205,7 @@ The fixture must require one Ruby gem and print its version, proving the selecte
 Run:
 
 ```bash
-cf push herdr-runtime-spike --no-route -b ruby_buildpack -p /tmp/herdr-runtime-spike -c './.sandbox/start.sh'
+cf push herdr-runtime-spike --no-route -b ruby_buildpack -p /tmp/herdr-runtime-spike -c './sandbox-runtime/start.sh'
 cf logs herdr-runtime-spike --recent
 ```
 
@@ -447,7 +447,7 @@ Expected: FAIL because `Provider` does not exist.
 
 - [ ] **Step 3: Implement commands as argv arrays**
 
-For a fixture request named `demo`, use exact argv shapes such as `cf push demo --no-route -b ruby_buildpack -p /tmp/work/demo -c ./.sandbox/start.sh`, `cf app demo --guid`, and the corresponding `cf create-route`, `cf map-route`, `cf add-route-policy`, remove, and `cf delete demo -f` forms. Production values replace fixture values as individual argv entries. Capture bounded output and duration in `model.Operation`.
+For a fixture request named `demo`, use exact argv shapes such as `cf push demo --no-route -b ruby_buildpack -p /tmp/work/demo -c ./sandbox-runtime/start.sh`, `cf app demo --guid`, and the corresponding `cf create-route`, `cf map-route`, `cf add-route-policy`, remove, and `cf delete demo -f` forms. Production values replace fixture values as individual argv entries. Capture bounded output and duration in `model.Operation`.
 
 Validate app/host names with `^[a-z][a-z0-9-]{0,47}$`. Validate buildpack membership before running any command. Never persist join tokens, certificates, keys, or full environment output.
 

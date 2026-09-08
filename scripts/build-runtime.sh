@@ -7,7 +7,7 @@ RUNTIME_DIR="${RUNTIME_DIR:-$ROOT/sandbox/runtime}"
 if [[ -z "${SANDBOX_TARGET_INSTALL_DIR:-}" && "${DIRECT_SANDBOX:-}" == 1 ]]; then
 	SANDBOX_TARGET_INSTALL_DIR=/home/vcap/app/sandbox-runtime/bin
 else
-	SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR-/home/vcap/app/.sandbox/bin}"
+	SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR-/home/vcap/app/sandbox-runtime/bin}"
 fi
 if [[ -n "${TARGET_INSTALL_DIR+x}" ]]; then
 	TARGET_INSTALL_DIR="$TARGET_INSTALL_DIR"

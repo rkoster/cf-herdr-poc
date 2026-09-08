@@ -648,7 +648,7 @@ func (r *Reconciler) effectStage(ctx context.Context, s model.Sandbox, path stri
 }
 func (r *Reconciler) effectConfigureEnrollment(ctx context.Context, name string) (model.Operation, error) {
 	r.effect("configure-enrollment")
-	return r.cf.ConfigureEnrollment(ctx, name, "/home/vcap/app/.sandbox/join-token", "https://"+r.config.ManagerPackHost)
+	return r.cf.ConfigureEnrollment(ctx, name, "/home/vcap/app/sandbox-runtime/join-token", "https://"+r.config.ManagerPackHost)
 }
 func (r *Reconciler) effectStartApp(ctx context.Context, name string) (model.Operation, error) {
 	r.effect("start-app")

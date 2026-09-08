@@ -61,7 +61,7 @@ func TestStageUsesExactArgvWithoutStartingOrAdoptingGUID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []command{{name: "cf", args: []string{"app", "demo", "--guid"}}, {name: "cf", args: []string{"push", "demo", "--no-route", "--no-start", "-b", "ruby_buildpack", "-p", "/tmp/work/demo", "-c", "./.sandbox/start.sh"}}}
+	want := []command{{name: "cf", args: []string{"app", "demo", "--guid"}}, {name: "cf", args: []string{"push", "demo", "--no-route", "--no-start", "-b", "ruby_buildpack", "-p", "/tmp/work/demo", "-c", "./sandbox-runtime/start.sh"}}}
 	if !reflect.DeepEqual(run.commands, want) {
 		t.Fatalf("commands = %#v, want %#v", run.commands, want)
 	}
@@ -119,7 +119,7 @@ func TestStagePushesWhenAppNameIsAbsent(t *testing.T) {
 	}
 	want := []command{
 		{name: "cf", args: []string{"app", "demo", "--guid"}},
-		{name: "cf", args: []string{"push", "demo", "--no-route", "--no-start", "-b", "ruby_buildpack", "-p", bitsPath, "-c", "./.sandbox/start.sh"}},
+		{name: "cf", args: []string{"push", "demo", "--no-route", "--no-start", "-b", "ruby_buildpack", "-p", bitsPath, "-c", "./sandbox-runtime/start.sh"}},
 	}
 	if !reflect.DeepEqual(run.commands, want) {
 		t.Fatalf("commands = %#v, want %#v", run.commands, want)
@@ -180,7 +180,7 @@ func TestStageRefusesReplacementForExpectedApp(t *testing.T) {
 func TestConfigureEnrollmentAndStartAppUseSeparateExactCommands(t *testing.T) {
 	run := &recordingRunner{}
 	provider := Provider{Run: run}
-	configure, err := provider.ConfigureEnrollment(context.Background(), "demo", "/home/vcap/app/.sandbox/join-token", "https://manager.identity.example")
+	configure, err := provider.ConfigureEnrollment(context.Background(), "demo", "/home/vcap/app/sandbox-runtime/join-token", "https://manager.identity.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestConfigureEnrollmentAndStartAppUseSeparateExactCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []command{{name: "cf", args: []string{"set-env", "demo", "COLLIE_JOIN_TOKEN_FILE", "/home/vcap/app/.sandbox/join-token"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_LEAD_ADDRESS", "https://manager.identity.example"}}, {name: "cf", args: []string{"set-env", "demo", "SANDBOX_MEMBER_ID", "demo"}}, {name: "cf", args: []string{"start", "demo"}}}
+	want := []command{{name: "cf", args: []string{"set-env", "demo", "COLLIE_JOIN_TOKEN_FILE", "/home/vcap/app/sandbox-runtime/join-token"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_LEAD_ADDRESS", "https://manager.identity.example"}}, {name: "cf", args: []string{"set-env", "demo", "SANDBOX_MEMBER_ID", "demo"}}, {name: "cf", args: []string{"start", "demo"}}}
 	if !reflect.DeepEqual(run.commands, want) {
 		t.Fatalf("commands = %#v, want %#v", run.commands, want)
 	}

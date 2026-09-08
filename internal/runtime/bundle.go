@@ -27,14 +27,14 @@ func (b Builder) InstallEnrollment(destination, source string) error {
 	if err := withinWorkRoot(b.WorkRoot, destination); err != nil {
 		return err
 	}
-	if err := rejectSymlinkComponents(b.WorkRoot, filepath.Join(destination, ".sandbox", "join-token")); err != nil {
+	if err := rejectSymlinkComponents(b.WorkRoot, filepath.Join(destination, "sandbox-runtime", "join-token")); err != nil {
 		return err
 	}
 	contents, err := os.ReadFile(source)
 	if err != nil {
 		return fmt.Errorf("read enrollment file: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(destination, ".sandbox", "join-token"), contents, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(destination, "sandbox-runtime", "join-token"), contents, 0o600); err != nil {
 		return fmt.Errorf("install enrollment file: %w", err)
 	}
 	return nil
@@ -73,7 +73,7 @@ func (b Builder) Prepare(ctx context.Context, repoURL, destination string) (resu
 	if err := validateRuntime(b.RuntimeDir); err != nil {
 		return Result{}, err
 	}
-	overlay := filepath.Join(destination, ".sandbox")
+	overlay := filepath.Join(destination, "sandbox-runtime")
 	if err := validateOverlayDestination(b.RuntimeDir, b.WorkRoot, overlay); err != nil {
 		return Result{}, err
 	}

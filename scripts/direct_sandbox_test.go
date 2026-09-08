@@ -140,7 +140,7 @@ func TestDirectSandboxUsesPackagedLauncher(t *testing.T) {
 
 func TestDirectSandboxRejectsManagerRuntimeArtifact(t *testing.T) {
 	f := newDirectSandboxFixture(t)
-	if err := os.WriteFile(filepath.Join(f.root, "dist", "sandbox", "runtime", "target-install-dir"), []byte("/home/vcap/app/.sandbox/bin\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(f.root, "dist", "sandbox", "runtime", "target-install-dir"), []byte("/home/vcap/app/manager-runtime/bin\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	out, err := f.run()
