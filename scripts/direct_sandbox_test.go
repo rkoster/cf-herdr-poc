@@ -138,6 +138,17 @@ func TestDirectSandboxUsesPackagedLauncher(t *testing.T) {
 	}
 }
 
+func TestDirectSandboxRejectsManagerRuntimeArtifact(t *testing.T) {
+	f := newDirectSandboxFixture(t)
+	if err := os.WriteFile(filepath.Join(f.root, "dist", "sandbox", "runtime", "target-install-dir"), []byte("/home/vcap/app/.sandbox/bin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := f.run()
+	if err == nil || !strings.Contains(out, "do not use a manager artifact") {
+		t.Fatalf("output = %q, err = %v, want manager artifact refusal", out, err)
+	}
+}
+
 func mustReadDirectSandboxScript(t *testing.T) []byte {
 	t.Helper()
 	contents, err := os.ReadFile(filepath.Join(packageRoot(t), "scripts", "direct-sandbox.sh"))
@@ -214,6 +225,9 @@ if [ "$1" = app ]; then exit 1; fi
 exit 0
 `)
 	writeExecutable(t, filepath.Join(root, "dist", "sandbox", "runtime", "start.sh"), "#!/bin/sh\n")
+	if err := os.WriteFile(filepath.Join(root, "dist", "sandbox", "runtime", "target-install-dir"), []byte("/home/vcap/app/sandbox-runtime/bin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(root, "dist", "sandbox", "runtime", "collie", "bridge"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +243,7 @@ exit 0
 	events := filepath.Join(root, "events.log")
 	return &directSandboxFixture{root: root, bin: bin, eventsPath: events, env: []string{
 		"PATH=" + bin + ":/usr/bin:/bin", "EVENTS=" + events, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + root,
-		"CF_API=https://api.example", "CF_ORG=org", "CF_SPACE=space",
+		"CF_API=https://api.example", "CF_ORG=org", "CF_SPACE=space", "DIRECT_SANDBOX=1",
 	}}
 }
 

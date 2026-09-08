@@ -8,6 +8,9 @@ GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
 
 BUILD_MODE="${BUILD_MODE:-cflinuxfs5}"
+if [[ -z "${SANDBOX_TARGET_INSTALL_DIR:-}" && "${DIRECT_SANDBOX:-}" == 1 ]]; then
+	SANDBOX_TARGET_INSTALL_DIR=/home/vcap/app/sandbox-runtime/bin
+fi
 case "$BUILD_MODE" in
  cflinuxfs5) exec bash "$ROOT/scripts/build-cflinuxfs5.sh" ;;
  nix-relocation) : ;;
@@ -41,7 +44,7 @@ CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o "$DIST_STAGING/manager" 
 test -x "$DIST_STAGING/manager"
 
 RUNTIME_DIR="$DIST_STAGING/sandbox/runtime" GOOS="$GOOS" GOARCH="$GOARCH" \
-	SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/sandbox-runtime/bin}" \
+	SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/.sandbox/bin}" \
 	MANAGER_RUNTIME_DIR="$DIST_STAGING/manager-runtime" \
 	MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin \
 	BUN_RUNTIME_BIN="$BUN_RUNTIME_BIN" HERDR_RUNTIME_BIN="$HERDR_RUNTIME_BIN" CF_BIN="${CF_BIN:?CF_BIN is required}" \
@@ -55,7 +58,7 @@ cp -R "$ROOT/web/dist/." "$DIST_STAGING/web/"
 for executable in manager manager-runtime/bin/bun manager-runtime/bin/cf manager-runtime/bin/collie sandbox/runtime/bin/bun sandbox/runtime/bin/herdr sandbox/runtime/bin/collie sandbox/runtime/bin/sandbox-bootstrap sandbox/runtime/start.sh; do
 	test -x "$DIST_STAGING/$executable" || { printf 'error: missing executable artifact %s\n' "$executable" >&2; exit 1; }
 done
-for artifact in web/index.html sandbox/runtime/collie/bridge/index.ts sandbox/runtime/collie/cli/install-kind.ts sandbox/runtime/collie/cli/link.ts sandbox/runtime/collie/cli/sys.ts sandbox/runtime/collie/package.json sandbox/runtime/collie/web/dist/index.html; do
+for artifact in web/index.html sandbox/runtime/target-install-dir sandbox/runtime/collie/bridge/index.ts sandbox/runtime/collie/cli/install-kind.ts sandbox/runtime/collie/cli/link.ts sandbox/runtime/collie/cli/sys.ts sandbox/runtime/collie/package.json sandbox/runtime/collie/web/dist/index.html; do
 	test -f "$DIST_STAGING/$artifact" || { printf 'error: missing artifact %s\n' "$artifact" >&2; exit 1; }
 done
 test -d "$DIST_STAGING/sandbox/runtime/collie/node_modules" || { printf 'error: missing artifact sandbox/runtime/collie/node_modules\n' >&2; exit 1; }

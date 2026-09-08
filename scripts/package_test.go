@@ -361,7 +361,9 @@ func TestManifestUsesManagerSpecificExecutablesAndSharedCollieAssets(t *testing.
 func TestBuildBindsSandboxAndManagerExecutablesToDifferentCFLayouts(t *testing.T) {
 	script := readPackageFile(t, "scripts/build.sh")
 	for _, required := range []string{
-		"SANDBOX_TARGET_INSTALL_DIR=\"${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/sandbox-runtime/bin}\"",
+		"SANDBOX_TARGET_INSTALL_DIR=\"${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/.sandbox/bin}\"",
+		"DIRECT_SANDBOX",
+		"/home/vcap/app/sandbox-runtime/bin",
 		"MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin",
 	} {
 		if !strings.Contains(script, required) {
@@ -623,6 +625,7 @@ if [ "${FAIL_RUNTIME:-}" = 1 ]; then exit 23; fi
 	mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie/bridge" "$RUNTIME_DIR/collie/cli" "$RUNTIME_DIR/collie/node_modules/fixture" "$RUNTIME_DIR/collie/web/dist"
 for name in bun herdr collie sandbox-bootstrap; do printf '#!/bin/sh\n' > "$RUNTIME_DIR/bin/$name"; chmod +x "$RUNTIME_DIR/bin/$name"; done
 printf '#!/bin/sh\n' > "$RUNTIME_DIR/start.sh"; chmod +x "$RUNTIME_DIR/start.sh"
+printf '%s\n' "${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/.sandbox/bin}" > "$RUNTIME_DIR/target-install-dir"
 printf fixture > "$RUNTIME_DIR/collie/bridge/index.ts"
 for name in install-kind link sys; do printf fixture > "$RUNTIME_DIR/collie/cli/$name.ts"; done
 printf '{}' > "$RUNTIME_DIR/collie/package.json"

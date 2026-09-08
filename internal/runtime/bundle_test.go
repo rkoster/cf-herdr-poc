@@ -82,6 +82,24 @@ func TestPrepareClonesBeforeOverlayAndReturnsRevision(t *testing.T) {
 	}
 }
 
+func TestPrepareOverlaysManagerRuntimeWithManagerInterpreterPath(t *testing.T) {
+	workRoot := t.TempDir()
+	destination := filepath.Join(workRoot, "demo")
+	runtimeDir := t.TempDir()
+	writeFile(t, filepath.Join(runtimeDir, "start.sh"), 0o755, "#!/bin/sh\n")
+	writeFile(t, filepath.Join(runtimeDir, "bin", "bun"), 0o755, "#!/bin/sh\n")
+	recorder := cloneRunner(destination, nil)
+
+	if _, err := (Builder{Run: recorder, RuntimeDir: runtimeDir, WorkRoot: workRoot}).Prepare(
+		context.Background(), "https://git.example/demo.git", destination,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, ".sandbox", "bin", "bun")); err != nil {
+		t.Fatalf("manager runtime interpreter missing: %v", err)
+	}
+}
+
 func TestInstallEnrollmentCopiesPrivateTokenIntoPreparedRuntime(t *testing.T) {
 	root := t.TempDir()
 	destination := filepath.Join(root, "demo")

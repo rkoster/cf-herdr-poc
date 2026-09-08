@@ -263,15 +263,50 @@ func TestBuildRuntimeRelocationIsExplicitAndCoversEveryNixRuntime(t *testing.T) 
 
 func TestBuildTargetsUseVisibleDirectRuntimeAndSeparateManagerRuntime(t *testing.T) {
 	build := readFile(t, filepath.Join(packageRoot(t), "scripts", "build.sh"))
-	if !strings.Contains(build, "SANDBOX_TARGET_INSTALL_DIR") || !strings.Contains(build, "/home/vcap/app/sandbox-runtime/bin") {
-		t.Fatal("build.sh does not target the visible direct runtime")
+	if !strings.Contains(build, `SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/.sandbox/bin}"`) {
+		t.Fatal("build.sh does not default to the manager sandbox target")
 	}
 	if !strings.Contains(build, "MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin") {
 		t.Fatal("build.sh changed the manager runtime target")
 	}
+	if !strings.Contains(build, "DIRECT_SANDBOX") || !strings.Contains(build, "/home/vcap/app/sandbox-runtime/bin") {
+		t.Fatal("build.sh does not support an explicit direct sandbox target")
+	}
 	runtime := readBuildScript(t)
-	if !strings.Contains(runtime, `SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR-/home/vcap/app/.sandbox/bin}"`) {
+	if !strings.Contains(runtime, `SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR-/home/vcap/app/.sandbox/bin}"`) || !strings.Contains(runtime, "/home/vcap/app/sandbox-runtime/bin") {
 		t.Fatal("build-runtime.sh does not expose the sandbox target override")
+	}
+}
+
+func TestCFLinuxFS5BuilderDefaultsToManagerSandboxInterpreter(t *testing.T) {
+	root := packageRoot(t)
+	dockerfile := readFile(t, filepath.Join(root, "docker", "cflinuxfs5-builder", "Dockerfile"))
+	build := readFile(t, filepath.Join(root, "scripts", "build-cflinuxfs5.sh"))
+	for _, required := range []string{
+		"ARG DIRECT_SANDBOX=",
+		"ARG SANDBOX_TARGET_INSTALL_DIR=",
+		"sandbox_target=/home/vcap/app/.sandbox/bin",
+		"DIRECT_SANDBOX=${DIRECT_SANDBOX:-}",
+		"SANDBOX_TARGET_INSTALL_DIR=${SANDBOX_TARGET_INSTALL_DIR:-}",
+	} {
+		if !strings.Contains(dockerfile+build, required) {
+			t.Errorf("cflinuxfs5 builder missing target contract %q", required)
+		}
+	}
+}
+
+func TestRuntimeLaunchersUseManagerAndDirectInterpreters(t *testing.T) {
+	root := packageRoot(t)
+	spike := readFile(t, filepath.Join(root, "docs", "spikes", "cf-buildpack-runtime.md"))
+	for _, required := range []string{
+		"/home/vcap/app/.sandbox/bin",
+		"/home/vcap/app/sandbox-runtime/bin",
+		"./.sandbox/start.sh",
+		"./sandbox-runtime/start.sh",
+	} {
+		if !strings.Contains(spike, required) {
+			t.Errorf("runtime path documentation missing %q", required)
+		}
 	}
 }
 

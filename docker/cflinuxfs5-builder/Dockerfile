@@ -47,6 +47,8 @@ RUN set -eux; command -v curl; command -v sha256sum; command -v unzip; command -
 FROM cflinuxfs5-tools AS build
 ARG GOOS=linux
 ARG GOARCH=amd64
+ARG DIRECT_SANDBOX=
+ARG SANDBOX_TARGET_INSTALL_DIR=
 ENV PATH=/usr/local/go/bin:/tools/bin:/usr/local/bin:$PATH
 COPY . /src
 COPY --from=cflinuxfs5-tools /tools /tools
@@ -54,9 +56,12 @@ WORKDIR /src
 RUN set -eux; command -v go; \
     ln -sf /tools/bin/bun /usr/local/bin/bunx; command -v bunx; bunx --version; \
     /tools/bin/bun install --cwd web --frozen-lockfile; /tools/bin/bun run --cwd web build; \
-    BUN_RUNTIME_BIN=/tools/bin/bun HERDR_RUNTIME_BIN=/tools/bin/herdr CF_BIN=/tools/bin/cf GOOS="$GOOS" GOARCH="$GOARCH" \
-      RUNTIME_DIR=/work/dist/sandbox/runtime MANAGER_RUNTIME_DIR=/work/dist/manager-runtime \
-       SANDBOX_TARGET_INSTALL_DIR=/home/vcap/app/sandbox-runtime/bin MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin \
+     sandbox_target=/home/vcap/app/.sandbox/bin; \
+       if test "${DIRECT_SANDBOX:-}" = 1; then sandbox_target=/home/vcap/app/sandbox-runtime/bin; fi; \
+       if test -n "${SANDBOX_TARGET_INSTALL_DIR:-}"; then sandbox_target="$SANDBOX_TARGET_INSTALL_DIR"; fi; \
+     BUN_RUNTIME_BIN=/tools/bin/bun HERDR_RUNTIME_BIN=/tools/bin/herdr CF_BIN=/tools/bin/cf GOOS="$GOOS" GOARCH="$GOARCH" \
+       RUNTIME_DIR=/work/dist/sandbox/runtime MANAGER_RUNTIME_DIR=/work/dist/manager-runtime \
+        SANDBOX_TARGET_INSTALL_DIR="$sandbox_target" MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin \
       bash scripts/build-runtime.sh; \
     mkdir -p /work/dist/web; cp -R web/dist/. /work/dist/web/; \
      CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o /work/dist/manager ./cmd/manager; \

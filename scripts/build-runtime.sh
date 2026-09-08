@@ -4,7 +4,11 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 COLLIE_DIR="$ROOT/collie"
 RUNTIME_DIR="${RUNTIME_DIR:-$ROOT/sandbox/runtime}"
-SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR-/home/vcap/app/.sandbox/bin}"
+if [[ -z "${SANDBOX_TARGET_INSTALL_DIR:-}" && "${DIRECT_SANDBOX:-}" == 1 ]]; then
+	SANDBOX_TARGET_INSTALL_DIR=/home/vcap/app/sandbox-runtime/bin
+else
+	SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR-/home/vcap/app/.sandbox/bin}"
+fi
 if [[ -n "${TARGET_INSTALL_DIR+x}" ]]; then
 	TARGET_INSTALL_DIR="$TARGET_INSTALL_DIR"
 else
@@ -192,6 +196,7 @@ if [[ -n "$MANAGER_RUNTIME_DIR" ]]; then
 	scan_elf_metadata "$MANAGER_RUNTIME_DIR"
 fi
 install -m 0755 "$ROOT/sandbox/start.sh" "$RUNTIME_DIR/start.sh"
+printf '%s\n' "$TARGET_INSTALL_DIR" >"$RUNTIME_DIR/target-install-dir"
 
 # Materialize the bridge's source closure. The copier rejects broken or escaping symlinks.
 "$TOOLS_DIR/checkimports" -print0 "$COLLIE_DIR" "$COLLIE_DIR/bridge/index.ts" >"$TOOLS_DIR/runtime-imports"

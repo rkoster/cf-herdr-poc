@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 RUNTIME_DIR="$ROOT_DIR/dist/sandbox/runtime"
+if [[ ! -f "$RUNTIME_DIR/target-install-dir" ]] || [[ "$(<"$RUNTIME_DIR/target-install-dir")" != /home/vcap/app/sandbox-runtime/bin ]]; then
+  printf 'error: direct sandbox requires a runtime built for /home/vcap/app/sandbox-runtime/bin; do not use a manager artifact\n' >&2
+  exit 2
+fi
 
 resolve_cf() {
   local path=${CF_BIN:-}
