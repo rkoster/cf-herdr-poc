@@ -297,7 +297,7 @@ func TestRouteOperationsUseExactArgv(t *testing.T) {
 		{name: "cf", args: []string{"create-route", "apps.identity", "--hostname", "demo"}},
 		{name: "cf", args: []string{"map-route", "demo", "apps.identity", "--hostname", "demo"}},
 		{name: "cf", args: []string{"add-route-policy", "apps.identity", "--hostname", "demo", "--source", "cf:app:" + managerGUID}},
-		{name: "cf", args: []string{"remove-route-policy", "apps.identity", "--hostname", "demo", "--source", "cf:app:" + managerGUID}},
+		{name: "cf", args: []string{"remove-route-policy", "apps.identity", "--hostname", "demo", "--source", "cf:app:" + managerGUID, "-f"}},
 		{name: "cf", args: []string{"app", "demo", "--guid"}},
 		{name: "cf", args: []string{"unmap-route", "demo", "apps.identity", "--hostname", "demo"}},
 		{name: "cf", args: []string{"delete-route", "apps.identity", "--hostname", "demo", "-f"}},
@@ -320,7 +320,7 @@ func TestGenericRoutePolicySupportsSandboxToManagerEnrollment(t *testing.T) {
 	}
 	want := []command{
 		{name: "cf", args: []string{"add-route-policy", "apps.identity", "--hostname", "manager", "--source", "cf:app:" + appGUID}},
-		{name: "cf", args: []string{"remove-route-policy", "apps.identity", "--hostname", "manager", "--source", "cf:app:" + appGUID}},
+		{name: "cf", args: []string{"remove-route-policy", "apps.identity", "--hostname", "manager", "--source", "cf:app:" + appGUID, "-f"}},
 	}
 	if !reflect.DeepEqual(run.commands, want) {
 		t.Fatalf("commands = %#v, want %#v", run.commands, want)
@@ -370,7 +370,7 @@ func TestRemoveRouteNeverUnmapsReplacement(t *testing.T) {
 		t.Fatalf("RemoveRoute() = (%#v, %v), want identity mismatch", operation, err)
 	}
 	want := []command{
-		{name: "cf", args: []string{"remove-route-policy", "apps.identity", "--hostname", "demo", "--source", "cf:app:" + managerGUID}},
+		{name: "cf", args: []string{"remove-route-policy", "apps.identity", "--hostname", "demo", "--source", "cf:app:" + managerGUID, "-f"}},
 		{name: "cf", args: []string{"app", "demo", "--guid"}},
 		{name: "cf", args: []string{"delete-route", "apps.identity", "--hostname", "demo", "-f"}},
 	}

@@ -246,7 +246,7 @@ func (p Provider) RemoveRoutePolicy(ctx context.Context, request RoutePolicyRequ
 	if err := validateRoutePolicy(request); err != nil {
 		return model.Operation{}, err
 	}
-	operation, _, err := p.execute(ctx, "remove-route-policy", "remove-route-policy", request.Domain, "--hostname", request.Host, "--source", "cf:app:"+request.SourceAppGUID)
+	operation, _, err := p.execute(ctx, "remove-route-policy", "remove-route-policy", request.Domain, "--hostname", request.Host, "--source", "cf:app:"+request.SourceAppGUID, "-f")
 	return operation, err
 }
 
@@ -254,7 +254,7 @@ func (p Provider) RemoveRoute(ctx context.Context, request RouteRequest) (model.
 	if err := validateRouteRequest(request); err != nil {
 		return model.Operation{}, err
 	}
-	result, err := p.executeMany(ctx, "remove-route", [][]string{{"remove-route-policy", request.Domain, "--hostname", request.Host, "--source", "cf:app:" + request.SourceAppGUID}})
+	result, err := p.executeMany(ctx, "remove-route", [][]string{{"remove-route-policy", request.Domain, "--hostname", request.Host, "--source", "cf:app:" + request.SourceAppGUID, "-f"}})
 	if err != nil {
 		return result, err
 	}

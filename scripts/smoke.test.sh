@@ -192,7 +192,11 @@ case "${1:-}" in
       /routing/v1/route_policies|/v3/route_policies) exit 97 ;;
       *) printf '{"resources":[]}' ;;
     esac ;;
-  remove-route-policy|unmap-route|delete-route|delete) touch "$FAKE_STATE/direct-cleaned" ;;
+  remove-route-policy)
+    [[ ${7:-} == -f ]] || exit 98
+    touch "$FAKE_STATE/direct-cleaned"
+    ;;
+  unmap-route|delete-route|delete) touch "$FAKE_STATE/direct-cleaned" ;;
   *) exit 94 ;;
 esac
 EOF

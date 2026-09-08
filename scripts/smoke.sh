@@ -161,9 +161,9 @@ policy_json() {
 }
 
 direct_cleanup() {
-  "$CF_BIN" remove-route-policy "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" --source "cf:app:$MANAGER_APP_GUID" >/dev/null 2>&1 || true
+  "$CF_BIN" remove-route-policy "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" --source "cf:app:$MANAGER_APP_GUID" -f >/dev/null 2>&1 || true
   if [[ -n ${sandbox_guid:-} ]]; then
-    "$CF_BIN" remove-route-policy "$IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$sandbox_guid" >/dev/null 2>&1 || true
+    "$CF_BIN" remove-route-policy "$IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$sandbox_guid" -f >/dev/null 2>&1 || true
   fi
   "$CF_BIN" unmap-route "$SANDBOX_NAME" "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" >/dev/null 2>&1 || true
   "$CF_BIN" delete-route "$IDENTITY_DOMAIN" --hostname "$SANDBOX_NAME" -f >/dev/null 2>&1 || true
