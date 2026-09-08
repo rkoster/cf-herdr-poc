@@ -1,20 +1,24 @@
 # CF Buildpack Runtime Spike
 
-Status: Deferred
+Status: Live lab evidence recorded; not production-ready
 
-Date: 2026-09-04
+Date: 2026-09-08
 
-Reason: Portable Linux Bun and Herdr binaries are not available locally. The POC can now relocate already-installed Nix-linked runtimes without internet downloads, but live CF execution and production-portable artifact validation remain pending.
+The live lab used `ghcr.io/cloudfoundry/k8s/cflinuxfs5:0.53.0`. It is based on Ubuntu 24.04 with glibc 2.39 and initially contains none of Go, Node, Bun, Herdr, or the CF CLI. A multi-stage builder downloaded the pinned Bun 1.3.13, Herdr 0.8.2, and CF CLI 8.19.0 artifacts, added the Go toolchain, and produced the cflinux-compatible distribution. The Docker build context and artifact pipeline completed, with the builder emitting a scratch artifact.
+
+The deployed package was approximately 214.7 MiB. The manager's 1 GB quota was initially exhausted by the sandbox overlay; 2 GB was required. A 4 GB quota was denied by the lab quota. `devbox run deploy` initially needed an explicit profile for CF and Herdr discovery and was subsequently fixed. Manager CF authentication required `CF_API`, `CF_USERNAME`, `CF_PASSWORD`, `CF_ORG`, and `CF_SPACE`; credential values are intentionally not recorded here.
+
+After Herdr supervision and bundled CF authentication were in place, the manager reached `1/1` healthy. This does not establish a complete successful lifecycle smoke test; the remaining live result is recorded in `docs/smoke-test.md`.
 
 The relocation mode is a lab-only workaround. Direct execution with the cflinuxfs loader and bundled Nix libc failed with undefined `__tunable_is_initialized@GLIBC_PRIVATE`; explicit execution through the bundled Nix loader succeeded. `ALLOW_NIX_RUNTIME_RELOCATION=1` therefore patches each direct ELF to an absolute private-loader interpreter and an origin-relative RPATH. Sandbox binaries are bound to `/home/vcap/app/.sandbox/bin`; independent manager Bun and Collie copies are bound to `/home/vcap/app/manager-runtime/bin`, while manager Collie reuses the sandbox Collie asset tree. Relocation recursively bundles each startup `DT_NEEDED` graph and available glibc NSS/DNS resolver modules. Exact install-path binding and duplicated private executable libraries increase build and upload friction and are not the production recommendation; production should use official static or portable artifacts.
 
-The bundle is not proven to be a complete dynamic closure. Unobserved `dlopen` choices and absolute runtime asset paths can still escape the startup graph. Packaged ELF loader metadata is checked for actionable `/nix/store/` paths, but arbitrary embedded diagnostics strings are not rejected. A live cflinuxfs smoke test remains required.
+The bundle is not proven to be a complete dynamic closure. Unobserved `dlopen` choices and absolute runtime asset paths can still escape the startup graph. Packaged ELF loader metadata is checked for actionable `/nix/store/` paths, but arbitrary embedded diagnostics strings are not rejected. The live cflinuxfs smoke test exercised deployment and several lifecycle prerequisites, but did not complete successfully.
 
 The manager CF CLI is deliberately packaged differently from Bun, Herdr, and Collie. `manager-runtime/bin/cf` is an executable wrapper around `cf.real`; it invokes the private `.cf-libs` loader with an explicit `--library-path`, forwards all arguments, and preserves the payload exit status through `exec`. CF CLI does not require `process.execPath` or self-spawn identity, so this wrapper avoids the relocated CF CLI's direct-ELF smoke failure while keeping the manager provider's configured executable path unchanged. The other runtimes retain direct ELF relocation because their process identity and self-spawn behavior must remain intact.
 
 ## Commands
 
-Run only after independently supplying portable binaries and selecting a disposable CF space. To evaluate the lab workaround instead, resolve the already-installed Nix runtimes, export `ALLOW_NIX_RUNTIME_RELOCATION=1`, and do not download replacements:
+Run only after selecting a disposable CF space. The live lab used the pinned cflinuxfs5 builder above. To evaluate the lab workaround instead, resolve the already-installed Nix runtimes, export `ALLOW_NIX_RUNTIME_RELOCATION=1`, and do not download replacements:
 
 ```bash
 export BUN_RUNTIME_BIN=/absolute/path/to/portable-linux-bun
