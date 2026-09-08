@@ -68,7 +68,7 @@ Required at startup:
 | `CF_ORG` | Cloud Foundry organization targeted by the manager CLI. |
 | `CF_SPACE` | Cloud Foundry space targeted by the manager CLI. |
 
-The manifest supplies nonsecret packaged paths: `MANAGER_WEB_DIR=./web`, `MANAGER_COLLIE_DIR=./sandbox/runtime/collie`, `MANAGER_RUNTIME_DIR=./manager-runtime`, `MANAGER_BUN_EXECUTABLE=./manager-runtime/bin/bun`, and `MANAGER_COLLIE_EXECUTABLE=./manager-runtime/bin/collie`. State defaults under `./data`; manager Collie listens only on `127.0.0.1:9191` and explicitly uses `COLLIE_PACK_TRANSPORT=cf-identity`. The sandbox provider does not set `COLLIE_PORT` with `cf set-env`: Cloud Foundry assigns `PORT` at runtime and the launcher derives Collie's port from it.
+The manifest supplies nonsecret packaged paths: `MANAGER_WEB_DIR=./web`, `MANAGER_COLLIE_DIR=./sandbox/runtime/collie`, `MANAGER_RUNTIME_DIR=./manager-runtime`, `MANAGER_SANDBOX_RUNTIME_DIR=./sandbox/runtime`, `MANAGER_BUN_EXECUTABLE=./manager-runtime/bin/bun`, and `MANAGER_COLLIE_EXECUTABLE=./manager-runtime/bin/collie`. The manager validates the sandbox runtime at startup and requires executable `start.sh`, Bun, Herdr, Collie, and `sandbox-bootstrap` assets. State defaults under `./data`; manager Collie listens only on `127.0.0.1:9191` and explicitly uses `COLLIE_PACK_TRANSPORT=cf-identity`. The sandbox provider does not set `COLLIE_PORT` with `cf set-env`: Cloud Foundry assigns `PORT` at runtime and the launcher derives Collie's port from it.
 
 ## Deploy
 

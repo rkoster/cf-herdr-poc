@@ -17,6 +17,8 @@ import (
 
 	"cf-herdr-poc/internal/config"
 	"cf-herdr-poc/internal/httpapi"
+	"cf-herdr-poc/internal/runner"
+	runtimebundle "cf-herdr-poc/internal/runtime"
 	"cf-herdr-poc/internal/store"
 )
 
@@ -68,40 +70,42 @@ func TestCanonicalizeManagerPathsUsesManagerStartupDirectory(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(originalDir) })
 
 	cfg := config.Config{
-		StatePath:        "./data/state.json",
-		WebDir:           "web",
-		CollieDir:        "collie",
-		WorkRoot:         "./data/work",
-		RuntimeDir:       "./manager-runtime",
-		BunExecutable:    "./manager-runtime/bin/bun",
-		CollieExecutable: "manager-runtime/bin/collie",
-		HerdrExecutable:  "manager-runtime/bin/herdr",
-		CFExecutable:     "manager-runtime/bin/cf",
+		StatePath:         "./data/state.json",
+		WebDir:            "web",
+		CollieDir:         "collie",
+		WorkRoot:          "./data/work",
+		RuntimeDir:        "./manager-runtime",
+		SandboxRuntimeDir: "./sandbox/runtime",
+		BunExecutable:     "./manager-runtime/bin/bun",
+		CollieExecutable:  "manager-runtime/bin/collie",
+		HerdrExecutable:   "manager-runtime/bin/herdr",
+		CFExecutable:      "manager-runtime/bin/cf",
 	}
 	if err := canonicalizeManagerPaths(&cfg); err != nil {
 		t.Fatal(err)
 	}
 	want := config.Config{
-		StatePath:        filepath.Join(root, "data/state.json"),
-		WebDir:           filepath.Join(root, "web"),
-		CollieDir:        filepath.Join(root, "collie"),
-		WorkRoot:         filepath.Join(root, "data/work"),
-		RuntimeDir:       filepath.Join(root, "manager-runtime"),
-		BunExecutable:    filepath.Join(root, "manager-runtime/bin/bun"),
-		CollieExecutable: filepath.Join(root, "manager-runtime/bin/collie"),
-		CFExecutable:     filepath.Join(root, "manager-runtime/bin/cf"),
-		HerdrExecutable:  filepath.Join(root, "manager-runtime/bin/herdr"),
+		StatePath:         filepath.Join(root, "data/state.json"),
+		WebDir:            filepath.Join(root, "web"),
+		CollieDir:         filepath.Join(root, "collie"),
+		WorkRoot:          filepath.Join(root, "data/work"),
+		RuntimeDir:        filepath.Join(root, "manager-runtime"),
+		SandboxRuntimeDir: filepath.Join(root, "sandbox/runtime"),
+		BunExecutable:     filepath.Join(root, "manager-runtime/bin/bun"),
+		CollieExecutable:  filepath.Join(root, "manager-runtime/bin/collie"),
+		CFExecutable:      filepath.Join(root, "manager-runtime/bin/cf"),
+		HerdrExecutable:   filepath.Join(root, "manager-runtime/bin/herdr"),
 	}
-	if cfg.StatePath != want.StatePath || cfg.WebDir != want.WebDir || cfg.CollieDir != want.CollieDir || cfg.WorkRoot != want.WorkRoot || cfg.RuntimeDir != want.RuntimeDir || cfg.BunExecutable != want.BunExecutable || cfg.CollieExecutable != want.CollieExecutable || cfg.HerdrExecutable != want.HerdrExecutable || cfg.CFExecutable != want.CFExecutable {
+	if cfg.StatePath != want.StatePath || cfg.WebDir != want.WebDir || cfg.CollieDir != want.CollieDir || cfg.WorkRoot != want.WorkRoot || cfg.RuntimeDir != want.RuntimeDir || cfg.SandboxRuntimeDir != want.SandboxRuntimeDir || cfg.BunExecutable != want.BunExecutable || cfg.CollieExecutable != want.CollieExecutable || cfg.HerdrExecutable != want.HerdrExecutable || cfg.CFExecutable != want.CFExecutable {
 		t.Fatalf("canonicalized config = %#v", cfg)
 	}
 
 	absolute := filepath.Join(root, "manager-runtime", "bin", "cf")
-	cfg = config.Config{StatePath: absolute, WebDir: absolute, CollieDir: absolute, WorkRoot: absolute, RuntimeDir: absolute, BunExecutable: absolute, CollieExecutable: absolute, HerdrExecutable: absolute, CFExecutable: absolute}
+	cfg = config.Config{StatePath: absolute, WebDir: absolute, CollieDir: absolute, WorkRoot: absolute, RuntimeDir: absolute, SandboxRuntimeDir: absolute, BunExecutable: absolute, CollieExecutable: absolute, HerdrExecutable: absolute, CFExecutable: absolute}
 	if err := canonicalizeManagerPaths(&cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.StatePath != absolute || cfg.WebDir != absolute || cfg.CollieDir != absolute || cfg.WorkRoot != absolute || cfg.RuntimeDir != absolute || cfg.BunExecutable != absolute || cfg.CollieExecutable != absolute || cfg.HerdrExecutable != absolute || cfg.CFExecutable != absolute {
+	if cfg.StatePath != absolute || cfg.WebDir != absolute || cfg.CollieDir != absolute || cfg.WorkRoot != absolute || cfg.RuntimeDir != absolute || cfg.SandboxRuntimeDir != absolute || cfg.BunExecutable != absolute || cfg.CollieExecutable != absolute || cfg.HerdrExecutable != absolute || cfg.CFExecutable != absolute {
 		t.Fatalf("absolute paths changed: %#v", cfg)
 	}
 }
@@ -111,6 +115,21 @@ func TestCanonicalizeManagerPathsRequiresCFExecutableResolution(t *testing.T) {
 	if err := canonicalizeManagerPaths(&cfg); err == nil || !strings.Contains(err.Error(), "MANAGER_CF_EXECUTABLE") {
 		t.Fatalf("canonicalizeManagerPaths() error = %v, want CF executable resolution error", err)
 	}
+}
+
+func TestManagerRuntimeBuilderUsesSandboxRuntime(t *testing.T) {
+	cfg := config.Config{RuntimeDir: "/app/manager-runtime", SandboxRuntimeDir: "/app/sandbox/runtime", WorkRoot: "/app/work"}
+	builder := newRuntimeBuilder(cfg, runner.Exec{})
+	if builder.RuntimeDir != cfg.SandboxRuntimeDir {
+		t.Fatalf("builder runtime directory = %q, want %q", builder.RuntimeDir, cfg.SandboxRuntimeDir)
+	}
+	if builder.WorkRoot != cfg.WorkRoot {
+		t.Fatalf("builder work root = %q, want %q", builder.WorkRoot, cfg.WorkRoot)
+	}
+	if cfg.RuntimeDir != "/app/manager-runtime" {
+		t.Fatalf("manager runtime directory changed: %q", cfg.RuntimeDir)
+	}
+	var _ runtimebundle.Builder = builder
 }
 
 func TestEnsurePrivateDirCreatesNestedDirectoryWithPrivatePermissions(t *testing.T) {

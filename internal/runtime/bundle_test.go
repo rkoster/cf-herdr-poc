@@ -35,7 +35,7 @@ func TestPrepareClonesBeforeOverlayAndReturnsRevision(t *testing.T) {
 	workRoot := t.TempDir()
 	destination := filepath.Join(workRoot, "demo")
 	runtimeDir := t.TempDir()
-	writeFile(t, filepath.Join(runtimeDir, "start.sh"), 0o755, "#!/bin/sh\n")
+	writeSandboxRuntime(t, runtimeDir)
 	writeFile(t, filepath.Join(runtimeDir, "config", "default.json"), 0o640, "{}\n")
 
 	recorder := &recordingRunner{}
@@ -82,12 +82,11 @@ func TestPrepareClonesBeforeOverlayAndReturnsRevision(t *testing.T) {
 	}
 }
 
-func TestPrepareOverlaysManagerRuntimeWithManagerInterpreterPath(t *testing.T) {
+func TestPrepareOverlaysSandboxRuntimeWithStartScript(t *testing.T) {
 	workRoot := t.TempDir()
 	destination := filepath.Join(workRoot, "demo")
 	runtimeDir := t.TempDir()
-	writeFile(t, filepath.Join(runtimeDir, "start.sh"), 0o755, "#!/bin/sh\n")
-	writeFile(t, filepath.Join(runtimeDir, "bin", "bun"), 0o755, "#!/bin/sh\n")
+	writeSandboxRuntime(t, runtimeDir)
 	recorder := cloneRunner(destination, nil)
 
 	if _, err := (Builder{Run: recorder, RuntimeDir: runtimeDir, WorkRoot: workRoot}).Prepare(
@@ -95,8 +94,19 @@ func TestPrepareOverlaysManagerRuntimeWithManagerInterpreterPath(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(destination, "sandbox-runtime", "bin", "bun")); err != nil {
-		t.Fatalf("manager runtime interpreter missing: %v", err)
+	if _, err := os.Stat(filepath.Join(destination, "sandbox-runtime", "start.sh")); err != nil {
+		t.Fatalf("sandbox runtime start script missing: %v", err)
+	}
+}
+
+func TestValidateSandboxRuntimeRequiresAllStartupAssets(t *testing.T) {
+	runtimeDir := t.TempDir()
+	writeSandboxRuntime(t, runtimeDir)
+	if err := os.Remove(filepath.Join(runtimeDir, "bin", "sandbox-bootstrap")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSandboxRuntime(runtimeDir); err == nil || !strings.Contains(err.Error(), "sandbox-bootstrap") {
+		t.Fatalf("ValidateSandboxRuntime() error = %v, want missing sandbox-bootstrap asset", err)
 	}
 }
 
@@ -154,6 +164,7 @@ func TestPrepareRejectsBrokenRuntimeSymlink(t *testing.T) {
 	workRoot := t.TempDir()
 	destination := filepath.Join(workRoot, "demo")
 	runtimeDir := t.TempDir()
+	writeSandboxRuntime(t, runtimeDir)
 	if err := os.Symlink("target", filepath.Join(runtimeDir, "link")); err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +192,7 @@ func TestPrepareRejectsRuntimeSymlinksThatEscapeOrAreAbsolute(t *testing.T) {
 			workRoot := t.TempDir()
 			destination := filepath.Join(workRoot, "demo")
 			runtimeDir := t.TempDir()
+			writeSandboxRuntime(t, runtimeDir)
 			if err := os.Symlink(target, filepath.Join(runtimeDir, "link")); err != nil {
 				t.Fatal(err)
 			}
@@ -200,6 +212,7 @@ func TestPreparePreservesInternalRuntimeSymlink(t *testing.T) {
 	workRoot := t.TempDir()
 	destination := filepath.Join(workRoot, "demo")
 	runtimeDir := t.TempDir()
+	writeSandboxRuntime(t, runtimeDir)
 	libs := filepath.Join(runtimeDir, "bin", ".bun-libs")
 	writeFile(t, filepath.Join(libs, ".real-libc.so.6"), 0o755, "libc\n")
 	if err := os.Symlink(".real-libc.so.6", filepath.Join(libs, ".hash-libc.so.6")); err != nil {
@@ -230,7 +243,7 @@ func TestPrepareRejectsClonedSandboxSymlinkWithoutWritingOutside(t *testing.T) {
 	destination := filepath.Join(workRoot, "demo")
 	outside := t.TempDir()
 	runtimeDir := t.TempDir()
-	writeFile(t, filepath.Join(runtimeDir, "start.sh"), 0o755, "runtime\n")
+	writeSandboxRuntime(t, runtimeDir)
 	recorder := &recordingRunner{run: func(_ string, args []string) ([]byte, error) {
 		if args[0] != "clone" {
 			return []byte("abc123\n"), nil
@@ -257,12 +270,13 @@ func TestPrepareRejectsSymlinkInExistingOverlayPath(t *testing.T) {
 	destination := filepath.Join(workRoot, "demo")
 	outside := t.TempDir()
 	runtimeDir := t.TempDir()
+	writeSandboxRuntime(t, runtimeDir)
 	writeFile(t, filepath.Join(runtimeDir, "config", "default.json"), 0o644, "{}\n")
 	recorder := &recordingRunner{run: func(_ string, args []string) ([]byte, error) {
 		if args[0] != "clone" {
 			return []byte("abc123\n"), nil
 		}
-	if err := os.MkdirAll(filepath.Join(destination, "sandbox-runtime"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(destination, "sandbox-runtime"), 0o755); err != nil {
 			return nil, err
 		}
 		return nil, os.Symlink(outside, filepath.Join(destination, "sandbox-runtime", "config"))
@@ -307,7 +321,7 @@ func TestPrepareRemovesCreatedDestinationAfterOverlayFailureAndCanRetry(t *testi
 		t.Fatal(err)
 	}
 	goodRuntime := t.TempDir()
-	writeFile(t, filepath.Join(goodRuntime, "start.sh"), 0o755, "runtime\n")
+	writeSandboxRuntime(t, goodRuntime)
 	recorder := cloneRunner(destination, nil)
 
 	_, err := (Builder{Run: recorder, RuntimeDir: badRuntime, WorkRoot: workRoot}).Prepare(
@@ -330,7 +344,7 @@ func TestPrepareRemovesCreatedDestinationAfterRevisionFailureAndCanRetry(t *test
 	workRoot := t.TempDir()
 	destination := filepath.Join(workRoot, "demo")
 	runtimeDir := t.TempDir()
-	writeFile(t, filepath.Join(runtimeDir, "start.sh"), 0o755, "runtime\n")
+	writeSandboxRuntime(t, runtimeDir)
 	failRevision := true
 	recorder := cloneRunner(destination, func() ([]byte, error) {
 		if failRevision {
@@ -395,6 +409,13 @@ func writeFile(t *testing.T, path string, mode os.FileMode, contents string) {
 	}
 	if err := os.WriteFile(path, []byte(contents), mode); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func writeSandboxRuntime(t *testing.T, root string) {
+	t.Helper()
+	for _, name := range []string{"start.sh", "bin/bun", "bin/herdr", "bin/collie", "bin/sandbox-bootstrap"} {
+		writeFile(t, filepath.Join(root, name), 0o755, "#!/bin/sh\n")
 	}
 }
 

@@ -25,6 +25,7 @@ type Config struct {
 	CollieAddress       string
 	WorkRoot            string
 	RuntimeDir          string
+	SandboxRuntimeDir   string
 	BunExecutable       string
 	CollieExecutable    string
 	HerdrExecutable     string
@@ -103,7 +104,8 @@ func Load(getenv func(string) string) (Config, error) {
 		cfSkipSSLValidation = parsed
 	}
 
-	runtimeDir := valueOrDefault("MANAGER_RUNTIME_DIR", "./sandbox/runtime")
+	runtimeDir := valueOrDefault("MANAGER_RUNTIME_DIR", "./manager-runtime")
+	sandboxRuntimeDir := valueOrDefault("MANAGER_SANDBOX_RUNTIME_DIR", "./sandbox/runtime")
 	return Config{
 		Address:             address,
 		StatePath:           valueOrDefault("MANAGER_STATE_PATH", "./data/sandboxes.json"),
@@ -120,6 +122,7 @@ func Load(getenv func(string) string) (Config, error) {
 		CollieAddress:       valueOrDefault("MANAGER_COLLIE_ADDRESS", "127.0.0.1:9191"),
 		WorkRoot:            valueOrDefault("MANAGER_WORK_ROOT", "./data/work"),
 		RuntimeDir:          runtimeDir,
+		SandboxRuntimeDir:   sandboxRuntimeDir,
 		BunExecutable:       valueOrDefault("MANAGER_BUN_EXECUTABLE", runtimeDir+"/bin/bun"),
 		CollieExecutable:    valueOrDefault("MANAGER_COLLIE_EXECUTABLE", runtimeDir+"/bin/collie"),
 		HerdrExecutable:     valueOrDefault("MANAGER_HERDR_EXECUTABLE", runtimeDir+"/bin/herdr"),

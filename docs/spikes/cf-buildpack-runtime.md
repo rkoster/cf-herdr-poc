@@ -35,7 +35,7 @@ file dist/manager dist/manager-runtime/bin/* dist/sandbox/runtime/bin/*
 ldd dist/manager dist/sandbox/runtime/bin/sandbox-bootstrap
 rm -rf dist/runtime-spike
 mkdir -p dist/runtime-spike
-cp -R dist/sandbox/runtime dist/runtime-spike/.sandbox
+cp -R dist/sandbox/runtime dist/runtime-spike/sandbox-runtime
 cf version
 cf buildpacks
 cf push cf-herdr-runtime-spike -p dist/runtime-spike --no-route -b binary_buildpack -c './sandbox-runtime/start.sh' --no-start

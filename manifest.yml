@@ -12,6 +12,7 @@ applications:
     MANAGER_WEB_DIR: ./web
     MANAGER_COLLIE_DIR: ./sandbox/runtime/collie
     MANAGER_RUNTIME_DIR: ./manager-runtime
+    MANAGER_SANDBOX_RUNTIME_DIR: ./sandbox/runtime
     MANAGER_BUN_EXECUTABLE: ./manager-runtime/bin/bun
     MANAGER_HERDR_EXECUTABLE: ./manager-runtime/bin/herdr
     MANAGER_COLLIE_EXECUTABLE: ./manager-runtime/bin/collie

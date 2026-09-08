@@ -20,6 +20,7 @@ MANAGER_APP_GUID="$(cf app "$MANAGER_APP_NAME" --guid)"
 cf set-env "$MANAGER_APP_NAME" MANAGER_WEB_DIR ./web
 cf set-env "$MANAGER_APP_NAME" MANAGER_COLLIE_DIR ./sandbox/runtime/collie
 cf set-env "$MANAGER_APP_NAME" MANAGER_RUNTIME_DIR ./manager-runtime
+cf set-env "$MANAGER_APP_NAME" MANAGER_SANDBOX_RUNTIME_DIR ./sandbox/runtime
 cf set-env "$MANAGER_APP_NAME" MANAGER_BUN_EXECUTABLE ./manager-runtime/bin/bun
 cf set-env "$MANAGER_APP_NAME" MANAGER_COLLIE_EXECUTABLE ./manager-runtime/bin/collie
 cf set-env "$MANAGER_APP_NAME" MANAGER_CF_EXECUTABLE ./manager-runtime/bin/cf

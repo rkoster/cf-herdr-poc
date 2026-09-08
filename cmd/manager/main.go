@@ -60,6 +60,9 @@ func run() error {
 	if err := canonicalizeManagerPaths(&cfg); err != nil {
 		return err
 	}
+	if err := runtimebundle.ValidateSandboxRuntime(cfg.SandboxRuntimeDir); err != nil {
+		return fmt.Errorf("validate manager sandbox runtime: %w", err)
+	}
 	dirs, err := ensureManagerDirs(cfg)
 	if err != nil {
 		return fmt.Errorf("initialize manager runtime directories: %w", err)
@@ -86,7 +89,7 @@ func run() error {
 	herdr := supervisor.New(supervisor.Config{Executable: cfg.HerdrExecutable, Args: []string{"server"}, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, ReadyTarget: socketPath, Environment: func(base []string) []string { return herdrEnvironment(base, configDir, stateDir, socketPath) }}, nil, supervisor.UnixSocketProbe)
 	collie := supervisor.New(supervisor.Config{Executable: cfg.BunExecutable, Dir: cfg.CollieDir, PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, PackTransport: "cf-identity"}, nil, nil)
 	packManager := pack.New(commandRunner, collie, pack.Config{Executable: cfg.CollieExecutable, TempDir: dirs.token, PluginRoot: cfg.CollieDir, ConfigDir: configDir, StateDir: stateDir, SocketPath: socketPath, Host: host, Port: port, TokenLifetime: 10 * time.Minute})
-	builder := runtimebundle.Builder{Run: commandRunner, RuntimeDir: cfg.RuntimeDir, WorkRoot: cfg.WorkRoot}
+	builder := newRuntimeBuilder(cfg, commandRunner)
 	cloud := cf.Provider{Run: commandRunner, Executable: cfg.CFExecutable, Buildpacks: cfg.Buildpacks, WorkRoot: cfg.WorkRoot, Environment: []string{"CF_HOME=" + dirs.cfHome}}
 	probe := identity.New(identity.Config{CertPath: cfg.InstanceCert, KeyPath: cfg.InstanceKey, Timeout: 10 * time.Second, MaxBodyBytes: 64 << 10})
 	reconciler := reconcile.New(reconcile.Config{WorkRoot: cfg.WorkRoot, IdentityDomain: cfg.IdentityDomain, ManagerRouteHost: cfg.ManagerRouteHost, ManagerPackHost: cfg.ManagerPackHost, ManagerAppGUID: cfg.ManagerAppGUID, PollAttempts: 30, PollInterval: time.Second, ScanInterval: cfg.ReconcileInterval}, state, reconcile.BundleRuntime{Builder: builder}, cloud, reconcile.ConcretePackManager{Manager: packManager}, probe, realClock{})
@@ -137,6 +140,10 @@ func run() error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	return errors.Join(serveErr, stopAll(shutdownCtx, server.Shutdown, handler.Close, reconciler.Stop, collie.Stop, herdr.Stop))
+}
+
+func newRuntimeBuilder(cfg config.Config, commandRunner runner.Runner) runtimebundle.Builder {
+	return runtimebundle.Builder{Run: commandRunner, RuntimeDir: cfg.SandboxRuntimeDir, WorkRoot: cfg.WorkRoot}
 }
 
 type managerDirs struct {
@@ -214,6 +221,7 @@ func canonicalizeManagerPaths(cfg *config.Config) error {
 		{name: "MANAGER_COLLIE_DIR", value: &cfg.CollieDir},
 		{name: "MANAGER_WORK_ROOT", value: &cfg.WorkRoot},
 		{name: "MANAGER_RUNTIME_DIR", value: &cfg.RuntimeDir},
+		{name: "MANAGER_SANDBOX_RUNTIME_DIR", value: &cfg.SandboxRuntimeDir},
 		{name: "MANAGER_BUN_EXECUTABLE", value: &cfg.BunExecutable},
 		{name: "MANAGER_COLLIE_EXECUTABLE", value: &cfg.CollieExecutable},
 		{name: "MANAGER_HERDR_EXECUTABLE", value: &cfg.HerdrExecutable},

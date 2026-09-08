@@ -455,6 +455,7 @@ if [ "$1" = set-env ] && [ "$3" = MANAGER_API_TOKEN ]; then printf 'new token: %
 		{"set-env", "manager", "MANAGER_WEB_DIR", "./web"},
 		{"set-env", "manager", "MANAGER_COLLIE_DIR", "./sandbox/runtime/collie"},
 		{"set-env", "manager", "MANAGER_RUNTIME_DIR", "./manager-runtime"},
+		{"set-env", "manager", "MANAGER_SANDBOX_RUNTIME_DIR", "./sandbox/runtime"},
 		{"set-env", "manager", "MANAGER_BUN_EXECUTABLE", "./manager-runtime/bin/bun"},
 		{"set-env", "manager", "MANAGER_COLLIE_EXECUTABLE", "./manager-runtime/bin/collie"},
 		{"set-env", "manager", "MANAGER_CF_EXECUTABLE", "./manager-runtime/bin/cf"},
@@ -525,7 +526,7 @@ func TestRuntimeDocsDescribeNeededClosureAndResidualDlopenRisk(t *testing.T) {
 func TestRuntimeSpikeExercisesPackagedSandboxAtItsTargetAppLayout(t *testing.T) {
 	doc := readPackageFile(t, "docs/spikes/cf-buildpack-runtime.md")
 	for _, required := range []string{
-		"cp -R dist/sandbox/runtime dist/runtime-spike/.sandbox",
+		"cp -R dist/sandbox/runtime dist/runtime-spike/sandbox-runtime",
 		"-p dist/runtime-spike",
 		"-c './sandbox-runtime/start.sh'",
 		"/home/vcap/app/sandbox-runtime/bin/.bun-libs/ld-linux-x86-64.so.2",

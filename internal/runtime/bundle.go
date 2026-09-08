@@ -159,7 +159,7 @@ func validateRuntime(source string) error {
 	if root, err = filepath.EvalSymlinks(root); err != nil {
 		return fmt.Errorf("resolve runtime directory: %w", err)
 	}
-	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
+	if err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -169,7 +169,24 @@ func validateRuntime(source string) error {
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return fmt.Errorf("validate runtime directory %q: %w", source, err)
+	}
+	for _, name := range []string{"start.sh", "bin/bun", "bin/herdr", "bin/collie", "bin/sandbox-bootstrap"} {
+		path := filepath.Join(source, filepath.FromSlash(name))
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("runtime asset %q is missing: %w", path, err)
+		}
+		if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+			return fmt.Errorf("runtime asset %q must be an executable regular file", path)
+		}
+	}
+	return nil
+}
+
+func ValidateSandboxRuntime(source string) error {
+	return validateRuntime(source)
 }
 
 func validateRuntimeSymlink(root, path string) error {
