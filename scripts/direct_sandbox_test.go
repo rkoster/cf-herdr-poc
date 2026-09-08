@@ -131,6 +131,22 @@ func TestDirectSandboxStagesJoinTokenBeforePushWithoutPrintingIt(t *testing.T) {
 	}
 }
 
+func TestDirectSandboxUsesPackagedLauncher(t *testing.T) {
+	script := string(mustReadDirectSandboxScript(t))
+	if strings.Contains(script, "cat >\"$WORK_DIR/app/sandbox-runtime/start.sh\"") {
+		t.Fatal("direct workflow replaces the packaged launcher")
+	}
+}
+
+func mustReadDirectSandboxScript(t *testing.T) []byte {
+	t.Helper()
+	contents, err := os.ReadFile(filepath.Join(packageRoot(t), "scripts", "direct-sandbox.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contents
+}
+
 type directSandboxFixture struct {
 	root, bin, eventsPath string
 	env                   []string

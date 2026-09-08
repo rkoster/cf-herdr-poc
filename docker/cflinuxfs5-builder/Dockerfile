@@ -56,7 +56,7 @@ RUN set -eux; command -v go; \
     /tools/bin/bun install --cwd web --frozen-lockfile; /tools/bin/bun run --cwd web build; \
     BUN_RUNTIME_BIN=/tools/bin/bun HERDR_RUNTIME_BIN=/tools/bin/herdr CF_BIN=/tools/bin/cf GOOS="$GOOS" GOARCH="$GOARCH" \
       RUNTIME_DIR=/work/dist/sandbox/runtime MANAGER_RUNTIME_DIR=/work/dist/manager-runtime \
-      TARGET_INSTALL_DIR=/home/vcap/app/.sandbox/bin MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin \
+       SANDBOX_TARGET_INSTALL_DIR=/home/vcap/app/sandbox-runtime/bin MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin \
       bash scripts/build-runtime.sh; \
     mkdir -p /work/dist/web; cp -R web/dist/. /work/dist/web/; \
      CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o /work/dist/manager ./cmd/manager; \

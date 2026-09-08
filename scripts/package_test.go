@@ -111,7 +111,7 @@ func TestCFLinuxFS5SelectorUsesPinnedArtifactsForEachArchitecture(t *testing.T) 
 		{"amd64", "https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_x86-64.tgz", "98268ab3134bb3a1c97ffce797b4e6d35590a82e006cd098ad7a29f0a5cae7d8"},
 		{"arm64", "https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_arm64.tgz", "454c29a44a51c8edc9696678403e2e40808357a397033af5a018e6ca8ee32117"},
 	} {
-			t.Run(test.arch, func(t *testing.T) {
+		t.Run(test.arch, func(t *testing.T) {
 			command := exec.Command("bash", filepath.Join(root, "scripts", "select-cflinuxfs5-artifacts.sh"), test.arch)
 			command.Dir = root
 			command.Env = []string{"PATH=" + os.Getenv("PATH")}
@@ -361,7 +361,7 @@ func TestManifestUsesManagerSpecificExecutablesAndSharedCollieAssets(t *testing.
 func TestBuildBindsSandboxAndManagerExecutablesToDifferentCFLayouts(t *testing.T) {
 	script := readPackageFile(t, "scripts/build.sh")
 	for _, required := range []string{
-		"TARGET_INSTALL_DIR=/home/vcap/app/.sandbox/bin",
+		"SANDBOX_TARGET_INSTALL_DIR=\"${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/sandbox-runtime/bin}\"",
 		"MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin",
 	} {
 		if !strings.Contains(script, required) {

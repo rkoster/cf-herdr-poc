@@ -57,7 +57,7 @@ func TestLauncherContract(t *testing.T) {
 	if strings.Contains(script, "echo $COLLIE_JOIN_TOKEN") || strings.Contains(script, "set -x") {
 		t.Fatal("launcher may print the token")
 	}
-	for _, required := range []string{"trap cleanup", "HOME=", "XDG_CONFIG_HOME=", "XDG_STATE_HOME=", "HERDR_SOCKET_PATH"} {
+	for _, required := range []string{"trap cleanup", "SANDBOX_STATE_DIR=", "HOME=", "XDG_CONFIG_HOME=", "XDG_STATE_HOME=", "XDG_DATA_HOME=", "COLLIE_STATE_DIR=", "HERDR_PLUGIN_CONFIG_DIR=", "HERDR_SOCKET_PATH", "COLLIE_PLUGIN_ROOT=", "COLLIE_PORT=", "COLLIE_HOST=", "COLLIE_MUX=", "COLLIE_PACK_TRANSPORT="} {
 		if !strings.Contains(script, required) {
 			t.Errorf("launcher does not contain %q", required)
 		}
@@ -106,6 +106,22 @@ func TestLauncherExportsCFPeerRuntimeBeforeBootstrapAndCollie(t *testing.T) {
 		position := strings.Index(script, assignment)
 		if position < 0 || position > bootstrap || position > collie {
 			t.Fatalf("launcher must export %q before bootstrap and Collie", assignment)
+		}
+	}
+}
+
+func TestLauncherPassesJoinInputsToBootstrapAndConsumesToken(t *testing.T) {
+	lines := executableLines(readLauncher(t))
+	script := strings.Join(lines, "\n")
+	for _, required := range []string{
+		`COLLIE_JOIN_TOKEN_FILE`,
+		`COLLIE_PACK_LEAD_ADDRESS`,
+		`SANDBOX_MEMBER_ID`,
+		`export COLLIE_PACK_TRUST_STORE="$COLLIE_STATE_DIR/pack-trust.json"`,
+		`rm -f -- "${COLLIE_JOIN_TOKEN_FILE:-}"`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("launcher missing join bootstrap contract %q", required)
 		}
 	}
 }
@@ -232,7 +248,7 @@ func TestLauncherUsesRegularTrustStoreWhenMarkerIsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := exec.Command("bash", filepath.Join(root, "start.sh"))
-	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_BOOTSTRAP_TRUST_ONLY=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "COLLIE_JOIN_TOKEN_FILE="+token, "COLLIE_PACK_LEAD_ADDRESS=https://manager.identity.example", "PORT=8080")
+	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_BOOTSTRAP_TRUST_ONLY=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "COLLIE_JOIN_TOKEN_FILE="+token, "COLLIE_PACK_LEAD_ADDRESS=https://manager.identity.example", "SANDBOX_MEMBER_ID=demo", "PORT=8080")
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +342,7 @@ func runLauncherHelper() {
 	role := os.Getenv("SANDBOX_HELPER_ROLE")
 	if role == "sandbox-bootstrap" {
 		logLine(os.Getenv("SIGNAL_LOG"), "bootstrap started")
-		for key, want := range map[string]string{"COLLIE_PLUGIN_ROOT": filepath.Join(filepath.Dir(os.Getenv("SIGNAL_LOG")), "collie"), "COLLIE_PORT": "8080", "COLLIE_HOST": "0.0.0.0", "COLLIE_ALLOW_NON_LOOPBACK_BIND": "1", "COLLIE_PACK_TRANSPORT": "cf-identity"} {
+		for key, want := range map[string]string{"COLLIE_PLUGIN_ROOT": filepath.Join(filepath.Dir(os.Getenv("SIGNAL_LOG")), "collie"), "COLLIE_PORT": "8080", "COLLIE_HOST": "0.0.0.0", "COLLIE_ALLOW_NON_LOOPBACK_BIND": "1", "COLLIE_PACK_TRANSPORT": "cf-identity", "COLLIE_JOIN_TOKEN_FILE": filepath.Join(filepath.Dir(os.Getenv("SIGNAL_LOG")), "token"), "COLLIE_PACK_LEAD_ADDRESS": "https://manager.identity.example", "SANDBOX_MEMBER_ID": "demo"} {
 			if os.Getenv(key) != want {
 				os.Exit(2)
 			}

@@ -19,6 +19,7 @@ export COLLIE_PORT="${PORT:?Cloud Foundry PORT is required}"
 export COLLIE_HOST=0.0.0.0
 export COLLIE_ALLOW_NON_LOOPBACK_BIND=1
 export COLLIE_PACK_TRANSPORT=cf-identity
+export SANDBOX_MEMBER_ID="${SANDBOX_MEMBER_ID:-}"
 
 has_join_token_file=false
 has_pack_lead_address=false
@@ -38,15 +39,11 @@ cleanup() {
 	if [[ -n "$bootstrap_pid" ]] && kill -0 "$bootstrap_pid" 2>/dev/null; then
 		kill "$bootstrap_pid" 2>/dev/null || true
 		wait "$bootstrap_pid" 2>/dev/null || true
+		bootstrap_pid=""
 	fi
 	if [[ -n "$collie_pid" ]] && kill -0 "$collie_pid" 2>/dev/null; then
 		kill "$collie_pid" 2>/dev/null || true
 		wait "$collie_pid" 2>/dev/null || true
-	fi
-	if [[ -n "$bootstrap_pid" ]] && kill -0 "$bootstrap_pid" 2>/dev/null; then
-		kill -"$signal" "$bootstrap_pid" 2>/dev/null || true
-		wait "$bootstrap_pid" 2>/dev/null || true
-		bootstrap_pid=""
 	fi
 	if [[ -n "$herdr_pid" ]] && kill -0 "$herdr_pid" 2>/dev/null; then
 		kill "$herdr_pid" 2>/dev/null || true

@@ -64,29 +64,6 @@ while IFS= read -r -d '' link; do
   case "$target" in "$WORK_DIR/app/sandbox-runtime"/*) ;; *) printf 'error: runtime symlink escapes sandbox-runtime: %s\n' "${link#"$WORK_DIR/app/sandbox-runtime/"}" >&2; exit 2;; esac
   done < <(find "$WORK_DIR/app/sandbox-runtime" -type l -print0)
 
-cat >"$WORK_DIR/app/sandbox-runtime/start.sh" <<'LAUNCHER'
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-export COLLIE_PORT="${PORT:?Cloud Foundry PORT is required}"
-export COLLIE_HOST=0.0.0.0
-export COLLIE_PACK_TRANSPORT=cf-identity
-export COLLIE_PLUGIN_ROOT="$SCRIPT_DIR/collie"
-export HERDR_SOCKET_PATH="${HERDR_SOCKET_PATH:-/home/vcap/app/.sandbox-state/herdr.sock}"
-export COLLIE_MUX=herdr
-mkdir -p "$(dirname -- "$HERDR_SOCKET_PATH")"
-"$SCRIPT_DIR/bin/herdr" server &
-herdr_pid=$!
-trap 'kill "$herdr_pid" 2>/dev/null || true' EXIT INT TERM
-deadline=$((SECONDS + 30))
-while [[ ! -S "$HERDR_SOCKET_PATH" ]]; do
-  kill -0 "$herdr_pid" 2>/dev/null || exit 1
-  (( SECONDS < deadline )) || { printf 'herdr socket did not appear\n' >&2; exit 1; }
-  sleep 0.1
-done
-exec "$SCRIPT_DIR/bin/bun" run "$SCRIPT_DIR/collie/bridge/index.ts"
-LAUNCHER
-chmod +x "$WORK_DIR/app/sandbox-runtime/start.sh"
 if [[ -n "${COLLIE_JOIN_TOKEN_FILE:-}" ]]; then
   cp -- "$COLLIE_JOIN_TOKEN_FILE" "$WORK_DIR/app/sandbox-runtime/join-token"
   chmod 600 "$WORK_DIR/app/sandbox-runtime/join-token"
@@ -100,6 +77,7 @@ created=1
 if [[ -n "${COLLIE_JOIN_TOKEN_FILE:-}" ]]; then
   "$CF_BIN" set-env "$APP_NAME" COLLIE_PACK_LEAD_ADDRESS "${COLLIE_PACK_LEAD_ADDRESS:?COLLIE_PACK_LEAD_ADDRESS is required with a join token}" >/dev/null 2>&1
   "$CF_BIN" set-env "$APP_NAME" COLLIE_JOIN_TOKEN_FILE /home/vcap/app/sandbox-runtime/join-token >/dev/null 2>&1
+  "$CF_BIN" set-env "$APP_NAME" SANDBOX_MEMBER_ID "$APP_NAME" >/dev/null 2>&1
 fi
 "$CF_BIN" start "$APP_NAME"
 

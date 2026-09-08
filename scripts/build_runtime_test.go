@@ -247,6 +247,7 @@ func TestBuildRuntimeRelocationIsExplicitAndCoversEveryNixRuntime(t *testing.T) 
 	script := readBuildScript(t)
 	for _, required := range []string{
 		"ALLOW_NIX_RUNTIME_RELOCATION", "relocate-nix-runtime.sh",
+		"SANDBOX_TARGET_INSTALL_DIR",
 		`TARGET_INSTALL_DIR="$3"`,
 		`relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun" "$TARGET_INSTALL_DIR"`,
 		`relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr" "$TARGET_INSTALL_DIR"`,
@@ -257,6 +258,20 @@ func TestBuildRuntimeRelocationIsExplicitAndCoversEveryNixRuntime(t *testing.T) 
 		if !strings.Contains(script, required) {
 			t.Errorf("build-runtime.sh missing relocation contract %q", required)
 		}
+	}
+}
+
+func TestBuildTargetsUseVisibleDirectRuntimeAndSeparateManagerRuntime(t *testing.T) {
+	build := readFile(t, filepath.Join(packageRoot(t), "scripts", "build.sh"))
+	if !strings.Contains(build, "SANDBOX_TARGET_INSTALL_DIR") || !strings.Contains(build, "/home/vcap/app/sandbox-runtime/bin") {
+		t.Fatal("build.sh does not target the visible direct runtime")
+	}
+	if !strings.Contains(build, "MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin") {
+		t.Fatal("build.sh changed the manager runtime target")
+	}
+	runtime := readBuildScript(t)
+	if !strings.Contains(runtime, `SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR-/home/vcap/app/.sandbox/bin}"`) {
+		t.Fatal("build-runtime.sh does not expose the sandbox target override")
 	}
 }
 
@@ -283,7 +298,7 @@ func TestBuildRuntimeSmokeFailureIsActionableAndDoesNotPrintOutput(t *testing.T)
 
 func TestBuildRuntimeRequiresAbsoluteNormalizedTargetInstallDir(t *testing.T) {
 	for _, target := range []string{"", "relative", "/home/vcap/app/../bin", "/home/vcap/app/with space"} {
-		output, err := runBuild(t, []string{"TARGET_INSTALL_DIR=" + target})
+		output, err := runBuild(t, []string{"SANDBOX_TARGET_INSTALL_DIR=" + target})
 		if err == nil || !strings.Contains(output, "TARGET_INSTALL_DIR") {
 			t.Fatalf("target %q: output=%q err=%v", target, output, err)
 		}
@@ -367,7 +382,7 @@ func runBuild(t *testing.T, env []string) (string, error) {
 	}
 	hasTarget := false
 	for _, entry := range env {
-		if strings.HasPrefix(entry, "TARGET_INSTALL_DIR=") {
+		if strings.HasPrefix(entry, "TARGET_INSTALL_DIR=") || strings.HasPrefix(entry, "SANDBOX_TARGET_INSTALL_DIR=") {
 			hasTarget = true
 		}
 	}
