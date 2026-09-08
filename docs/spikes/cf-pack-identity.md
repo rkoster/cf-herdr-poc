@@ -33,8 +33,8 @@ cf curl "/v3/apps/$MANAGER_APP_GUID/processes"
 cf curl "/v3/apps/$SANDBOX_GUID/processes"
 cf logs "$MANAGER_APP_NAME" --recent
 cf logs "$SANDBOX_APP_NAME" --recent
-cf remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_ROUTE_HOST" --source "cf:app:$MANAGER_APP_GUID"
-cf remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$SANDBOX_GUID"
+cf remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_ROUTE_HOST" --source "cf:app:$MANAGER_APP_GUID" -f
+cf remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$SANDBOX_GUID" -f
 cf unmap-route "$MANAGER_APP_NAME" "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"
 cf unmap-route "$SANDBOX_APP_NAME" "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_ROUTE_HOST"
 cf delete-route "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" -f

@@ -126,8 +126,8 @@ Remove policies before deleting routes and apps:
 
 ```bash
 CF_BIN=/path/to/cf
-"$CF_BIN" remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_HOST" --source "cf:app:$MANAGER_APP_GUID"
-"$CF_BIN" remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$SANDBOX_GUID"
+"$CF_BIN" remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$SANDBOX_HOST" --source "cf:app:$MANAGER_APP_GUID" -f
+"$CF_BIN" remove-route-policy "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST" --source "cf:app:$SANDBOX_GUID" -f
 "$CF_BIN" delete "$SANDBOX_APP_NAME" -f -r
 "$CF_BIN" unmap-route "$MANAGER_APP_NAME" "$PUBLIC_DOMAIN" --hostname "$MANAGER_PUBLIC_HOST"
 "$CF_BIN" unmap-route "$MANAGER_APP_NAME" "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"
