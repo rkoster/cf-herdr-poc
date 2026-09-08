@@ -1,8 +1,10 @@
 # CF Buildpack Runtime Spike
 
-Status: Live lab evidence recorded; not production-ready
+Status: Deferred for production; live lab evidence recorded
 
-Date: 2026-09-08
+Original deferred date: 2026-09-04
+
+Observed date: 2026-09-08
 
 The live lab used `ghcr.io/cloudfoundry/k8s/cflinuxfs5:0.53.0`. It is based on Ubuntu 24.04 with glibc 2.39 and initially contains none of Go, Node, Bun, Herdr, or the CF CLI. A multi-stage builder downloaded the pinned Bun 1.3.13, Herdr 0.8.2, and CF CLI 8.19.0 artifacts, added the Go toolchain, and produced the cflinux-compatible distribution. The Docker build context and artifact pipeline completed, with the builder emitting a scratch artifact.
 
