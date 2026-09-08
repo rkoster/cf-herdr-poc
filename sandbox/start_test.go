@@ -173,6 +173,53 @@ func TestLauncherForwardsSignalsAndReapsChildren(t *testing.T) {
 	}
 }
 
+func TestLauncherStartsStandaloneWithoutBootstrap(t *testing.T) {
+	if os.Getenv("SANDBOX_LAUNCHER_HELPER") != "" {
+		runLauncherHelper()
+		return
+	}
+
+	root := prepareLauncher(t)
+	logPath := filepath.Join(root, "signals.log")
+	command := exec.Command("bash", filepath.Join(root, "start.sh"))
+	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "PORT=8080")
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitForLog(t, logPath, "bun started")
+	log, _ := os.ReadFile(logPath)
+	if strings.Contains(string(log), "bootstrap started") {
+		t.Fatalf("standalone launcher invoked bootstrap: %s", log)
+	}
+	_ = command.Process.Signal(syscall.SIGTERM)
+	_ = command.Wait()
+}
+
+func TestLauncherRejectsPartialEnrollmentWithoutStartingChildren(t *testing.T) {
+	if os.Getenv("SANDBOX_LAUNCHER_HELPER") != "" {
+		runLauncherHelper()
+		return
+	}
+
+	root := prepareLauncher(t)
+	secret := "join-token-must-not-leak"
+	command := exec.Command("bash", filepath.Join(root, "start.sh"))
+	command.Env = append(os.Environ(), "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"), "PORT=8080", "COLLIE_JOIN_TOKEN_FILE="+filepath.Join(root, secret))
+	out, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("partial enrollment unexpectedly succeeded")
+	}
+	if !strings.Contains(string(out), "must be supplied together") {
+		t.Fatalf("output = %q, want clear partial enrollment error", out)
+	}
+	if strings.Contains(string(out), secret) {
+		t.Fatalf("output leaked enrollment token path: %q", out)
+	}
+	if log, readErr := os.ReadFile(filepath.Join(root, "signals.log")); readErr == nil && len(log) != 0 {
+		t.Fatalf("partial enrollment started children: %s", log)
+	}
+}
+
 func TestLauncherUsesRegularTrustStoreWhenMarkerIsMissing(t *testing.T) {
 	if os.Getenv("SANDBOX_LAUNCHER_HELPER") != "" {
 		return
@@ -185,7 +232,7 @@ func TestLauncherUsesRegularTrustStoreWhenMarkerIsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := exec.Command("bash", filepath.Join(root, "start.sh"))
-	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_BOOTSTRAP_TRUST_ONLY=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "COLLIE_JOIN_TOKEN_FILE="+token, "PORT=8080")
+	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_BOOTSTRAP_TRUST_ONLY=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "COLLIE_JOIN_TOKEN_FILE="+token, "COLLIE_PACK_LEAD_ADDRESS=https://manager.identity.example", "PORT=8080")
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +262,7 @@ func TestLauncherRejectsSymlinkTrustStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := exec.Command("bash", filepath.Join(root, "start.sh"))
-	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"), "PORT=8080")
+	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"), "PORT=8080", "COLLIE_JOIN_TOKEN_FILE="+filepath.Join(root, "token"), "COLLIE_PACK_LEAD_ADDRESS=https://manager.identity.example")
 	err := command.Run()
 	if err == nil {
 		t.Fatal("launcher accepted symlink trust store")
@@ -278,6 +325,7 @@ func readLauncher(t *testing.T) string {
 func runLauncherHelper() {
 	role := os.Getenv("SANDBOX_HELPER_ROLE")
 	if role == "sandbox-bootstrap" {
+		logLine(os.Getenv("SIGNAL_LOG"), "bootstrap started")
 		for key, want := range map[string]string{"COLLIE_PLUGIN_ROOT": filepath.Join(filepath.Dir(os.Getenv("SIGNAL_LOG")), "collie"), "COLLIE_PORT": "8080", "COLLIE_HOST": "0.0.0.0", "COLLIE_ALLOW_NON_LOOPBACK_BIND": "1", "COLLIE_PACK_TRANSPORT": "cf-identity"} {
 			if os.Getenv(key) != want {
 				os.Exit(2)

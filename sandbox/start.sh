@@ -20,6 +20,15 @@ export COLLIE_HOST=0.0.0.0
 export COLLIE_ALLOW_NON_LOOPBACK_BIND=1
 export COLLIE_PACK_TRANSPORT=cf-identity
 
+has_join_token_file=false
+has_pack_lead_address=false
+[[ -n "${COLLIE_JOIN_TOKEN_FILE:-}" ]] && has_join_token_file=true
+[[ -n "${COLLIE_PACK_LEAD_ADDRESS:-}" ]] && has_pack_lead_address=true
+if [[ "$has_join_token_file" != "$has_pack_lead_address" ]]; then
+	printf 'COLLIE_JOIN_TOKEN_FILE and COLLIE_PACK_LEAD_ADDRESS must be supplied together\n' >&2
+	exit 2
+fi
+
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$COLLIE_STATE_DIR" "$HERDR_PLUGIN_CONFIG_DIR" "$(dirname -- "$HERDR_SOCKET_PATH")"
 
 herdr_pid=""
@@ -74,34 +83,36 @@ while [[ ! -S "$HERDR_SOCKET_PATH" ]]; do
   sleep 0.1
 done
 
-export COLLIE_PACK_TRUST_STORE="$COLLIE_STATE_DIR/pack-trust.json"
-trust_store="$COLLIE_PACK_TRUST_STORE"
-if [[ -L "$trust_store" ]]; then
-  printf 'Pack trust store must not be a symlink: %s\n' "$trust_store" >&2
-  exit 1
-fi
-if [[ ! -f "$trust_store" ]]; then
-  export SANDBOX_BOOTSTRAP_READY_FILE="${SANDBOX_BOOTSTRAP_READY_FILE:-$SANDBOX_STATE_DIR/bootstrap-ready}"
-  rm -f -- "$SANDBOX_BOOTSTRAP_READY_FILE"
-  "$BIN_DIR/sandbox-bootstrap" &
-  bootstrap_pid=$!
-  while [[ ! -f "$SANDBOX_BOOTSTRAP_READY_FILE" && ! -f "$trust_store" ]]; do
-    if [[ -L "$trust_store" ]]; then
-      printf 'Pack trust store must not be a symlink: %s\n' "$trust_store" >&2
-      exit 1
-    fi
-    if ! kill -0 "$bootstrap_pid" 2>/dev/null; then
-      wait "$bootstrap_pid"
-      exit 1
-    fi
-    sleep 0.1
-  done
-  if [[ -f "$trust_store" && ! -L "$trust_store" ]]; then
-    rm -f -- "${COLLIE_JOIN_TOKEN_FILE:-}"
+if [[ "$has_join_token_file" == true ]]; then
+  export COLLIE_PACK_TRUST_STORE="$COLLIE_STATE_DIR/pack-trust.json"
+  trust_store="$COLLIE_PACK_TRUST_STORE"
+  if [[ -L "$trust_store" ]]; then
+    printf 'Pack trust store must not be a symlink: %s\n' "$trust_store" >&2
+    exit 1
   fi
-  kill "$bootstrap_pid" 2>/dev/null || true
-  wait "$bootstrap_pid" || true
-  bootstrap_pid=""
+  if [[ ! -f "$trust_store" ]]; then
+    export SANDBOX_BOOTSTRAP_READY_FILE="${SANDBOX_BOOTSTRAP_READY_FILE:-$SANDBOX_STATE_DIR/bootstrap-ready}"
+    rm -f -- "$SANDBOX_BOOTSTRAP_READY_FILE"
+    "$BIN_DIR/sandbox-bootstrap" &
+    bootstrap_pid=$!
+    while [[ ! -f "$SANDBOX_BOOTSTRAP_READY_FILE" && ! -f "$trust_store" ]]; do
+      if [[ -L "$trust_store" ]]; then
+        printf 'Pack trust store must not be a symlink: %s\n' "$trust_store" >&2
+        exit 1
+      fi
+      if ! kill -0 "$bootstrap_pid" 2>/dev/null; then
+        wait "$bootstrap_pid"
+        exit 1
+      fi
+      sleep 0.1
+    done
+    if [[ -f "$trust_store" && ! -L "$trust_store" ]]; then
+      rm -f -- "${COLLIE_JOIN_TOKEN_FILE:-}"
+    fi
+    kill "$bootstrap_pid" 2>/dev/null || true
+    wait "$bootstrap_pid" || true
+    bootstrap_pid=""
+  fi
 fi
 
 (exec "$BIN_DIR/bun" run "$COLLIE_DIR/bridge/index.ts") &
