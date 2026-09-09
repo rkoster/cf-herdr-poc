@@ -36,3 +36,7 @@ Delete a debug app with `cf delete "$SANDBOX_NAME" -f -r`. The script deletes it
 Check in this order: staging, process startup, Herdr socket, Collie source closure and plugin root, CF instance identity and route policy, then disk quota. Direct mode intentionally has no public route or Pack enrollment, so identity and Pack failures belong to the manager-created workflow.
 
 Never log or copy `CF_PASSWORD`, `MANAGER_API_TOKEN`, an instance certificate or key, or a Pack token. Record measured friction and reproducible observations in `docs/spikes/smoke-test.md`.
+
+## Local Deployment Secrets
+
+Deployment secrets may be stored locally in the ignored `.secrets` file. `.envrc` sources this file when present, and `devbox run deploy` supplies defaults for nonsecret lab configuration. Keep only secret values such as `CF_USERNAME`, `CF_PASSWORD`, and `MANAGER_API_TOKEN` in `.secrets`; never commit, print, or copy the file contents. Do not store certificates, private keys, instance identity material, or Pack tokens in tracked files or logs.

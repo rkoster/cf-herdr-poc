@@ -270,7 +270,7 @@ func TestDevboxDeployDelegatesToLabDeployScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	deploy := config.Shell.Scripts["deploy"]
-	if deploy != "bash scripts/lab-deploy.sh" {
+	if deploy != "bash -c 'if [[ -f .secrets ]]; then source .secrets; fi; exec bash scripts/lab-deploy.sh'" {
 		t.Fatalf("deploy script = %q, want external lab deploy delegation", deploy)
 	}
 	labDeploy := readPackageFile(t, "scripts/lab-deploy.sh")

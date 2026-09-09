@@ -41,6 +41,16 @@ resolve_tool() {
 }
 
 BUILD_MODE="${BUILD_MODE:-cflinuxfs5}"
+MANAGER_APP_NAME="${MANAGER_APP_NAME:-cf-herdr-manager}"
+PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-10.246.0.21.sslip.io}"
+MANAGER_PUBLIC_HOST="${MANAGER_PUBLIC_HOST:-herdr-manager}"
+CF_IDENTITY_DOMAIN="${CF_IDENTITY_DOMAIN:-apps.identity}"
+MANAGER_PACK_HOST="${MANAGER_PACK_HOST:-herdr-manager-pack.apps.identity}"
+SANDBOX_BUILDPACKS="${SANDBOX_BUILDPACKS:-binary_buildpack,nodejs_buildpack}"
+CF_API="${CF_API:-https://api.10.246.0.21.sslip.io}"
+CF_SKIP_SSL_VALIDATION="${CF_SKIP_SSL_VALIDATION:-true}"
+CF_ORG="${CF_ORG:-poc}"
+CF_SPACE="${CF_SPACE:-demo}"
 CF_BIN="$(resolve_tool CF_BIN cf)"
 if [[ "$BUILD_MODE" == nix-relocation ]]; then
 	BUN_RUNTIME_BIN="$(resolve_tool BUN_RUNTIME_BIN bun)"
@@ -74,6 +84,7 @@ bash scripts/build.sh
 : "${CF_SPACE:?CF_SPACE is required}"
 
 MANAGER_ROUTE_HOST="${MANAGER_PACK_HOST%.$CF_IDENTITY_DOMAIN}"
+MANAGER_PUBLIC_ADDRESS="$MANAGER_PUBLIC_HOST.$PUBLIC_DOMAIN"
 if [[ -z "$MANAGER_ROUTE_HOST" || "$MANAGER_ROUTE_HOST" == "$MANAGER_PACK_HOST" || "$MANAGER_ROUTE_HOST" == *.* || "$MANAGER_ROUTE_HOST.$CF_IDENTITY_DOMAIN" != "$MANAGER_PACK_HOST" || ! "$MANAGER_ROUTE_HOST" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
 	printf 'error: MANAGER_PACK_HOST must be a direct child FQDN of CF_IDENTITY_DOMAIN\n' >&2
 	exit 1
@@ -101,6 +112,7 @@ MANAGER_APP_GUID="$("$CF_BIN" app "$MANAGER_APP_NAME" --guid)"
 if [[ -n "${CF_SKIP_SSL_VALIDATION:-}" ]]; then
 	"$CF_BIN" set-env "$MANAGER_APP_NAME" CF_SKIP_SSL_VALIDATION "$CF_SKIP_SSL_VALIDATION" >/dev/null 2>&1
 fi
+"$CF_BIN" set-env "$MANAGER_APP_NAME" COLLIE_PUBLIC_HOSTS "$MANAGER_PUBLIC_ADDRESS" >/dev/null 2>&1
 if "$CF_BIN" set-env "$MANAGER_APP_NAME" MANAGER_API_TOKEN "$MANAGER_API_TOKEN" >/dev/null 2>&1; then
 	printf 'MANAGER_API_TOKEN configured\n'
 else

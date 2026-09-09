@@ -57,7 +57,7 @@ func TestJoinUsesFixedArgvAndTokenOnStdin(t *testing.T) {
 	server, config := fixture(t, joiner)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest("POST", "/bootstrap/join", nil))
-	want := []string{"pack", "join", "https://manager.identity.example", "-", "--label", "demo"}
+	want := []string{"pack", "join", "https://manager.identity.example", "-", "--label", "demo", "--address", "demo.apps.identity"}
 	if !reflect.DeepEqual(joiner.args, want) || joiner.input != "super-secret\n" {
 		t.Fatalf("args/input=(%#v,%q)", joiner.args, joiner.input)
 	}
@@ -106,7 +106,7 @@ func TestJoinFailureSanitizesResponseAndLog(t *testing.T) {
 }
 
 func TestNewRejectsUnsafeConfiguration(t *testing.T) {
-	base := Config{Executable: "collie", TokenPath: "/tmp/token", ReadyPath: "/tmp/ready", TrustStorePath: "/tmp/trust", LeadAddress: "https://manager.identity.example", MemberID: "demo"}
+	base := Config{Executable: "collie", TokenPath: "/tmp/token", ReadyPath: "/tmp/ready", TrustStorePath: "/tmp/trust", LeadAddress: "https://manager.identity.example", MemberID: "demo", SelfAddress: "demo.apps.identity"}
 	for _, mutate := range []func(*Config){func(c *Config) { c.MemberID = "bad id" }, func(c *Config) { c.LeadAddress = "http://manager" }, func(c *Config) { c.TokenPath = "" }, func(c *Config) { c.ReadyPath = "" }} {
 		config := base
 		mutate(&config)
@@ -174,7 +174,7 @@ func fixture(t *testing.T, joiner *fakeJoiner) (*Server, Config) {
 	if err := os.WriteFile(token, []byte("super-secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	config := Config{Executable: "collie", TokenPath: token, ReadyPath: filepath.Join(root, "ready"), TrustStorePath: filepath.Join(root, "pack-trust.json"), LeadAddress: "https://manager.identity.example", MemberID: "demo"}
+	config := Config{Executable: "collie", TokenPath: token, ReadyPath: filepath.Join(root, "ready"), TrustStorePath: filepath.Join(root, "pack-trust.json"), LeadAddress: "https://manager.identity.example", MemberID: "demo", SelfAddress: "demo.apps.identity"}
 	server, err := New(config, joiner, io.Discard)
 	if err != nil {
 		t.Fatal(err)

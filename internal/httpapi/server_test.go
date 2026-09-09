@@ -543,6 +543,20 @@ func TestCollieAndPackProxyRouting(t *testing.T) {
 	if got := request(t, h, http.MethodGet, "/collie/assets/app.js", "", "public.example", false).Code; got != http.StatusUnauthorized {
 		t.Fatalf("unauthorized Collie status = %d", got)
 	}
+	if got := request(t, h, http.MethodGet, "/assets/app.js", "", "public.example", false).Code; got != http.StatusUnauthorized {
+		t.Fatalf("unauthorized root asset status = %d", got)
+	}
+	rootAsset := request(t, h, http.MethodGet, "/assets/app.js?v=1", "", "public.example", true)
+	if rootAsset.Code != http.StatusCreated || rootAsset.Body.String() != "|/assets/app.js?v=1" {
+		t.Fatalf("root asset proxy = %d %q", rootAsset.Code, rootAsset.Body.String())
+	}
+	if got := request(t, h, http.MethodGet, "/fonts/ui.woff2", "", "public.example", false).Code; got != http.StatusUnauthorized {
+		t.Fatalf("unauthorized root font status = %d", got)
+	}
+	rootFont := request(t, h, http.MethodGet, "/fonts/ui.woff2", "", "public.example", true)
+	if rootFont.Code != http.StatusCreated || rootFont.Body.String() != "|/fonts/ui.woff2?" {
+		t.Fatalf("root font proxy = %d %q", rootFont.Code, rootFont.Body.String())
+	}
 	w := request(t, h, http.MethodPost, "/collie/assets/app.js?v=1", "body", "public.example", true)
 	if w.Code != http.StatusCreated || w.Header().Get("X-Collie") != "yes" || w.Body.String() != "body|/assets/app.js?v=1" {
 		t.Fatalf("collie proxy = %d %q", w.Code, w.Body.String())

@@ -154,6 +154,13 @@ func (s *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/collie")
 			s.collie.ServeHTTP(w, r)
 		})
+	case strings.HasPrefix(r.URL.Path, "/assets/") || strings.HasPrefix(r.URL.Path, "/fonts/") ||
+		r.URL.Path == "/theme-init.js" || r.URL.Path == "/manifest.webmanifest" || r.URL.Path == "/sw.js" ||
+		r.URL.Path == "/dog-gallop.png" || r.URL.Path == "/favicon.svg" || r.URL.Path == "/favicon.ico" ||
+		r.URL.Path == "/favicon-96x96.png" || r.URL.Path == "/apple-touch-icon.png":
+		s.authorized(w, r, s.collie.ServeHTTP)
+	case strings.HasPrefix(r.URL.Path, "/api/"):
+		s.authorized(w, r, s.collie.ServeHTTP)
 	case strings.HasPrefix(r.URL.Path, "/pack/v1/"):
 		http.NotFound(w, r)
 	case strings.HasPrefix(r.URL.Path, "/manager/") && s.config.Web != nil:

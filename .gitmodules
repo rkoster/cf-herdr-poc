@@ -1,0 +1,3 @@
+[submodule "collie"]
+	path = collie
+	url = https://github.com/rkoster/collie.git

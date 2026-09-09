@@ -18,7 +18,7 @@ import (
 var memberPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 var secretPattern = regexp.MustCompile(`(?i)(authorization\s*:\s*(?:bearer\s+)?|\b(?:token|secret|password)\s*[=:]\s*)\S+`)
 
-type Config struct{ Executable, TokenPath, ReadyPath, TrustStorePath, LeadAddress, MemberID string }
+type Config struct{ Executable, TokenPath, ReadyPath, TrustStorePath, LeadAddress, MemberID, SelfAddress string }
 type Joiner interface {
 	Join(context.Context, []string, io.Reader) error
 }
@@ -97,6 +97,9 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 	}
 	defer token.Close()
 	args := []string{"pack", "join", s.config.LeadAddress, "-", "--label", s.config.MemberID}
+	if s.config.SelfAddress != "" {
+		args = append(args, "--address", s.config.SelfAddress)
+	}
 	if err = s.joiner.Join(r.Context(), args, token); err != nil {
 		s.fail(w, err)
 		return

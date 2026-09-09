@@ -115,7 +115,9 @@ func TestLauncherPassesJoinInputsToBootstrapAndConsumesToken(t *testing.T) {
 	script := strings.Join(lines, "\n")
 	for _, required := range []string{
 		`COLLIE_JOIN_TOKEN_FILE`,
-		`COLLIE_PACK_LEAD_ADDRESS`,
+			`COLLIE_PACK_LEAD_ADDRESS`,
+			`COLLIE_PACK_SELF_ADDRESS`,
+			`export COLLIE_EXECUTABLE="$BIN_DIR/collie"`,
 		`SANDBOX_MEMBER_ID`,
 		`export COLLIE_PACK_TRUST_STORE="$COLLIE_STATE_DIR/pack-trust.json"`,
 		`rm -f -- "${COLLIE_JOIN_TOKEN_FILE:-}"`,

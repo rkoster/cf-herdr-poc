@@ -67,7 +67,7 @@ type CloudFoundry interface {
 	Stage(context.Context, PushRequest) (model.Operation, error)
 	EnsureAppAbsent(context.Context, string) (model.Operation, error)
 	AppGUID(context.Context, string) (string, model.Operation, error)
-	ConfigureEnrollment(context.Context, string, string, string) (model.Operation, error)
+	ConfigureEnrollment(context.Context, string, string, string, string) (model.Operation, error)
 	StartApp(context.Context, string) (model.Operation, error)
 	InspectApp(context.Context, string) (App, error)
 	SecureRoute(context.Context, RouteRequest) (model.Operation, error)
@@ -187,14 +187,14 @@ func (p Provider) EnsureAppAbsent(ctx context.Context, name string) (model.Opera
 	return operation, &Error{Operation: "app-absence", Kind: "already_exists"}
 }
 
-func (p Provider) ConfigureEnrollment(ctx context.Context, name, tokenAppPath, leadAddress string) (model.Operation, error) {
+func (p Provider) ConfigureEnrollment(ctx context.Context, name, tokenAppPath, leadAddress, selfAddress string) (model.Operation, error) {
 	if err := validateName("app", name); err != nil {
 		return model.Operation{}, err
 	}
-	if tokenAppPath != "/home/vcap/app/sandbox-runtime/join-token" || !validHTTPSAddress(leadAddress) {
+	if tokenAppPath != "/home/vcap/app/sandbox-runtime/join-token" || !validHTTPSAddress(leadAddress) || !validHost(selfAddress) {
 		return model.Operation{}, fmt.Errorf("invalid enrollment configuration")
 	}
-	return p.executeMany(ctx, "configure-enrollment", [][]string{{"set-env", name, "COLLIE_JOIN_TOKEN_FILE", tokenAppPath}, {"set-env", name, "COLLIE_PACK_LEAD_ADDRESS", leadAddress}, {"set-env", name, "SANDBOX_MEMBER_ID", name}})
+	return p.executeMany(ctx, "configure-enrollment", [][]string{{"set-env", name, "COLLIE_JOIN_TOKEN_FILE", tokenAppPath}, {"set-env", name, "COLLIE_PACK_LEAD_ADDRESS", leadAddress}, {"set-env", name, "SANDBOX_MEMBER_ID", name}, {"set-env", name, "COLLIE_PACK_SELF_ADDRESS", selfAddress}})
 }
 
 func (p Provider) StartApp(ctx context.Context, name string) (model.Operation, error) {
@@ -482,6 +482,14 @@ func classifyError(operation, output string) string {
 func validHTTPSAddress(value string) bool {
 	parsed, err := url.Parse(value)
 	return err == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil && parsed.Path == "" && parsed.RawQuery == "" && parsed.Fragment == ""
+}
+
+func validHost(value string) bool {
+	if value == "" || strings.ContainsAny(value, "/@?# ") {
+		return false
+	}
+	parsed, err := url.Parse("https://" + value)
+	return err == nil && parsed.Host == value && parsed.Hostname() != ""
 }
 
 func commandDisplay(name string, args []string) string {

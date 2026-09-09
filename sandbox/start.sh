@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="$SCRIPT_DIR/bin"
 COLLIE_DIR="$SCRIPT_DIR/collie"
+export COLLIE_EXECUTABLE="$BIN_DIR/collie"
 
 SANDBOX_STATE_DIR="${SANDBOX_STATE_DIR:-/home/vcap/app/.sandbox-state}"
 export HOME="${SANDBOX_HOME:-$SANDBOX_STATE_DIR/home}"
@@ -81,6 +82,7 @@ while [[ ! -S "$HERDR_SOCKET_PATH" ]]; do
 done
 
 if [[ "$has_join_token_file" == true ]]; then
+  export COLLIE_PACK_SELF_ADDRESS="${COLLIE_PACK_SELF_ADDRESS:-}"
   export COLLIE_PACK_TRUST_STORE="$COLLIE_STATE_DIR/pack-trust.json"
   trust_store="$COLLIE_PACK_TRUST_STORE"
   if [[ -L "$trust_store" ]]; then

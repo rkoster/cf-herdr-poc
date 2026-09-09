@@ -9,3 +9,8 @@
 /web/node_modules/
 /node-compile-cache/
 /vars.yml
+/.secrets
+/.playwright-cli/
+/collie-activity-*/
+/nix-*/
+/tmp.*/

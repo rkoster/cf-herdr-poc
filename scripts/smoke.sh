@@ -324,7 +324,7 @@ remote_probe='code=$(curl --silent --output /dev/null --write-out "%{http_code}"
 wrong_status=$("$CF_BIN" ssh "$WRONG_IDENTITY_APP" -c "$remote_probe" | jq -Rrs 'split("\n")|map(select(test("^[0-9]{3}$")))|last//""')
 [[ $wrong_status == 403 ]] || { printf 'smoke: wrong identity expected HTTP 403, got %s\n' "${wrong_status:-no status}" >&2; exit 1; }
 
-pack_probe='HERDR_PLUGIN_CONFIG_DIR=./data/collie-config HERDR_PLUGIN_STATE_DIR=./data/collie-state COLLIE_STATE_DIR=./data/collie-state HERDR_SOCKET_PATH=./data/collie-state/herdr.sock COLLIE_HOST=127.0.0.1 COLLIE_PORT=9191 ./sandbox/runtime/bin/collie pack status'
+pack_probe='cd /home/vcap/app && HERDR_PLUGIN_CONFIG_DIR=./data/collie-config HERDR_PLUGIN_STATE_DIR=./data/collie-state COLLIE_STATE_DIR=./data/collie-state HERDR_SOCKET_PATH=./data/collie-state/herdr.sock COLLIE_HOST=127.0.0.1 COLLIE_PORT=9191 ./manager-runtime/bin/collie pack status'
 pack_status=$("$CF_BIN" ssh "$MANAGER_APP_NAME" -c "$pack_probe") || { printf 'smoke: authenticated Pack status failed\n' >&2; exit 1; }
 if ! awk -v member="$member_id" '
   $0 ~ "(^|[[:space:]])" member "([[:space:]]|$)" {

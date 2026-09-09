@@ -1,15 +1,20 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
-func TestAddressUsesExplicitValueOrPort(t *testing.T) {
-	if got := address("127.0.0.1:9", ""); got != "127.0.0.1:9" {
-		t.Fatal(got)
+func TestCommandJoinerIncludesSanitizedCollieError(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "collie")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' 'error: unable to connect token=super-secret' >&2\nexit 5\n"), 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if got := address("", "8080"); got != ":8080" {
-		t.Fatal(got)
-	}
-	if got := address("", ""); got != ":8080" {
-		t.Fatal(got)
+	err := (commandJoiner{executable: script}).Join(context.Background(), []string{"pack", "join"}, strings.NewReader("token"))
+	if err == nil || !strings.Contains(err.Error(), "unable to connect") || strings.Contains(err.Error(), "super-secret") {
+		t.Fatalf("error=%v", err)
 	}
 }

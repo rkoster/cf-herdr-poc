@@ -122,6 +122,7 @@ func run() error {
 		return fmt.Errorf("wait for lead Collie: %w", err)
 	}
 	ready.Store(true)
+	go monitorPackState(ctx, filepath.Join(dirs.collieState, "pack-trust.json"), collie, 250*time.Millisecond, time.Second, func(err error) { log.Printf("manager Pack state monitor: %v", err) })
 	reconciler.Start(ctx)
 	server := managerHTTPServer(cfg.Address, handler)
 	errorsChannel := make(chan error, 1)

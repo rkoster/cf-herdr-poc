@@ -40,7 +40,7 @@ type CFProvider interface {
 	Stage(context.Context, cf.PushRequest) (model.Operation, error)
 	EnsureAppAbsent(context.Context, string) (model.Operation, error)
 	AppGUID(context.Context, string) (string, model.Operation, error)
-	ConfigureEnrollment(context.Context, string, string, string) (model.Operation, error)
+	ConfigureEnrollment(context.Context, string, string, string, string) (model.Operation, error)
 	StartApp(context.Context, string) (model.Operation, error)
 	InspectApp(context.Context, string) (cf.App, error)
 	SecureRoute(context.Context, cf.RouteRequest) (model.Operation, error)
@@ -648,7 +648,7 @@ func (r *Reconciler) effectStage(ctx context.Context, s model.Sandbox, path stri
 }
 func (r *Reconciler) effectConfigureEnrollment(ctx context.Context, name string) (model.Operation, error) {
 	r.effect("configure-enrollment")
-	return r.cf.ConfigureEnrollment(ctx, name, "/home/vcap/app/sandbox-runtime/join-token", "https://"+r.config.ManagerPackHost)
+	return r.cf.ConfigureEnrollment(ctx, name, "/home/vcap/app/sandbox-runtime/join-token", "https://"+r.config.ManagerPackHost, name+"."+r.config.IdentityDomain)
 }
 func (r *Reconciler) effectStartApp(ctx context.Context, name string) (model.Operation, error) {
 	r.effect("start-app")

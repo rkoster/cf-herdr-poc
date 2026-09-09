@@ -193,6 +193,8 @@ func TestLabDeployPreservesBuildAndCFSequence(t *testing.T) {
 		"cf\tset-env\tmanager\tCF_PASSWORD\tdeploy-password",
 		"cf\tset-env\tmanager\tCF_ORG\tpoc",
 		"cf\tset-env\tmanager\tCF_SPACE\tdemo",
+		"cf\tset-env\tmanager\tCF_SKIP_SSL_VALIDATION\ttrue",
+		"cf\tset-env\tmanager\tCOLLIE_PUBLIC_HOSTS\tmanager.apps.example",
 		"cf\tset-env\tmanager\tMANAGER_API_TOKEN\tsecret-token",
 		"cf\tcreate-route\tapps.example\t--hostname\tmanager",
 		"cf\tmap-route\tmanager\tapps.example\t--hostname\tmanager",
