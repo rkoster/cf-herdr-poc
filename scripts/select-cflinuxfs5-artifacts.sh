@@ -20,7 +20,7 @@ done < "$ROOT/docker/cflinuxfs5-builder/artifacts.env"
 
 # Indirect expansion keeps architecture-specific manifest values as defaults.
 missing=0
-for name in BUN_URL BUN_SHA256 HERDR_URL HERDR_SHA256 CF_URL CF_SHA256 GO_URL GO_SHA256; do
+for name in BUN_URL BUN_SHA256 HERDR_URL HERDR_SHA256 CF_URL CF_SHA256 OPENCODE_URL OPENCODE_SHA256 GO_URL GO_SHA256; do
   key="${name}_${suffix}"
   printf -v value '%s' "${!name:-${!key:-}}"
   if [[ -z "$value" ]]; then

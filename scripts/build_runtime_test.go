@@ -22,9 +22,16 @@ func TestCFLinuxFS5BuilderContract(t *testing.T) {
 		"sha256sum -c",
 		"COPY docker/cflinuxfs5-builder/extract-cf-cli.sh /usr/local/bin/extract-cf-cli.sh",
 		"HERDR_URL is required",
+		"ARG OPENCODE_URL",
+		"ARG OPENCODE_SHA256",
+		"OPENCODE_URL is required",
+		"/tools/downloads/opencode.tar.gz",
+		"/tools/bin/opencode",
+		"tar -C /tools/opencode -xzf /tools/downloads/opencode.tar.gz",
 		"CF_URL is required",
 		"/work/dist/manager",
 		"sandbox/runtime/bin/herdr",
+		"sandbox/runtime/bin/opencode",
 		"sandbox/runtime/start.sh",
 		"manager-runtime/bin/cf",
 		"extract-cf-cli.sh",
@@ -134,7 +141,7 @@ func TestCFLinuxFS5BuildPropagatesTargetArchitecture(t *testing.T) {
 
 func TestCFLinuxFS5ArtifactManifestHasPerArchitectureBunInputs(t *testing.T) {
 	manifest := readFile(t, filepath.Join(packageRoot(t), "docker", "cflinuxfs5-builder", "artifacts.env"))
-	for _, required := range []string{"BUN_URL_AMD64", "BUN_SHA256_AMD64", "BUN_URL_ARM64", "BUN_SHA256_ARM64", "HERDR_URL_AMD64", "CF_URL_AMD64"} {
+	for _, required := range []string{"BUN_URL_AMD64", "BUN_SHA256_AMD64", "BUN_URL_ARM64", "BUN_SHA256_ARM64", "HERDR_URL_AMD64", "CF_URL_AMD64", "OPENCODE_URL_AMD64", "OPENCODE_SHA256_AMD64", "OPENCODE_URL_ARM64", "OPENCODE_SHA256_ARM64"} {
 		if !strings.Contains(manifest, required) {
 			t.Errorf("artifact manifest missing %q", required)
 		}
@@ -149,7 +156,7 @@ func TestCFLinuxFS5ArtifactSelectorUsesManifestKeysForBothArchitectures(t *testi
 		if err != nil {
 			t.Fatalf("architecture %s selector failed: %v\n%s", arch, err, output)
 		}
-		if !strings.Contains(string(output), "HERDR_URL") || !strings.Contains(string(output), "CF_URL") {
+		if !strings.Contains(string(output), "HERDR_URL") || !strings.Contains(string(output), "CF_URL") || !strings.Contains(string(output), "OPENCODE_URL") || !strings.Contains(string(output), "OPENCODE_SHA256") {
 			t.Fatalf("architecture %s output = %q, want Herdr/CF inputs", arch, output)
 		}
 	}
@@ -236,7 +243,7 @@ func TestBuildRuntimeRejectsNixBinaryByDefault(t *testing.T) {
 
 func TestBuildRuntimeScriptChecksLinuxDependencies(t *testing.T) {
 	script := readBuildScript(t)
-	for _, required := range []string{"BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "COLLIE_RUNTIME_BIN", "CF_BIN", "readelf", "ldd", "/nix/store"} {
+	for _, required := range []string{"BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "OPENCODE_RUNTIME_BIN", "COLLIE_RUNTIME_BIN", "CF_BIN", "readelf", "ldd", "/nix/store"} {
 		if !strings.Contains(script, required) {
 			t.Errorf("build-runtime.sh does not contain %q", required)
 		}

@@ -57,7 +57,7 @@ func TestLauncherContract(t *testing.T) {
 	if strings.Contains(script, "echo $COLLIE_JOIN_TOKEN") || strings.Contains(script, "set -x") {
 		t.Fatal("launcher may print the token")
 	}
-	for _, required := range []string{"trap cleanup", "SANDBOX_STATE_DIR=", "HOME=", "XDG_CONFIG_HOME=", "XDG_STATE_HOME=", "XDG_DATA_HOME=", "COLLIE_STATE_DIR=", "HERDR_PLUGIN_CONFIG_DIR=", "HERDR_SOCKET_PATH", "COLLIE_PLUGIN_ROOT=", "COLLIE_PORT=", "COLLIE_HOST=", "COLLIE_MUX=", "COLLIE_PACK_TRANSPORT="} {
+	for _, required := range []string{"trap cleanup", "SANDBOX_STATE_DIR=", "HOME=", "XDG_CONFIG_HOME=", "XDG_STATE_HOME=", "XDG_DATA_HOME=", "COLLIE_STATE_DIR=", "HERDR_PLUGIN_CONFIG_DIR=", "HERDR_SOCKET_PATH", "PATH=", "CF HERDR SANDBOX RUNTIME", "COLLIE_PLUGIN_ROOT=", "COLLIE_PORT=", "COLLIE_HOST=", "COLLIE_MUX=", "COLLIE_PACK_TRANSPORT="} {
 		if !strings.Contains(script, required) {
 			t.Errorf("launcher does not contain %q", required)
 		}
@@ -90,6 +90,44 @@ func TestLauncherContract(t *testing.T) {
 	}
 }
 
+func TestLauncherMaintainsIdempotentBashrcRuntimeBlock(t *testing.T) {
+	if os.Getenv("SANDBOX_LAUNCHER_HELPER") != "" {
+		runLauncherHelper()
+		return
+	}
+
+	root := prepareLauncher(t)
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bashrc := filepath.Join(home, ".bashrc")
+	if err := os.WriteFile(bashrc, []byte("export UNRELATED=value\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		command := exec.Command("bash", filepath.Join(root, "start.sh"))
+		command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"), "SANDBOX_HOME="+home, "PORT=8080")
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		waitForLog(t, filepath.Join(root, "signals.log"), "bun started")
+		_ = command.Process.Signal(syscall.SIGTERM)
+		_ = command.Wait()
+	}
+	contents, err := os.ReadFile(bashrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	if strings.Count(text, "# BEGIN CF HERDR SANDBOX RUNTIME") != 1 || strings.Count(text, "# END CF HERDR SANDBOX RUNTIME") != 1 {
+		t.Fatalf("bashrc = %q, want one managed block", text)
+	}
+	if !strings.Contains(text, "export UNRELATED=value") || !strings.Contains(text, "HERDR_SOCKET_PATH=") {
+		t.Fatalf("bashrc = %q, unrelated or socket settings missing", text)
+	}
+}
+
 func TestLauncherExportsCFPeerRuntimeBeforeBootstrapAndCollie(t *testing.T) {
 	lines := executableLines(readLauncher(t))
 	script := strings.Join(lines, "\n")
@@ -115,9 +153,9 @@ func TestLauncherPassesJoinInputsToBootstrapAndConsumesToken(t *testing.T) {
 	script := strings.Join(lines, "\n")
 	for _, required := range []string{
 		`COLLIE_JOIN_TOKEN_FILE`,
-			`COLLIE_PACK_LEAD_ADDRESS`,
-			`COLLIE_PACK_SELF_ADDRESS`,
-			`export COLLIE_EXECUTABLE="$BIN_DIR/collie"`,
+		`COLLIE_PACK_LEAD_ADDRESS`,
+		`COLLIE_PACK_SELF_ADDRESS`,
+		`export COLLIE_EXECUTABLE="$BIN_DIR/collie"`,
 		`SANDBOX_MEMBER_ID`,
 		`export COLLIE_PACK_TRUST_STORE="$COLLIE_STATE_DIR/pack-trust.json"`,
 		`rm -f -- "${COLLIE_JOIN_TOKEN_FILE:-}"`,

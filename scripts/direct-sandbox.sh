@@ -40,7 +40,7 @@ if [[ -n "${COLLIE_JOIN_TOKEN_FILE:-}" || -n "${COLLIE_PACK_LEAD_ADDRESS:-}" ]];
   [[ -n "${COLLIE_JOIN_TOKEN_FILE:-}" && -n "${COLLIE_PACK_LEAD_ADDRESS:-}" ]] || { printf 'error: COLLIE_PACK_LEAD_ADDRESS is required with a join token\n' >&2; exit 2; }
   [[ -f "$COLLIE_JOIN_TOKEN_FILE" && ! -L "$COLLIE_JOIN_TOKEN_FILE" && -r "$COLLIE_JOIN_TOKEN_FILE" ]] || { printf 'error: COLLIE_JOIN_TOKEN_FILE must be a readable regular file\n' >&2; exit 2; }
 fi
-for asset in bin/bun bin/herdr bin/collie bin/sandbox-bootstrap collie/bridge/index.ts collie/package.json; do
+for asset in bin/bun bin/herdr bin/collie bin/opencode bin/sandbox-bootstrap collie/bridge/index.ts collie/package.json; do
   [[ -e "$RUNTIME_DIR/$asset" ]] || { printf 'error: sandbox runtime asset is missing: %s\n' "$asset" >&2; exit 2; }
 done
 
@@ -77,6 +77,8 @@ created=1
 (cd "$WORK_DIR" && "$CF_BIN" push "$APP_NAME" --no-route --no-start -b "$BUILDPACK" -p app -c ./sandbox-runtime/start.sh)
 "$CF_BIN" set-env "$APP_NAME" COLLIE_PACK_TRANSPORT cf-identity >/dev/null 2>&1
 "$CF_BIN" set-env "$APP_NAME" COLLIE_HOST 0.0.0.0 >/dev/null 2>&1
+"$CF_BIN" set-env "$APP_NAME" PATH '/home/vcap/app/sandbox-runtime/bin:$PATH' >/dev/null 2>&1
+"$CF_BIN" set-env "$APP_NAME" HERDR_SOCKET_PATH /home/vcap/app/.sandbox-state/herdr.sock >/dev/null 2>&1
 "$CF_BIN" set-env "$APP_NAME" SANDBOX_CWD "$SANDBOX_CWD" >/dev/null 2>&1
 if [[ -n "${COLLIE_JOIN_TOKEN_FILE:-}" ]]; then
   "$CF_BIN" set-env "$APP_NAME" COLLIE_PACK_LEAD_ADDRESS "${COLLIE_PACK_LEAD_ADDRESS:?COLLIE_PACK_LEAD_ADDRESS is required with a join token}" >/dev/null 2>&1

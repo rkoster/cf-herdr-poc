@@ -55,7 +55,8 @@ CF_BIN="$(resolve_tool CF_BIN cf)"
 if [[ "$BUILD_MODE" == nix-relocation ]]; then
 	BUN_RUNTIME_BIN="$(resolve_tool BUN_RUNTIME_BIN bun)"
 	HERDR_RUNTIME_BIN="$(resolve_tool HERDR_RUNTIME_BIN herdr)"
-	export BUN_RUNTIME_BIN HERDR_RUNTIME_BIN ALLOW_NIX_RUNTIME_RELOCATION=1 CF_BIN
+	OPENCODE_RUNTIME_BIN="$(resolve_tool OPENCODE_RUNTIME_BIN opencode)"
+	export BUN_RUNTIME_BIN HERDR_RUNTIME_BIN OPENCODE_RUNTIME_BIN ALLOW_NIX_RUNTIME_RELOCATION=1 CF_BIN
 	for tool in go patchelf readelf ldd nix-store; do
 		if ! command -v "$tool" >/dev/null 2>&1; then
 			printf 'error: required build tool %s was not found in PATH\n' "$tool" >&2
@@ -121,9 +122,21 @@ else
 fi
 
 printf '==> configure routes\n'
-"$CF_BIN" create-route "$PUBLIC_DOMAIN" --hostname "$MANAGER_PUBLIC_HOST"
+ensure_route() {
+	local output status
+	if output=$("$CF_BIN" create-route "$1" --hostname "$2" 2>&1); then
+		return 0
+	fi
+	status=$?
+	case "$output" in
+		*already\ exists*|*already\ exists.*) return 0 ;;
+		*) printf '%s\n' "$output" >&2; return "$status" ;;
+	esac
+}
+
+ensure_route "$PUBLIC_DOMAIN" "$MANAGER_PUBLIC_HOST"
 "$CF_BIN" map-route "$MANAGER_APP_NAME" "$PUBLIC_DOMAIN" --hostname "$MANAGER_PUBLIC_HOST"
-"$CF_BIN" create-route "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"
+ensure_route "$CF_IDENTITY_DOMAIN" "$MANAGER_ROUTE_HOST"
 "$CF_BIN" map-route "$MANAGER_APP_NAME" "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"
 
 printf '==> start manager\n'

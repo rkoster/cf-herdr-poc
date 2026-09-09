@@ -47,7 +47,7 @@ RUNTIME_DIR="$DIST_STAGING/sandbox/runtime" GOOS="$GOOS" GOARCH="$GOARCH" \
 	SANDBOX_TARGET_INSTALL_DIR="${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/sandbox-runtime/bin}" \
 	MANAGER_RUNTIME_DIR="$DIST_STAGING/manager-runtime" \
 	MANAGER_TARGET_INSTALL_DIR=/home/vcap/app/manager-runtime/bin \
-	BUN_RUNTIME_BIN="$BUN_RUNTIME_BIN" HERDR_RUNTIME_BIN="$HERDR_RUNTIME_BIN" CF_BIN="${CF_BIN:?CF_BIN is required}" \
+	BUN_RUNTIME_BIN="$BUN_RUNTIME_BIN" HERDR_RUNTIME_BIN="$HERDR_RUNTIME_BIN" OPENCODE_RUNTIME_BIN="${OPENCODE_RUNTIME_BIN:?OPENCODE_RUNTIME_BIN is required}" CF_BIN="${CF_BIN:?CF_BIN is required}" \
 	CF_BIN="${CF_BIN:?CF_BIN is required and must name a portable CF CLI executable}" \
 	ALLOW_NIX_RUNTIME_RELOCATION="${ALLOW_NIX_RUNTIME_RELOCATION:-}" \
 	bash "$BUILD_RUNTIME_SCRIPT"
@@ -55,7 +55,7 @@ RUNTIME_DIR="$DIST_STAGING/sandbox/runtime" GOOS="$GOOS" GOARCH="$GOARCH" \
 mkdir -p "$DIST_STAGING/web"
 cp -R "$ROOT/web/dist/." "$DIST_STAGING/web/"
 
-for executable in manager manager-runtime/bin/bun manager-runtime/bin/cf manager-runtime/bin/collie sandbox/runtime/bin/bun sandbox/runtime/bin/herdr sandbox/runtime/bin/collie sandbox/runtime/bin/sandbox-bootstrap sandbox/runtime/start.sh; do
+for executable in manager manager-runtime/bin/bun manager-runtime/bin/cf manager-runtime/bin/collie sandbox/runtime/bin/bun sandbox/runtime/bin/herdr sandbox/runtime/bin/collie sandbox/runtime/bin/opencode sandbox/runtime/bin/sandbox-bootstrap sandbox/runtime/start.sh; do
 	test -x "$DIST_STAGING/$executable" || { printf 'error: missing executable artifact %s\n' "$executable" >&2; exit 1; }
 done
 for artifact in web/index.html sandbox/runtime/target-install-dir sandbox/runtime/collie/bridge/index.ts sandbox/runtime/collie/cli/install-kind.ts sandbox/runtime/collie/cli/link.ts sandbox/runtime/collie/cli/sys.ts sandbox/runtime/collie/package.json sandbox/runtime/collie/web/dist/index.html; do

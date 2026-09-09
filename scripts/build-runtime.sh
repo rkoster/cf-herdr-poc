@@ -132,6 +132,7 @@ scan_elf_metadata() {
 build_bun="$(require_tool bun)"
 bun_bin="$(validate_runtime_binary BUN_RUNTIME_BIN)"
 herdr_bin="$(validate_runtime_binary HERDR_RUNTIME_BIN)"
+opencode_bin="$(validate_runtime_binary OPENCODE_RUNTIME_BIN)"
 cf_bin="$(validate_runtime_binary CF_BIN)"
 if [[ "$(uname -s)" == Linux ]]; then
 	if ! "$cf_bin" version >/dev/null 2>&1; then
@@ -162,6 +163,7 @@ test -x "$RUNTIME_DIR/bin/sandbox-bootstrap"
 if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" == 1 ]]; then
 	relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun" "$TARGET_INSTALL_DIR"
 	relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr" "$TARGET_INSTALL_DIR"
+	install -m 0755 "$opencode_bin" "$RUNTIME_DIR/bin/opencode"
 	relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie" "$TARGET_INSTALL_DIR"
 	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$RUNTIME_DIR/bin/bun" --version >/dev/null
 	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$RUNTIME_DIR/bin/herdr" --version >/dev/null
@@ -169,6 +171,7 @@ if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" == 1 ]]; then
 else
 	install -m 0755 "$bun_bin" "$RUNTIME_DIR/bin/bun"
 	install -m 0755 "$herdr_bin" "$RUNTIME_DIR/bin/herdr"
+	install -m 0755 "$opencode_bin" "$RUNTIME_DIR/bin/opencode"
 	install -m 0755 "$collie_bin" "$RUNTIME_DIR/bin/collie"
 fi
 

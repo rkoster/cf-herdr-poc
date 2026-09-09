@@ -8,6 +8,7 @@ export COLLIE_EXECUTABLE="$BIN_DIR/collie"
 
 SANDBOX_STATE_DIR="${SANDBOX_STATE_DIR:-/home/vcap/app/.sandbox-state}"
 export HOME="${SANDBOX_HOME:-$SANDBOX_STATE_DIR/home}"
+export PATH="$BIN_DIR:$PATH"
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$SANDBOX_STATE_DIR/config}"
 export XDG_STATE_HOME="${XDG_STATE_HOME:-$SANDBOX_STATE_DIR/state}"
 export XDG_DATA_HOME="${XDG_DATA_HOME:-$SANDBOX_STATE_DIR/data}"
@@ -22,6 +23,25 @@ export COLLIE_ALLOW_NON_LOOPBACK_BIND=1
 export COLLIE_PACK_TRANSPORT=cf-identity
 export SANDBOX_MEMBER_ID="${SANDBOX_MEMBER_ID:-}"
 
+configure_bashrc() {
+	local bashrc="$HOME/.bashrc"
+	local block_start='# BEGIN CF HERDR SANDBOX RUNTIME'
+	local block_end='# END CF HERDR SANDBOX RUNTIME'
+	local temporary
+	temporary="$(mktemp "${bashrc}.XXXXXX")"
+	if [[ -f "$bashrc" ]]; then
+		awk -v start="$block_start" -v end="$block_end" '$0 == start {skip=1; next} $0 == end {skip=0; next} !skip {print}' "$bashrc" >"$temporary"
+	fi
+	{
+		printf '\n%s\n' "$block_start"
+		printf 'export PATH=%s:$PATH\n' "$BIN_DIR"
+		printf 'export HERDR_SOCKET_PATH=%q\n' "$HERDR_SOCKET_PATH"
+		printf '%s\n' "$block_end"
+	} >>"$temporary"
+	chmod 600 "$temporary"
+	mv -- "$temporary" "$bashrc"
+}
+
 has_join_token_file=false
 has_pack_lead_address=false
 [[ -n "${COLLIE_JOIN_TOKEN_FILE:-}" ]] && has_join_token_file=true
@@ -32,6 +52,7 @@ if [[ "$has_join_token_file" != "$has_pack_lead_address" ]]; then
 fi
 
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$COLLIE_STATE_DIR" "$HERDR_PLUGIN_CONFIG_DIR" "$(dirname -- "$HERDR_SOCKET_PATH")"
+configure_bashrc
 
 herdr_pid=""
 bootstrap_pid=""

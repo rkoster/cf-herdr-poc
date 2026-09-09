@@ -46,6 +46,20 @@ func TestLabDeployUsesExplicitCFBinaryOutsidePATH(t *testing.T) {
 	}
 }
 
+func TestLabDeployMapsExistingRoutes(t *testing.T) {
+	fixture := newLabDeployFixture(t)
+	fixture.env = append(fixture.env, "FAKE_CF_ROUTE_EXISTS=1")
+
+	output, err := fixture.run(t)
+	if err != nil {
+		t.Fatalf("lab-deploy.sh: %v: %s", err, output)
+	}
+	events := fixture.events(t)
+	if !containsEvent(events, "cf\tmap-route\tmanager\tapps.example\t--hostname\tmanager") || !containsEvent(events, "cf\tmap-route\tmanager\tapps.identity\t--hostname\tmanager-pack") {
+		t.Fatalf("events = %#v, want existing routes mapped", events)
+	}
+}
+
 func TestLabDeployCFLinuxUsesExplicitCFBinaryOutsidePATH(t *testing.T) {
 	fixture := newLabDeployFixture(t)
 	os.Remove(filepath.Join(fixture.bin, "cf"))
@@ -99,7 +113,7 @@ func TestLabDeployDiscoversOperatorProfileTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "bun=" + filepath.Join(fixture.bin, "bun") + "\nherdr=" + filepath.Join(profileBin, "herdr") + "\ncf=" + filepath.Join(profileBin, "cf") + "\n"
+	want := "bun=" + filepath.Join(fixture.bin, "bun") + "\nherdr=" + filepath.Join(profileBin, "herdr") + "\nopencode=" + filepath.Join(fixture.bin, "opencode") + "\ncf=" + filepath.Join(profileBin, "cf") + "\n"
 	if string(buildEnv) != want {
 		t.Fatalf("build runtime paths = %q, want %q", buildEnv, want)
 	}
@@ -113,9 +127,11 @@ func TestLabDeployExplicitRuntimeOverridesPATH(t *testing.T) {
 	explicitDir := t.TempDir()
 	explicitBun := filepath.Join(explicitDir, "explicit bun")
 	explicitHerdr := filepath.Join(explicitDir, "explicit herdr")
+	explicitOpenCode := filepath.Join(explicitDir, "explicit opencode")
 	writeExecutable(t, explicitBun, "#!/bin/sh\nexit 0\n")
 	writeExecutable(t, explicitHerdr, "#!/bin/sh\nexit 0\n")
-	fixture.env = append(fixture.env, "BUN_RUNTIME_BIN="+explicitBun, "HERDR_RUNTIME_BIN="+explicitHerdr)
+	writeExecutable(t, explicitOpenCode, "#!/bin/sh\nexit 0\n")
+	fixture.env = append(fixture.env, "BUN_RUNTIME_BIN="+explicitBun, "HERDR_RUNTIME_BIN="+explicitHerdr, "OPENCODE_RUNTIME_BIN="+explicitOpenCode)
 
 	output, err := fixture.run(t)
 	if err != nil {
@@ -125,7 +141,7 @@ func TestLabDeployExplicitRuntimeOverridesPATH(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "bun=" + explicitBun + "\nherdr=" + explicitHerdr + "\ncf=" + filepath.Join(fixture.bin, "cf") + "\n"
+	want := "bun=" + explicitBun + "\nherdr=" + explicitHerdr + "\nopencode=" + explicitOpenCode + "\ncf=" + filepath.Join(fixture.bin, "cf") + "\n"
 	if string(buildEnv) != want {
 		t.Fatalf("build runtime paths = %q, want explicit paths %q", buildEnv, want)
 	}
@@ -380,7 +396,7 @@ func newLabDeployFixture(t *testing.T) *labDeployFixture {
 	writeExecutable(t, filepath.Join(fixture.bin, "bash"), `#!/bin/sh
 printf 'build\n' >> "$EVENT_LOG"
 printf '%s\n' "$TMPDIR" > "$TMPDIR_LOG"
-	printf 'bun=%s\nherdr=%s\ncf=%s\n' "$BUN_RUNTIME_BIN" "$HERDR_RUNTIME_BIN" "$CF_BIN" > "$BUILD_ENV_LOG"
+	printf 'bun=%s\nherdr=%s\nopencode=%s\ncf=%s\n' "$BUN_RUNTIME_BIN" "$HERDR_RUNTIME_BIN" "$OPENCODE_RUNTIME_BIN" "$CF_BIN" > "$BUILD_ENV_LOG"
 exit "${FAKE_BUILD_STATUS:-0}"
 `)
 	writeFakeCF(t, filepath.Join(fixture.bin, "cf"), "cf")
@@ -399,7 +415,7 @@ printf '%s\n' "$path"
 	if err := os.Symlink(rm, filepath.Join(fixture.bin, "rm")); err != nil {
 		t.Fatal(err)
 	}
-	for _, tool := range []string{"bun", "herdr", "go", "patchelf", "readelf", "ldd", "nix-store"} {
+	for _, tool := range []string{"bun", "herdr", "opencode", "go", "patchelf", "readelf", "ldd", "nix-store"} {
 		writeExecutable(t, filepath.Join(fixture.bin, tool), "#!/bin/sh\nexit 0\n")
 	}
 	fixture.env = []string{
@@ -436,6 +452,10 @@ if [ "$1" = set-env ] && [ "$3" = MANAGER_API_TOKEN ] && [ "${FAKE_CF_ECHO_TOKEN
   printf 'cf echoed token argument: %s\n' "$4"
   printf 'cf echoed token error: %s\n' "$4" >&2
   exit "${FAKE_CF_TOKEN_STATUS:-0}"
+fi
+if [ "$1" = create-route ] && [ "${FAKE_CF_ROUTE_EXISTS:-}" = 1 ]; then
+  printf 'Route already exists.\n' >&2
+  exit 1
 fi
 `
 	writeExecutable(t, path, strings.Replace(body, "__LABEL__", label, 1))

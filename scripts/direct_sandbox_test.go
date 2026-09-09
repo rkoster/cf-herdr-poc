@@ -22,6 +22,9 @@ func TestDirectSandboxPushesStandaloneAppWithExactContract(t *testing.T) {
 	if !containsEvent(events, "cf\tpush\tdirect-sandbox\t--no-route\t--no-start\t-b\tnodejs_buildpack\t-p\tapp\t-c\t./sandbox-runtime/start.sh") {
 		t.Fatalf("events = %#v, want exact standalone push", events)
 	}
+	if !containsEvent(events, "cf\tset-env\tdirect-sandbox\tPATH\t/home/vcap/app/sandbox-runtime/bin:$PATH") || !containsEvent(events, "cf\tset-env\tdirect-sandbox\tHERDR_SOCKET_PATH\t/home/vcap/app/.sandbox-state/herdr.sock") {
+		t.Fatalf("events = %#v, want shared runtime environment", events)
+	}
 	if containsPrefix(events, "cf\tcreate-route") || containsPrefix(events, "cf\tmap-route") {
 		t.Fatalf("events = %#v, direct workflow must not create routes", events)
 	}
@@ -237,7 +240,7 @@ exit 0
 	if err := os.WriteFile(filepath.Join(root, "dist", "sandbox", "runtime", "collie", "package.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"bun", "herdr", "collie", "sandbox-bootstrap"} {
+	for _, name := range []string{"bun", "herdr", "collie", "opencode", "sandbox-bootstrap"} {
 		writeExecutable(t, filepath.Join(root, "dist", "sandbox", "runtime", "bin", name), "#!/bin/sh\n")
 	}
 	events := filepath.Join(root, "events.log")

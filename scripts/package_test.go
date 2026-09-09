@@ -30,7 +30,7 @@ func TestBuildUsesTransactionalStagingAndValidatesArtifactContract(t *testing.T)
 	script := readPackageFile(t, "scripts/build.sh")
 	for _, required := range []string{
 		"mktemp -d", "DIST_STAGING", "trap", "mv", "CGO_ENABLED=0", "GOOS=", "GOARCH=",
-		"scripts/build-runtime.sh", "BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "RUNTIME_DIR=",
+		"scripts/build-runtime.sh", "BUN_RUNTIME_BIN", "HERDR_RUNTIME_BIN", "OPENCODE_RUNTIME_BIN", "RUNTIME_DIR=",
 		"TARGET_INSTALL_DIR=", "MANAGER_RUNTIME_DIR=", "MANAGER_TARGET_INSTALL_DIR=",
 		"web/dist", "sandbox/runtime", "manager-runtime", "collie/bridge", "collie/cli", "collie/node_modules", "collie/package.json",
 		"test -x", "test -f", "${name}.previous",
@@ -94,6 +94,11 @@ func TestManifestPinsVerifiedHerdrArtifacts(t *testing.T) {
 		"CF_SHA256_AMD64=98268ab3134bb3a1c97ffce797b4e6d35590a82e006cd098ad7a29f0a5cae7d8",
 		"CF_URL_ARM64=https://github.com/cloudfoundry/cli/releases/download/v8.19.0/cf8-cli_8.19.0_linux_arm64.tgz",
 		"CF_SHA256_ARM64=454c29a44a51c8edc9696678403e2e40808357a397033af5a018e6ca8ee32117",
+		"OPENCODE_VERSION=1.18.30",
+		"OPENCODE_URL_AMD64=https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-linux-x64.tar.gz",
+		"OPENCODE_SHA256_AMD64=55007246858165496ff85ba1c2b648f7421e8e2013bf4189a680c9ff8e699d17",
+		"OPENCODE_URL_ARM64=https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-linux-arm64.tar.gz",
+		"OPENCODE_SHA256_ARM64=4111a55c2a02c0fac314bd51e9a2330280e6d29d2b85b9554fff6d62612566ed",
 	} {
 		if !strings.Contains(manifest, required) {
 			t.Errorf("artifacts.env missing %q", required)
@@ -120,6 +125,33 @@ func TestCFLinuxFS5SelectorUsesPinnedArtifactsForEachArchitecture(t *testing.T) 
 				t.Fatalf("selector failed: %v\n%s", err, output)
 			}
 			for _, required := range []string{"CF_URL=" + test.cfURL, "CF_SHA256=" + test.cfSHA} {
+				if !strings.Contains(string(output), required) {
+					t.Errorf("selector output missing %q: %s", required, output)
+				}
+			}
+		})
+	}
+}
+
+func TestCFLinuxFS5SelectorUsesPinnedOpenCodeForEachArchitecture(t *testing.T) {
+	root := packageRoot(t)
+	for _, test := range []struct {
+		arch string
+		url  string
+		sha  string
+	}{
+		{"amd64", "https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-linux-x64.tar.gz", "55007246858165496ff85ba1c2b648f7421e8e2013bf4189a680c9ff8e699d17"},
+		{"arm64", "https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-linux-arm64.tar.gz", "4111a55c2a02c0fac314bd51e9a2330280e6d29d2b85b9554fff6d62612566ed"},
+	} {
+		t.Run(test.arch, func(t *testing.T) {
+			command := exec.Command("bash", filepath.Join(root, "scripts", "select-cflinuxfs5-artifacts.sh"), test.arch)
+			command.Dir = root
+			command.Env = []string{"PATH=" + os.Getenv("PATH")}
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("selector failed: %v\n%s", err, output)
+			}
+			for _, required := range []string{"OPENCODE_URL=" + test.url, "OPENCODE_SHA256=" + test.sha} {
 				if !strings.Contains(string(output), required) {
 					t.Errorf("selector output missing %q: %s", required, output)
 				}
@@ -296,7 +328,7 @@ func TestBuildAssemblesExpectedLayoutWithFixtureTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build.sh failed: %v\n%s", err, output)
 	}
-	for _, executable := range []string{"manager", "manager-runtime/bin/bun", "manager-runtime/bin/herdr", "manager-runtime/bin/cf", "manager-runtime/bin/collie", "sandbox/runtime/bin/bun", "sandbox/runtime/bin/herdr", "sandbox/runtime/bin/collie", "sandbox/runtime/bin/sandbox-bootstrap", "sandbox/runtime/start.sh"} {
+	for _, executable := range []string{"manager", "manager-runtime/bin/bun", "manager-runtime/bin/herdr", "manager-runtime/bin/cf", "manager-runtime/bin/collie", "sandbox/runtime/bin/bun", "sandbox/runtime/bin/herdr", "sandbox/runtime/bin/collie", "sandbox/runtime/bin/opencode", "sandbox/runtime/bin/sandbox-bootstrap", "sandbox/runtime/start.sh"} {
 		info, statErr := os.Stat(filepath.Join(dist, filepath.FromSlash(executable)))
 		if statErr != nil || info.Mode()&0o111 == 0 {
 			t.Errorf("executable %s: info=%v err=%v", executable, info, statErr)
@@ -624,7 +656,7 @@ exec /bin/mv "$@"
 set -eu
 if [ "${FAIL_RUNTIME:-}" = 1 ]; then exit 23; fi
 	mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie/bridge" "$RUNTIME_DIR/collie/cli" "$RUNTIME_DIR/collie/node_modules/fixture" "$RUNTIME_DIR/collie/web/dist"
-for name in bun herdr collie sandbox-bootstrap; do printf '#!/bin/sh\n' > "$RUNTIME_DIR/bin/$name"; chmod +x "$RUNTIME_DIR/bin/$name"; done
+for name in bun herdr collie opencode sandbox-bootstrap; do printf '#!/bin/sh\n' > "$RUNTIME_DIR/bin/$name"; chmod +x "$RUNTIME_DIR/bin/$name"; done
 printf '#!/bin/sh\n' > "$RUNTIME_DIR/start.sh"; chmod +x "$RUNTIME_DIR/start.sh"
 printf '%s\n' "${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/sandbox-runtime/bin}" > "$RUNTIME_DIR/target-install-dir"
 printf fixture > "$RUNTIME_DIR/collie/bridge/index.ts"
@@ -646,7 +678,7 @@ printf '<html>collie</html>' > "$RUNTIME_DIR/collie/web/dist/index.html"
 	command.Env = []string{
 		"PATH=" + bin + ":" + os.Getenv("PATH"), "DIST_DIR=" + dist,
 		"BUILD_RUNTIME_SCRIPT=" + runtimeScript, "BUN_RUNTIME_BIN=" + fakeRuntime,
-		"HERDR_RUNTIME_BIN=" + fakeRuntime, "CF_BIN=" + fakeRuntime, "FIXTURE_WEB_DIST=" + filepath.Join(root, "web", "dist"),
+		"HERDR_RUNTIME_BIN=" + fakeRuntime, "OPENCODE_RUNTIME_BIN=" + fakeRuntime, "CF_BIN=" + fakeRuntime, "FIXTURE_WEB_DIST=" + filepath.Join(root, "web", "dist"),
 		"BUILD_MODE=nix-relocation",
 	}
 	if failRuntime {

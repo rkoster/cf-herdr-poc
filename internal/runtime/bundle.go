@@ -172,7 +172,7 @@ func validateRuntime(source string) error {
 	}); err != nil {
 		return fmt.Errorf("validate runtime directory %q: %w", source, err)
 	}
-	for _, name := range []string{"start.sh", "bin/bun", "bin/herdr", "bin/collie", "bin/sandbox-bootstrap"} {
+	for _, name := range []string{"start.sh", "bin/bun", "bin/herdr", "bin/collie", "bin/opencode", "bin/sandbox-bootstrap"} {
 		path := filepath.Join(source, filepath.FromSlash(name))
 		info, err := os.Stat(path)
 		if err != nil {

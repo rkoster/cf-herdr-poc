@@ -21,7 +21,7 @@ The nested Collie fork is pinned at `e6c7d8b80e70267439d768ffc5b9e3d408b84cd0`. 
 - A Linux Cloud Foundry foundation with Diego, the binary buildpack, an identity domain, and app instance identity credentials.
 - A space developer able to push, start, stop, delete, inspect, and set environment variables on apps; create, map, unmap, and delete routes; and add/remove identity route policies.
 - Platform approval for the sandbox buildpack allow-list and enough app, route, and memory quota for the manager plus sandboxes.
-- The default cflinuxfs5 builder downloads only the pinned, SHA-256-verified Bun and Herdr Linux
+- The default cflinuxfs5 builder downloads only the pinned, SHA-256-verified Bun, Herdr, and OpenCode Linux
   artifacts from `docker/cflinuxfs5-builder/artifacts.env`; it fails closed when required metadata
   is missing. The explicit legacy `BUILD_MODE=nix-relocation` path requires externally supplied
   runtime binaries.
@@ -46,6 +46,13 @@ GOOS=linux GOARCH=amd64 BUILD_MODE=cflinuxfs5 bash scripts/build.sh
 Bun 1.3.13 and Cloud Foundry CLI v8.19.0 artifacts are verified against official GitHub release metadata and pinned with SHA-256 checksums. CF CLI v8.19.0 artifacts are verified. The builder extracts the CF tarball's `cf` binary into `dist/manager-runtime/bin/cf`, the stable executable path required by the manager provider.
 
 The build compiles the manager and sandbox bootstrap with `CGO_ENABLED=0`, builds both frontends, invokes `scripts/build-runtime.sh`, validates every required artifact, and transactionally replaces `dist/`. It stages first, renames the old tree to a backup, installs the new tree, and restores the backup on failure or interruption. Directory replacement is not fully atomic: there is a small rename window in which `dist/` is absent. `COLLIE_RUNTIME_BIN` may override the Collie CLI produced by the nested build, but must satisfy the same portable executable checks.
+
+The sandbox runtime includes pinned OpenCode v1.18.30 at `sandbox/runtime/bin/opencode`.
+Interactive `cf ssh` shells and Collie terminal sessions inherit the same runtime PATH and
+Herdr socket. For a running sandbox, verify the CLI with `cf ssh <sandbox-name> -c 'opencode --version'`;
+the `herdr` command uses `HERDR_SOCKET_PATH=/home/vcap/app/.sandbox-state/herdr.sock` to attach to
+the server started by the sandbox launcher. The launcher also maintains these exports in the sandbox
+user's `.bashrc` without duplicating its managed block.
 
 For this POC lab only, `ALLOW_NIX_RUNTIME_RELOCATION=1` allows Linux Nix-linked Bun, Herdr, and built Collie inputs. Using the cflinuxfs loader with bundled Nix libc failed with undefined `__tunable_is_initialized@GLIBC_PRIVATE`; explicitly invoking the bundled Nix loader succeeded. The workaround therefore installs each runtime as a direct ELF whose absolute interpreter is its private bundled loader at its final CF path, with an origin-relative RPATH. Sandbox binaries target `/home/vcap/app/sandbox-runtime/bin` for manager-created and direct sandboxes, while independent manager Bun and Collie copies target `/home/vcap/app/manager-runtime/bin`; Collie assets remain shared. The visible runtime is launched with `./sandbox-runtime/start.sh`. The relocator recursively resolves startup `DT_NEEDED` libraries and includes available glibc NSS/DNS resolver modules. This preserves executable identity and performs no internet downloads, but duplicates executable private libraries and binds artifacts to exact CF layouts. It is deliberate deployment friction, not a production packaging strategy; production should use official static or portable runtime artifacts.
 
