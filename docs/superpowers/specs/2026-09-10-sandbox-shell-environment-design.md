@@ -76,14 +76,18 @@ Automated tests verify:
 - Both launcher files and the OpenCode executable are required runtime artifacts.
 - The full Go suite and shell syntax checks pass.
 
-Live verification creates a fresh sandbox and confirms:
+Live verification creates a fresh sandbox and confirms the non-interactive and interactive
+shell contracts:
 
 ```text
-cf ssh <sandbox> -c 'printf "%s\n" "$HOME" "$SHELL" "$HERDR_SOCKET_PATH"; command -v opencode; command -v herdr'
+cf ssh <sandbox> -c 'printf "%s\n" "$HOME" "$SHELL" "$HERDR_SOCKET_PATH"; /home/vcap/app/sandbox-runtime/bin/opencode --version; /home/vcap/app/sandbox-runtime/bin/herdr --version'
+cf ssh <sandbox> -c '/bin/bash -ic "command -v opencode; command -v herdr"'
 ```
 
-The sandbox must stage successfully, report `/home/vcap` and `/bin/bash`, resolve both
-commands, and attach `herdr` to the configured server socket.
+The sandbox must stage successfully, report `/home/vcap` and `/bin/bash`, run both commands from
+the absolute runtime paths, and attach `herdr` to the configured server socket. Non-interactive
+`cf ssh -c` does not source `/home/vcap/.bashrc`; the explicit interactive Bash command verifies
+that an interactive shell sources it and resolves both commands by name.
 
 ## Non-Goals
 

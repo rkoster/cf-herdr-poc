@@ -53,10 +53,21 @@ Sandbox apps do not receive a Cloud Foundry `PATH` override. The launcher prepen
 interactive shells: `HOME=/home/vcap` and `SHELL=/bin/bash`.
 
 The launcher maintains one managed block in `/home/vcap/.bashrc` containing the runtime `PATH`,
-`SHELL=/bin/bash`, and `HERDR_SOCKET_PATH=/home/vcap/app/.sandbox-state/herdr.sock`. This exposes
-`opencode` and `herdr` in interactive `cf ssh` shells and Collie terminal sessions; `herdr` attaches
-to the server started by the sandbox launcher. For a running sandbox, verify the CLI with
-`cf ssh <sandbox-name> -c 'opencode --version'`.
+`SHELL=/bin/bash`, and `HERDR_SOCKET_PATH=/home/vcap/app/.sandbox-state/herdr.sock`. Interactive
+`cf ssh` shells source this `.bashrc`, exposing `opencode` and `herdr`, and Collie terminal
+sessions use the same runtime contract; `herdr` attaches to the server started by the sandbox
+launcher. Non-interactive `cf ssh -c` commands do not source `/home/vcap/.bashrc`, so verify
+command lookup by explicitly starting an interactive Bash shell:
+
+```bash
+cf ssh <sandbox-name> -c '/bin/bash -ic "command -v opencode; command -v herdr"'
+```
+
+Alternatively, use the absolute runtime paths from a non-interactive command:
+
+```bash
+cf ssh <sandbox-name> -c '/home/vcap/app/sandbox-runtime/bin/opencode --version; /home/vcap/app/sandbox-runtime/bin/herdr --version'
+```
 
 For this POC lab only, `ALLOW_NIX_RUNTIME_RELOCATION=1` allows Linux Nix-linked Bun, Herdr, and built Collie inputs. Using the cflinuxfs loader with bundled Nix libc failed with undefined `__tunable_is_initialized@GLIBC_PRIVATE`; explicitly invoking the bundled Nix loader succeeded. The workaround therefore installs each runtime as a direct ELF whose absolute interpreter is its private bundled loader at its final CF path, with an origin-relative RPATH. Sandbox binaries target `/home/vcap/app/sandbox-runtime/bin` for manager-created and direct sandboxes, while independent manager Bun and Collie copies target `/home/vcap/app/manager-runtime/bin`; Collie assets remain shared. The visible runtime is launched with `./sandbox-runtime/start.sh`. The relocator recursively resolves startup `DT_NEEDED` libraries and includes available glibc NSS/DNS resolver modules. This preserves executable identity and performs no internet downloads, but duplicates executable private libraries and binds artifacts to exact CF layouts. It is deliberate deployment friction, not a production packaging strategy; production should use official static or portable runtime artifacts.
 
