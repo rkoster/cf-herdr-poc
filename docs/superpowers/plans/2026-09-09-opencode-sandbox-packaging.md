@@ -267,13 +267,12 @@ Extend the direct sandbox fake-CF event assertions to require, after push and be
 start:
 
 ```text
-cf set-env direct-sandbox PATH /home/vcap/app/sandbox-runtime/bin:$PATH
 cf set-env direct-sandbox HERDR_SOCKET_PATH /home/vcap/app/.sandbox-state/herdr.sock
 ```
 
-Add both commands to the manager provider enrollment configuration expectation and add
-validation that the configured values are fixed safe paths, not caller-controlled
-arguments.
+Require that neither workflow emits a CF `PATH` setting. Add the socket command to the
+manager provider enrollment configuration expectation and validate that its value is a
+fixed safe path, not a caller-controlled argument.
 
 - [ ] **Step 2: Run focused CF tests and verify failure**
 
@@ -286,19 +285,20 @@ Expected: FAIL because neither workflow configures the two environment variables
 - [ ] **Step 3: Implement direct sandbox environment configuration**
 
 In `scripts/direct-sandbox.sh`, after the existing `cf push` and before `cf start`,
-set the two literal values. Keep the literal PATH value exactly
-`/home/vcap/app/sandbox-runtime/bin:$PATH`; CF passes it as an environment string and
-the launcher also prepends its own absolute directory at process startup.
+set only the literal socket value. Do not set `PATH` through CF: `cf set-env` stores
+`$PATH` literally and can remove the system paths required during staging. The launcher
+prepends its own absolute runtime directory at process startup and updates
+`/home/vcap/.bashrc` for interactive shells.
 
 Extend the runtime asset preflight list with `bin/opencode` so direct sandbox setup
 fails before creating an app when the packaged CLI is absent.
 
 - [ ] **Step 4: Implement manager provider environment configuration**
 
-Extend `Provider.ConfigureEnrollment` in `internal/cf/provider.go` to issue the same
-two `set-env` commands before the Pack enrollment variables. Use the fixed sandbox
-paths, not `p.Environment`, request input, or repository content. Preserve existing
-validation and command ordering.
+Extend `Provider.ConfigureEnrollment` in `internal/cf/provider.go` to issue the fixed
+`HERDR_SOCKET_PATH` `set-env` command before the Pack enrollment variables. Do not add a
+CF `PATH` setting. Use the fixed socket path, not `p.Environment`, request input, or
+repository content. Preserve existing validation and command ordering.
 
 - [ ] **Step 5: Run focused CF tests and verify success**
 
@@ -324,13 +324,15 @@ Extend README assertions to require the OpenCode manifest path, v1.18.30 artifac
 version/URLs/checksums, and interactive commands such as:
 
 ```bash
-cf ssh <sandbox-name> -c 'opencode --version'
-cf ssh <sandbox-name> -c 'herdr'
+cf ssh <sandbox-name> -c '/home/vcap/app/sandbox-runtime/bin/opencode --version'
+cf ssh <sandbox-name> -c '/bin/bash -ic "command -v opencode; command -v herdr"'
 ```
 
-Document that Collie terminal sessions inherit the same `PATH` and
-`HERDR_SOCKET_PATH`, and that the packaged Herdr command attaches to the server
+Document that Collie terminal sessions inherit the launcher-provided runtime `PATH`
+and `HERDR_SOCKET_PATH`, and that the packaged Herdr command attaches to the server
 started by `start.sh`.
+Noninteractive `cf ssh -c` does not source `/home/vcap/.bashrc`, so examples must use
+absolute paths or explicitly invoke `/bin/bash -ic`.
 
 - [ ] **Step 2: Update README and spike documentation**
 
@@ -377,6 +379,6 @@ git commit -m "docs: describe OpenCode sandbox usage"
 - [ ] `sandbox/runtime/bin/opencode` is present and executable in generated output.
 - [ ] `start.sh` exports the runtime PATH before Herdr/Collie and uses one shared socket.
 - [ ] `.bashrc` updates are idempotent and preserve unrelated content.
-- [ ] Direct and manager-created apps configure PATH and `HERDR_SOCKET_PATH` before start.
+- [ ] Direct and manager-created apps configure only the fixed `HERDR_SOCKET_PATH` before start; neither configures CF `PATH`.
 - [ ] Existing security rules remain intact: no public sandbox route, no secret logging, no unverified live-result claims.
 - [ ] `go test ./...` and Bash syntax checks pass.
