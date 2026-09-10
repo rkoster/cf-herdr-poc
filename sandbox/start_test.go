@@ -49,6 +49,7 @@ func TestLauncherContract(t *testing.T) {
 		"export HOME=/home/vcap",
 		"export SHELL=/bin/bash",
 		"export PATH=\"$BIN_DIR:$PATH\"",
+		`local bashrc="$HOME/.bashrc"`,
 		`SANDBOX_STATE_DIR="${SANDBOX_STATE_DIR:-/home/vcap/app/.sandbox-state}"`,
 		`export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$SANDBOX_STATE_DIR/config}"`,
 		`export XDG_STATE_HOME="${XDG_STATE_HOME:-$SANDBOX_STATE_DIR/state}"`,
@@ -139,9 +140,11 @@ func TestLauncherMaintainsIdempotentBashrcRuntimeBlock(t *testing.T) {
 	if err := os.WriteFile(bashrc, []byte("export UNRELATED=value\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	stateDir := filepath.Join(root, "state")
+	ignoredHome := filepath.Join(root, "ignored-home")
 	for range 2 {
 		command := exec.Command("bash", filepath.Join(root, "start-bash.sh"))
-		command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"), "SANDBOX_HOME=/tmp/ignored", "PORT=8080")
+		command.Env = append(environmentWithout("HERDR_SOCKET_PATH"), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+stateDir, "SIGNAL_LOG="+filepath.Join(root, "signals.log"), "SANDBOX_HOME="+ignoredHome, "PORT=8080")
 		if err := command.Start(); err != nil {
 			t.Fatal(err)
 		}
@@ -157,8 +160,11 @@ func TestLauncherMaintainsIdempotentBashrcRuntimeBlock(t *testing.T) {
 	if strings.Count(text, "# BEGIN CF HERDR SANDBOX RUNTIME") != 1 || strings.Count(text, "# END CF HERDR SANDBOX RUNTIME") != 1 {
 		t.Fatalf("bashrc = %q, want one managed block", text)
 	}
-	if !strings.Contains(text, "export UNRELATED=value") || !strings.Contains(text, "export PATH="+filepath.Join(root, "bin")+":$PATH") || !strings.Contains(text, "export HERDR_SOCKET_PATH=") || !strings.Contains(text, "export SHELL=/bin/bash") {
+	if !strings.Contains(text, "export UNRELATED=value") || !strings.Contains(text, "export PATH="+filepath.Join(root, "bin")+":$PATH") || !strings.Contains(text, "export HERDR_SOCKET_PATH="+filepath.Join(stateDir, "herdr.sock")) || !strings.Contains(text, "export SHELL=/bin/bash") {
 		t.Fatalf("bashrc = %q, unrelated or socket settings missing", text)
+	}
+	if _, err := os.Stat(filepath.Join(ignoredHome, ".bashrc")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("SANDBOX_HOME affected launcher shell configuration: %v", err)
 	}
 	if strings.Count(text, "export SHELL=/bin/bash") != 1 {
 		t.Fatalf("bashrc = %q, want one managed shell setting", text)
@@ -436,6 +442,24 @@ func readLauncherFile(t *testing.T, name string) string {
 		t.Fatal(err)
 	}
 	return string(contents)
+}
+
+func environmentWithout(keys ...string) []string {
+	var environment []string
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		keep := true
+		for _, key := range keys {
+			if name == key {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			environment = append(environment, entry)
+		}
+	}
+	return environment
 }
 
 func runLauncherHelper() {
