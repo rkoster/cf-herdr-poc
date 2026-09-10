@@ -4,7 +4,7 @@
 
 **Goal:** Package a pinned OpenCode Linux release into every sandbox and make OpenCode, Herdr, and the shared Herdr socket available from `cf ssh` and Collie terminal sessions.
 
-**Architecture:** Extend the existing cflinuxfs5 artifact manifest and Docker builder with OpenCode's architecture-specific tarballs, checksum verification, and executable extraction. Extend the visible sandbox runtime launcher with a managed PATH/socket environment block in `.bashrc`, and configure the same values through direct and manager-created CF app environment commands.
+**Architecture:** Extend the existing cflinuxfs5 artifact manifest and Docker builder with OpenCode's architecture-specific tarballs, checksum verification, and executable extraction. The source launchers are `sandbox/start.sh` and `sandbox/start-bash.sh`; `build-runtime` copies both into the runtime. Only `HERDR_SOCKET_PATH` is configured through CF environment. `PATH`, `SHELL`, and `HOME` are configured through `runtime/.bashrc`.
 
 **Tech Stack:** Bash, Docker/BuildKit, Cloud Foundry CLI, Go contract tests, GitHub release artifacts, Unix sockets.
 
@@ -15,11 +15,11 @@
 - Modify `docker/cflinuxfs5-builder/artifacts.env` with OpenCode v1.18.30 metadata.
 - Modify `scripts/select-cflinuxfs5-artifacts.sh` to select and validate OpenCode URL/checksum pairs.
 - Modify `docker/cflinuxfs5-builder/Dockerfile` to download, verify, extract, and expose `opencode`.
-- Modify `scripts/build-runtime.sh` to copy OpenCode into the sandbox runtime and validate its packaged executable.
+- Modify `scripts/build-runtime.sh` to copy OpenCode and both source launchers into the sandbox runtime and validate the packaged executable.
 - Modify `scripts/build.sh` to require the generated `sandbox/runtime/bin/opencode` artifact.
-- Modify `sandbox/runtime/start.sh` to export PATH/socket values and maintain the managed `.bashrc` block.
-- Modify `scripts/direct-sandbox.sh` to validate and set the PATH/socket CF environment values.
-- Modify `internal/cf/provider.go` to configure PATH/socket values for manager-created sandbox apps.
+- Modify `sandbox/start.sh` and `sandbox/start-bash.sh` to export the runtime values and maintain the managed `.bashrc` block.
+- Modify `scripts/direct-sandbox.sh` to validate and set only the `HERDR_SOCKET_PATH` CF environment value.
+- Modify `internal/cf/provider.go` to configure only `HERDR_SOCKET_PATH` for manager-created sandbox apps.
 - Modify `scripts/package_test.go`, `scripts/build_runtime_test.go`, `scripts/direct_sandbox_test.go`, `internal/cf/provider_test.go`, and `sandbox/start_test.go` for regression coverage.
 - Modify `README.md` with the pinned OpenCode artifact and interactive usage contract.
 
@@ -175,7 +175,8 @@ Expected: FAIL because OpenCode is not a required input or output.
 
 In `scripts/build-runtime.sh`, validate `OPENCODE_RUNTIME_BIN` with the same portable
 regular-executable checks used for the other packaged runtime inputs, then install it
-as `RUNTIME_DIR/bin/opencode`. OpenCode is a release executable, not a Nix-linked
+as `RUNTIME_DIR/bin/opencode`. Copy the source launchers `sandbox/start.sh` and
+`sandbox/start-bash.sh` into the runtime. OpenCode is a release executable, not a Nix-linked
 runtime requiring the existing relocation graph; do not add it to the Bun/Herdr/Collie
 relocation set unless the artifact validation proves it needs that treatment.
 
@@ -195,16 +196,17 @@ git add scripts/build-runtime.sh scripts/build.sh internal/runtime/bundle.go scr
 git commit -m "build: add OpenCode to sandbox runtime contract"
 ```
 
-### Task 4: Add Launcher PATH and Idempotent `.bashrc` Contract
+### Task 4: Add Source Launchers and Idempotent `.bashrc` Contract
 
 **Files:**
-- Modify: `sandbox/runtime/start.sh`
+- Modify: `sandbox/start.sh`
+- Modify: `sandbox/start-bash.sh`
 - Test: `sandbox/start_test.go`
 
 - [ ] **Step 1: Write failing launcher tests**
 
-Add contract assertions that `start.sh` exports the runtime bin directory before
-starting Herdr and Collie, and that it contains managed `.bashrc` markers and exports
+Add contract assertions that the source launchers export the runtime bin directory before
+starting Herdr and Collie, and that they contain managed `.bashrc` markers and exports
 for:
 
 ```text
@@ -227,7 +229,8 @@ Expected: FAIL because the launcher currently does not export PATH or maintain `
 
 - [ ] **Step 3: Implement the runtime environment and managed block**
 
-After `HOME` and `HERDR_SOCKET_PATH` are established, set:
+After `HOME` and `HERDR_SOCKET_PATH` are established, set the runtime `PATH` and
+`SHELL`, then maintain the managed `.bashrc` block:
 
 ```bash
 export PATH="$BIN_DIR:$PATH"
@@ -236,7 +239,7 @@ export PATH="$BIN_DIR:$PATH"
 Keep the existing socket default based on `SANDBOX_STATE_DIR`. Add a quoted heredoc or
 temporary-file replacement routine that replaces only a block bounded by stable
 markers such as `# BEGIN CF HERDR SANDBOX RUNTIME` and `# END CF HERDR SANDBOX RUNTIME`.
-The block must export the absolute `BIN_DIR` and current `HERDR_SOCKET_PATH`; create
+The block must export the absolute `BIN_DIR`, `SHELL`, and current `HERDR_SOCKET_PATH`; create
 the parent directory first, preserve unrelated `.bashrc` content, and fail with an
 actionable error if the managed update cannot be completed. Do not use `cat > .bashrc`
 or append unconditionally.
@@ -249,7 +252,7 @@ signal, Pack, and cleanup tests.
 - [ ] **Step 5: Commit launcher behavior**
 
 ```bash
-git add sandbox/runtime/start.sh sandbox/start_test.go
+git add sandbox/start.sh sandbox/start-bash.sh sandbox/start_test.go
 git commit -m "feat: expose sandbox runtime in interactive shells"
 ```
 
@@ -346,7 +349,7 @@ verification until the smoke command has actually been run.
 ```bash
 gofmt -w internal/cf/provider_test.go internal/runtime/bundle_test.go scripts/package_test.go scripts/build_runtime_test.go scripts/direct_sandbox_test.go sandbox/start_test.go
 go test ./...
-bash -n scripts/direct-sandbox.sh scripts/build-runtime.sh scripts/build-cflinuxfs5.sh scripts/select-cflinuxfs5-artifacts.sh sandbox/runtime/start.sh
+bash -n scripts/direct-sandbox.sh scripts/build-runtime.sh scripts/build-cflinuxfs5.sh scripts/select-cflinuxfs5-artifacts.sh sandbox/start.sh sandbox/start-bash.sh
 ```
 
 Expected: all Go tests pass and Bash syntax checks exit successfully. If Docker is
@@ -378,8 +381,8 @@ git commit -m "docs: describe OpenCode sandbox usage"
 - [ ] `artifacts.env` pins OpenCode URLs and checksums for amd64 and arm64.
 - [ ] Docker fails closed on missing metadata or checksum mismatch and emits only the executable.
 - [ ] `sandbox/runtime/bin/opencode` is present and executable in generated output.
-- [ ] `start.sh` exports the runtime PATH before Herdr/Collie and uses one shared socket.
+- [ ] `sandbox/start.sh` and `sandbox/start-bash.sh` are copied into the runtime and export the runtime PATH before Herdr/Collie while using one shared socket.
 - [ ] `.bashrc` updates are idempotent and preserve unrelated content.
-- [ ] Direct and manager-created apps configure only the fixed `HERDR_SOCKET_PATH` before start; neither configures CF `PATH`.
+- [ ] Direct and manager-created apps configure only the fixed `HERDR_SOCKET_PATH` before start; `PATH`, `SHELL`, and `HOME` come from `runtime/.bashrc`, not CF environment.
 - [ ] Existing security rules remain intact: no public sandbox route, no secret logging, no unverified live-result claims.
 - [ ] `go test ./...` and Bash syntax checks pass.
