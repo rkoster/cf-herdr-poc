@@ -135,9 +135,9 @@ ensure_route() {
 }
 
 ensure_route "$PUBLIC_DOMAIN" "$MANAGER_PUBLIC_HOST"
-"$CF_BIN" map-route "$MANAGER_APP_NAME" "$PUBLIC_DOMAIN" --hostname "$MANAGER_PUBLIC_HOST"
 ensure_route "$CF_IDENTITY_DOMAIN" "$MANAGER_ROUTE_HOST"
-"$CF_BIN" map-route "$MANAGER_APP_NAME" "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"
 
 printf '==> start manager\n'
 "$CF_BIN" start "$MANAGER_APP_NAME"
+"$CF_BIN" map-route "$MANAGER_APP_NAME" "$PUBLIC_DOMAIN" --hostname "$MANAGER_PUBLIC_HOST"
+"$CF_BIN" map-route "$MANAGER_APP_NAME" "$CF_IDENTITY_DOMAIN" --hostname "$MANAGER_ROUTE_HOST"

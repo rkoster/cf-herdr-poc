@@ -58,6 +58,12 @@ func TestLabDeployMapsExistingRoutes(t *testing.T) {
 	if !containsEvent(events, "cf\tmap-route\tmanager\tapps.example\t--hostname\tmanager") || !containsEvent(events, "cf\tmap-route\tmanager\tapps.identity\t--hostname\tmanager-pack") {
 		t.Fatalf("events = %#v, want existing routes mapped", events)
 	}
+	start := eventIndex(events, "cf\tstart\tmanager")
+	publicMap := eventIndex(events, "cf\tmap-route\tmanager\tapps.example\t--hostname\tmanager")
+	identityMap := eventIndex(events, "cf\tmap-route\tmanager\tapps.identity\t--hostname\tmanager-pack")
+	if publicMap < start || identityMap < start {
+		t.Fatalf("events = %#v, want route mappings after manager start", events)
+	}
 }
 
 func TestLabDeployCFLinuxUsesExplicitCFBinaryOutsidePATH(t *testing.T) {
@@ -213,10 +219,10 @@ func TestLabDeployPreservesBuildAndCFSequence(t *testing.T) {
 		"cf\tset-env\tmanager\tCOLLIE_PUBLIC_HOSTS\tmanager.apps.example",
 		"cf\tset-env\tmanager\tMANAGER_API_TOKEN\tsecret-token",
 		"cf\tcreate-route\tapps.example\t--hostname\tmanager",
-		"cf\tmap-route\tmanager\tapps.example\t--hostname\tmanager",
 		"cf\tcreate-route\tapps.identity\t--hostname\tmanager-pack",
-		"cf\tmap-route\tmanager\tapps.identity\t--hostname\tmanager-pack",
 		"cf\tstart\tmanager",
+		"cf\tmap-route\tmanager\tapps.example\t--hostname\tmanager",
+		"cf\tmap-route\tmanager\tapps.identity\t--hostname\tmanager-pack",
 	}
 	if got := fixture.events(t); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("events = %#v, want %#v", got, want)
