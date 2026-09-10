@@ -7,7 +7,8 @@ COLLIE_DIR="$SCRIPT_DIR/collie"
 export COLLIE_EXECUTABLE="$BIN_DIR/collie"
 
 SANDBOX_STATE_DIR="${SANDBOX_STATE_DIR:-/home/vcap/app/.sandbox-state}"
-export HOME="${SANDBOX_HOME:-$SANDBOX_STATE_DIR/home}"
+export HOME=/home/vcap
+export SHELL=/bin/bash
 export PATH="$BIN_DIR:$PATH"
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$SANDBOX_STATE_DIR/config}"
 export XDG_STATE_HOME="${XDG_STATE_HOME:-$SANDBOX_STATE_DIR/state}"
@@ -36,6 +37,7 @@ configure_bashrc() {
 		printf '\n%s\n' "$block_start"
 		printf 'export PATH=%s:$PATH\n' "$BIN_DIR"
 		printf 'export HERDR_SOCKET_PATH=%q\n' "$HERDR_SOCKET_PATH"
+		printf 'export SHELL=/bin/bash\n'
 		printf '%s\n' "$block_end"
 	} >>"$temporary"
 	chmod 600 "$temporary"

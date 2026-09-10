@@ -45,6 +45,19 @@ func TestLauncherContract(t *testing.T) {
 		position = next
 	}
 	script := strings.Join(lines, "\n")
+	for _, required := range []string{
+		"export HOME=/home/vcap",
+		"export SHELL=/bin/bash",
+		"export PATH=\"$BIN_DIR:$PATH\"",
+		"printf 'export SHELL=/bin/bash\\n'",
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("launcher does not contain %q", required)
+		}
+	}
+	if strings.Contains(script, "SANDBOX_HOME") {
+		t.Fatal("launcher must not support SANDBOX_HOME")
+	}
 
 	if strings.Contains(script, `pack join`) {
 		t.Fatal("launcher performs enrollment before route trigger")
@@ -121,7 +134,7 @@ func TestLauncherMaintainsIdempotentBashrcRuntimeBlock(t *testing.T) {
 	}
 	for range 2 {
 		command := exec.Command("bash", filepath.Join(root, "start-bash.sh"))
-		command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"), "SANDBOX_HOME="+home, "PORT=8080")
+		command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"), "SANDBOX_HOME=/tmp/ignored", "PORT=8080")
 		if err := command.Start(); err != nil {
 			t.Fatal(err)
 		}
@@ -137,8 +150,11 @@ func TestLauncherMaintainsIdempotentBashrcRuntimeBlock(t *testing.T) {
 	if strings.Count(text, "# BEGIN CF HERDR SANDBOX RUNTIME") != 1 || strings.Count(text, "# END CF HERDR SANDBOX RUNTIME") != 1 {
 		t.Fatalf("bashrc = %q, want one managed block", text)
 	}
-	if !strings.Contains(text, "export UNRELATED=value") || !strings.Contains(text, "HERDR_SOCKET_PATH=") {
+	if !strings.Contains(text, "export UNRELATED=value") || !strings.Contains(text, "export PATH="+filepath.Join(root, "bin")+":$PATH") || !strings.Contains(text, "export HERDR_SOCKET_PATH=") || !strings.Contains(text, "export SHELL=/bin/bash") {
 		t.Fatalf("bashrc = %q, unrelated or socket settings missing", text)
+	}
+	if strings.Count(text, "export SHELL=/bin/bash") != 1 {
+		t.Fatalf("bashrc = %q, want one managed shell setting", text)
 	}
 }
 
@@ -362,7 +378,12 @@ func prepareLauncher(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	launcher := readLauncher(t)
+	launcher = strings.Replace(launcher, "export HOME=/home/vcap", "export HOME="+home, 1)
 	if err := os.WriteFile(filepath.Join(root, "start-bash.sh"), []byte(launcher), 0o755); err != nil {
 		t.Fatal(err)
 	}
