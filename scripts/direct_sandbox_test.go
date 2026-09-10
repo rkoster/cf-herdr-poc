@@ -22,7 +22,10 @@ func TestDirectSandboxPushesStandaloneAppWithExactContract(t *testing.T) {
 	if !containsEvent(events, "cf\tpush\tdirect-sandbox\t--no-route\t--no-start\t-b\tnodejs_buildpack\t-p\tapp\t-c\t./sandbox-runtime/start.sh") {
 		t.Fatalf("events = %#v, want exact standalone push", events)
 	}
-	if !containsEvent(events, "cf\tset-env\tdirect-sandbox\tPATH\t/home/vcap/app/sandbox-runtime/bin:$PATH") || !containsEvent(events, "cf\tset-env\tdirect-sandbox\tHERDR_SOCKET_PATH\t/home/vcap/app/.sandbox-state/herdr.sock") {
+	if containsEvent(events, "cf\tset-env\tdirect-sandbox\tPATH\t/home/vcap/app/sandbox-runtime/bin:$PATH") {
+		t.Fatalf("events = %#v, direct workflow must not set CF PATH", events)
+	}
+	if !containsEvent(events, "cf\tset-env\tdirect-sandbox\tHERDR_SOCKET_PATH\t/home/vcap/app/.sandbox-state/herdr.sock") {
 		t.Fatalf("events = %#v, want shared runtime environment", events)
 	}
 	if containsPrefix(events, "cf\tcreate-route") || containsPrefix(events, "cf\tmap-route") {

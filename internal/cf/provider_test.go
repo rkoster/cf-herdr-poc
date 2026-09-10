@@ -188,9 +188,14 @@ func TestConfigureEnrollmentAndStartAppUseSeparateExactCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []command{{name: "cf", args: []string{"set-env", "demo", "PATH", "/home/vcap/app/sandbox-runtime/bin:$PATH"}}, {name: "cf", args: []string{"set-env", "demo", "HERDR_SOCKET_PATH", "/home/vcap/app/.sandbox-state/herdr.sock"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_JOIN_TOKEN_FILE", "/home/vcap/app/sandbox-runtime/join-token"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_LEAD_ADDRESS", "https://manager.identity.example"}}, {name: "cf", args: []string{"set-env", "demo", "SANDBOX_MEMBER_ID", "demo"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_SELF_ADDRESS", "demo.apps.identity"}}, {name: "cf", args: []string{"start", "demo"}}}
+	want := []command{{name: "cf", args: []string{"set-env", "demo", "HERDR_SOCKET_PATH", "/home/vcap/app/.sandbox-state/herdr.sock"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_JOIN_TOKEN_FILE", "/home/vcap/app/sandbox-runtime/join-token"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_LEAD_ADDRESS", "https://manager.identity.example"}}, {name: "cf", args: []string{"set-env", "demo", "SANDBOX_MEMBER_ID", "demo"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_SELF_ADDRESS", "demo.apps.identity"}}, {name: "cf", args: []string{"start", "demo"}}}
 	if !reflect.DeepEqual(run.commands, want) {
 		t.Fatalf("commands = %#v, want %#v", run.commands, want)
+	}
+	for _, invoked := range run.commands {
+		if len(invoked.args) >= 3 && invoked.args[0] == "set-env" && invoked.args[1] == "demo" && invoked.args[2] == "PATH" {
+			t.Fatalf("commands = %#v, must not set CF PATH", run.commands)
+		}
 	}
 	if configure.Name != "configure-enrollment" || start.Name != "start-app" {
 		t.Fatalf("operations = %#v, %#v", configure, start)

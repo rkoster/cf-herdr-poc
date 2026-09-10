@@ -194,7 +194,7 @@ func (p Provider) ConfigureEnrollment(ctx context.Context, name, tokenAppPath, l
 	if tokenAppPath != "/home/vcap/app/sandbox-runtime/join-token" || !validHTTPSAddress(leadAddress) || !validHost(selfAddress) {
 		return model.Operation{}, fmt.Errorf("invalid enrollment configuration")
 	}
-	return p.executeMany(ctx, "configure-enrollment", [][]string{{"set-env", name, "PATH", "/home/vcap/app/sandbox-runtime/bin:$PATH"}, {"set-env", name, "HERDR_SOCKET_PATH", "/home/vcap/app/.sandbox-state/herdr.sock"}, {"set-env", name, "COLLIE_JOIN_TOKEN_FILE", tokenAppPath}, {"set-env", name, "COLLIE_PACK_LEAD_ADDRESS", leadAddress}, {"set-env", name, "SANDBOX_MEMBER_ID", name}, {"set-env", name, "COLLIE_PACK_SELF_ADDRESS", selfAddress}})
+	return p.executeMany(ctx, "configure-enrollment", [][]string{{"set-env", name, "HERDR_SOCKET_PATH", "/home/vcap/app/.sandbox-state/herdr.sock"}, {"set-env", name, "COLLIE_JOIN_TOKEN_FILE", tokenAppPath}, {"set-env", name, "COLLIE_PACK_LEAD_ADDRESS", leadAddress}, {"set-env", name, "SANDBOX_MEMBER_ID", name}, {"set-env", name, "COLLIE_PACK_SELF_ADDRESS", selfAddress}})
 }
 
 func (p Provider) StartApp(ctx context.Context, name string) (model.Operation, error) {
