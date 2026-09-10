@@ -658,6 +658,7 @@ if [ "${FAIL_RUNTIME:-}" = 1 ]; then exit 23; fi
 	mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie/bridge" "$RUNTIME_DIR/collie/cli" "$RUNTIME_DIR/collie/node_modules/fixture" "$RUNTIME_DIR/collie/web/dist"
 for name in bun herdr collie opencode sandbox-bootstrap; do printf '#!/bin/sh\n' > "$RUNTIME_DIR/bin/$name"; chmod +x "$RUNTIME_DIR/bin/$name"; done
 printf '#!/bin/sh\n' > "$RUNTIME_DIR/start.sh"; chmod +x "$RUNTIME_DIR/start.sh"
+printf '#!/bin/sh\n' > "$RUNTIME_DIR/start-bash.sh"; chmod +x "$RUNTIME_DIR/start-bash.sh"
 printf '%s\n' "${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/sandbox-runtime/bin}" > "$RUNTIME_DIR/target-install-dir"
 printf fixture > "$RUNTIME_DIR/collie/bridge/index.ts"
 for name in install-kind link sys; do printf fixture > "$RUNTIME_DIR/collie/cli/$name.ts"; done

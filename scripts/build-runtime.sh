@@ -199,6 +199,7 @@ if [[ -n "$MANAGER_RUNTIME_DIR" ]]; then
 	scan_elf_metadata "$MANAGER_RUNTIME_DIR"
 fi
 install -m 0755 "$ROOT/sandbox/start.sh" "$RUNTIME_DIR/start.sh"
+install -m 0755 "$ROOT/sandbox/start-bash.sh" "$RUNTIME_DIR/start-bash.sh"
 printf '%s\n' "$TARGET_INSTALL_DIR" >"$RUNTIME_DIR/target-install-dir"
 
 # Materialize the bridge's source closure. The copier rejects broken or escaping symlinks.

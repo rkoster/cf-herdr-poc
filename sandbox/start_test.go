@@ -22,7 +22,7 @@ func TestLauncherContract(t *testing.T) {
 	if !ok {
 		t.Fatal("locate test file")
 	}
-	contents, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "start.sh"))
+	contents, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "start-bash.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,6 +90,20 @@ func TestLauncherContract(t *testing.T) {
 	}
 }
 
+func TestLauncherEntryPointIsStagingSafe(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join(filepath.Dir(readLauncherPath(t)), "start.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(contents)
+	if !strings.HasPrefix(script, "#!/bin/sh\n") {
+		t.Fatalf("start.sh must use /bin/sh, got %q", script)
+	}
+	if !strings.Contains(script, `exec /bin/bash "$SCRIPT_DIR/start-bash.sh"`) {
+		t.Fatalf("start.sh must exec the absolute Bash launcher, got %q", script)
+	}
+}
+
 func TestLauncherMaintainsIdempotentBashrcRuntimeBlock(t *testing.T) {
 	if os.Getenv("SANDBOX_LAUNCHER_HELPER") != "" {
 		runLauncherHelper()
@@ -106,7 +120,7 @@ func TestLauncherMaintainsIdempotentBashrcRuntimeBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		command := exec.Command("bash", filepath.Join(root, "start.sh"))
+		command := exec.Command("bash", filepath.Join(root, "start-bash.sh"))
 		command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"), "SANDBOX_HOME="+home, "PORT=8080")
 		if err := command.Start(); err != nil {
 			t.Fatal(err)
@@ -193,7 +207,7 @@ func TestLauncherForwardsSignalsAndReapsChildren(t *testing.T) {
 			state := filepath.Join(root, "state")
 			socket := shortLauncherSocket(t)
 			logPath := filepath.Join(root, "signals.log")
-			command := exec.Command("bash", filepath.Join(root, "start.sh"))
+			command := exec.Command("bash", filepath.Join(root, "start-bash.sh"))
 			command.Env = append(os.Environ(),
 				"SANDBOX_LAUNCHER_HELPER=1",
 				"SANDBOX_STATE_DIR="+state,
@@ -237,7 +251,7 @@ func TestLauncherStartsStandaloneWithoutBootstrap(t *testing.T) {
 
 	root := prepareLauncher(t)
 	logPath := filepath.Join(root, "signals.log")
-	command := exec.Command("bash", filepath.Join(root, "start.sh"))
+	command := exec.Command("bash", filepath.Join(root, "start-bash.sh"))
 	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "PORT=8080")
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
@@ -259,7 +273,7 @@ func TestLauncherRejectsPartialEnrollmentWithoutStartingChildren(t *testing.T) {
 
 	root := prepareLauncher(t)
 	secret := "join-token-must-not-leak"
-	command := exec.Command("bash", filepath.Join(root, "start.sh"))
+	command := exec.Command("bash", filepath.Join(root, "start-bash.sh"))
 	command.Env = append(os.Environ(), "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"), "PORT=8080", "COLLIE_JOIN_TOKEN_FILE="+filepath.Join(root, secret))
 	out, err := command.CombinedOutput()
 	if err == nil {
@@ -287,7 +301,7 @@ func TestLauncherUsesRegularTrustStoreWhenMarkerIsMissing(t *testing.T) {
 	if err := os.WriteFile(token, []byte("token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command("bash", filepath.Join(root, "start.sh"))
+	command := exec.Command("bash", filepath.Join(root, "start-bash.sh"))
 	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_BOOTSTRAP_TRUST_ONLY=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "COLLIE_JOIN_TOKEN_FILE="+token, "COLLIE_PACK_LEAD_ADDRESS=https://manager.identity.example", "SANDBOX_MEMBER_ID=demo", "PORT=8080")
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
@@ -317,7 +331,7 @@ func TestLauncherRejectsSymlinkTrustStore(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(trustDir, "pack-trust.json")); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command("bash", filepath.Join(root, "start.sh"))
+	command := exec.Command("bash", filepath.Join(root, "start-bash.sh"))
 	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+state, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+filepath.Join(root, "signals.log"), "PORT=8080", "COLLIE_JOIN_TOKEN_FILE="+filepath.Join(root, "token"), "COLLIE_PACK_LEAD_ADDRESS=https://manager.identity.example")
 	err := command.Run()
 	if err == nil {
@@ -349,7 +363,14 @@ func prepareLauncher(t *testing.T) string {
 		t.Fatal(err)
 	}
 	launcher := readLauncher(t)
-	if err := os.WriteFile(filepath.Join(root, "start.sh"), []byte(launcher), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "start-bash.sh"), []byte(launcher), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entrypoint, err := os.ReadFile(filepath.Join(filepath.Dir(readLauncherPath(t)), "start.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "start.sh"), entrypoint, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	testBinary, err := os.Executable()
@@ -367,11 +388,22 @@ func prepareLauncher(t *testing.T) string {
 
 func readLauncher(t *testing.T) string {
 	t.Helper()
+	return readLauncherFile(t, "start-bash.sh")
+}
+
+func readLauncherPath(t *testing.T) string {
+	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("locate test file")
 	}
-	contents, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "start.sh"))
+	return filename
+}
+
+func readLauncherFile(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join(filepath.Dir(readLauncherPath(t)), name)
+	contents, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}

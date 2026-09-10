@@ -414,7 +414,7 @@ func writeFile(t *testing.T, path string, mode os.FileMode, contents string) {
 
 func writeSandboxRuntime(t *testing.T, root string) {
 	t.Helper()
-	for _, name := range []string{"start.sh", "bin/bun", "bin/herdr", "bin/collie", "bin/opencode", "bin/sandbox-bootstrap"} {
+	for _, name := range []string{"start.sh", "start-bash.sh", "bin/bun", "bin/herdr", "bin/collie", "bin/opencode", "bin/sandbox-bootstrap"} {
 		writeFile(t, filepath.Join(root, name), 0o755, "#!/bin/sh\n")
 	}
 }
