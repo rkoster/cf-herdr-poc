@@ -8,10 +8,10 @@ Foundry staging environment.
 
 ## Chosen Approach
 
-The sandbox launcher owns runtime shell configuration. Cloud Foundry app environment
-configuration must not set `PATH`, because `cf set-env` stores `$PATH` literally rather
-than expanding it. That malformed value removes `/bin` and `/usr/bin` during staging and
-causes the binary buildpack release phase to fail when `/usr/bin/env` cannot locate Bash.
+The sandbox launcher owns runtime shell configuration. Cloud Foundry provisioning must not
+mutate `PATH`. A persisted Cloud Foundry PATH override can remove `/bin` and `/usr/bin`
+during staging and cause the binary buildpack release phase to fail when `/usr/bin/env`
+cannot locate Bash.
 
 All sandbox processes and interactive users use:
 
@@ -51,8 +51,8 @@ SSH sessions. There is no second sandbox-specific home or `.bashrc`.
 
 ## Cloud Foundry Environment
 
-Sandbox provisioning removes the `cf set-env PATH ...` command from both manager-created
-and direct workflows. It continues setting `HERDR_SOCKET_PATH` so non-interactive
+Sandbox provisioning must not mutate `PATH` in either manager-created or direct workflows.
+It continues setting `HERDR_SOCKET_PATH` so non-interactive
 `cf ssh -c` commands and processes that do not source `.bashrc` attach to the running
 Herdr server. No CF-level `SHELL` override is required because the launcher exports it
 for Herdr and `.bashrc` exports it for interactive shells.
@@ -68,7 +68,7 @@ files.
 
 Automated tests verify:
 
-- Provisioning never emits `cf set-env ... PATH ...`.
+- Provisioning never mutates `PATH`.
 - The launcher exports `HOME=/home/vcap` and `SHELL=/bin/bash`.
 - The managed `/home/vcap/.bashrc` block contains PATH, socket, and shell exports.
 - Repeated launches produce exactly one managed block and preserve unrelated content.

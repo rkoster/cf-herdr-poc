@@ -20,11 +20,7 @@
 
 - [ ] **Step 1: Write failing provider and direct-workflow tests**
 
-Change expected CF command sequences so no command contains:
-
-```text
-set-env <app> PATH
-```
+Change expected CF command sequences so CF provisioning does not mutate `PATH`.
 
 Keep the exact socket command:
 
@@ -45,8 +41,8 @@ Expected: FAIL because the tests reject any CF environment mutation of `PATH`.
 
 - [ ] **Step 3: Remove only the PATH commands**
 
-Delete the PATH entry from `Provider.ConfigureEnrollment` and delete this line from the
-direct workflow:
+Remove the CF provisioning step that mutates `PATH` from `Provider.ConfigureEnrollment` and
+the direct workflow:
 
 Do not remove `HERDR_SOCKET_PATH` or enrollment variables.
 
