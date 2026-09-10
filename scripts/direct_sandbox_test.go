@@ -22,7 +22,7 @@ func TestDirectSandboxPushesStandaloneAppWithExactContract(t *testing.T) {
 	if !containsEvent(events, "cf\tpush\tdirect-sandbox\t--no-route\t--no-start\t-b\tnodejs_buildpack\t-p\tapp\t-c\t./sandbox-runtime/start.sh") {
 		t.Fatalf("events = %#v, want exact standalone push", events)
 	}
-	if containsEvent(events, "cf\tset-env\tdirect-sandbox\tPATH\t/home/vcap/app/sandbox-runtime/bin:$PATH") {
+	if hasDirectSandboxPathChange(events) {
 		t.Fatalf("events = %#v, direct workflow must not set CF PATH", events)
 	}
 	if !containsEvent(events, "cf\tset-env\tdirect-sandbox\tHERDR_SOCKET_PATH\t/home/vcap/app/.sandbox-state/herdr.sock") {
@@ -41,6 +41,12 @@ func TestDirectSandboxPushesStandaloneAppWithExactContract(t *testing.T) {
 		if !strings.Contains(out, text) {
 			t.Errorf("output missing %q: %s", text, out)
 		}
+	}
+}
+
+func TestDirectSandboxPathCheckMatchesAnyValue(t *testing.T) {
+	if !hasDirectSandboxPathChange([]string{"cf\tset-env\tdirect-sandbox\tPATH\t/arbitrary/runtime/bin"}) {
+		t.Fatal("PATH environment changes with arbitrary values must be rejected")
 	}
 }
 
@@ -223,6 +229,7 @@ if [ "$1" = push ] && [ -f app/sandbox-runtime/join-token ]; then printf 'token-
 printf 'cf' >> "$EVENTS"
 printf '\t%s' "$@" >> "$EVENTS"
 printf '\n' >> "$EVENTS"
+if [ "$1" = push ] && [ "${FAKE_CF_SET_PATH:-}" = 1 ]; then printf 'cf\tset-env\tdirect-sandbox\tPATH\t/arbitrary/runtime/bin\n' >> "$EVENTS"; fi
 if [ "$1" = app ] && [ "${FAKE_CF_EXISTING:-}" = 1 ]; then exit 0; fi
 if [ "$1" = push ]; then
   if [ "${FAKE_CF_PUSH_STATUS:-}" != "" ]; then exit "$FAKE_CF_PUSH_STATUS"; fi
@@ -288,6 +295,16 @@ func (f *directSandboxFixture) eventText(t *testing.T) string { return strings.J
 func containsPrefix(events []string, prefix string) bool {
 	for _, event := range events {
 		if strings.HasPrefix(event, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDirectSandboxPathChange(events []string) bool {
+	for _, event := range events {
+		fields := strings.Split(event, "\t")
+		if len(fields) >= 5 && fields[0] == "cf" && fields[1] == "set-env" && fields[2] == "direct-sandbox" && fields[3] == "PATH" {
 			return true
 		}
 	}
