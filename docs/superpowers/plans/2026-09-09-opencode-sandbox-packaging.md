@@ -280,7 +280,8 @@ fixed safe path, not a caller-controlled argument.
 go test ./internal/cf ./scripts -run 'Test.*(Enrollment|DirectSandbox|Sandbox)' -count=1
 ```
 
-Expected: FAIL because neither workflow configures the two environment variables.
+Expected: FAIL because neither workflow configures `HERDR_SOCKET_PATH`; `PATH` and
+`SHELL` are runtime/`.bashrc`-only.
 
 - [ ] **Step 3: Implement direct sandbox environment configuration**
 
