@@ -48,11 +48,15 @@ Bun 1.3.13 and Cloud Foundry CLI v8.19.0 artifacts are verified against official
 The build compiles the manager and sandbox bootstrap with `CGO_ENABLED=0`, builds both frontends, invokes `scripts/build-runtime.sh`, validates every required artifact, and transactionally replaces `dist/`. It stages first, renames the old tree to a backup, installs the new tree, and restores the backup on failure or interruption. Directory replacement is not fully atomic: there is a small rename window in which `dist/` is absent. `COLLIE_RUNTIME_BIN` may override the Collie CLI produced by the nested build, but must satisfy the same portable executable checks.
 
 The sandbox runtime includes pinned OpenCode v1.18.30 at `sandbox/runtime/bin/opencode`.
-Interactive `cf ssh` shells and Collie terminal sessions inherit the same runtime PATH and
-Herdr socket. For a running sandbox, verify the CLI with `cf ssh <sandbox-name> -c 'opencode --version'`;
-the `herdr` command uses `HERDR_SOCKET_PATH=/home/vcap/app/.sandbox-state/herdr.sock` to attach to
-the server started by the sandbox launcher. The launcher also maintains these exports in the sandbox
-user's `.bashrc` without duplicating its managed block.
+Sandbox apps do not receive a Cloud Foundry `PATH` override. The launcher prepends
+`/home/vcap/app/sandbox-runtime/bin` for its own process and maintains the same runtime contract for
+interactive shells: `HOME=/home/vcap` and `SHELL=/bin/bash`.
+
+The launcher maintains one managed block in `/home/vcap/.bashrc` containing the runtime `PATH`,
+`SHELL=/bin/bash`, and `HERDR_SOCKET_PATH=/home/vcap/app/.sandbox-state/herdr.sock`. This exposes
+`opencode` and `herdr` in interactive `cf ssh` shells and Collie terminal sessions; `herdr` attaches
+to the server started by the sandbox launcher. For a running sandbox, verify the CLI with
+`cf ssh <sandbox-name> -c 'opencode --version'`.
 
 For this POC lab only, `ALLOW_NIX_RUNTIME_RELOCATION=1` allows Linux Nix-linked Bun, Herdr, and built Collie inputs. Using the cflinuxfs loader with bundled Nix libc failed with undefined `__tunable_is_initialized@GLIBC_PRIVATE`; explicitly invoking the bundled Nix loader succeeded. The workaround therefore installs each runtime as a direct ELF whose absolute interpreter is its private bundled loader at its final CF path, with an origin-relative RPATH. Sandbox binaries target `/home/vcap/app/sandbox-runtime/bin` for manager-created and direct sandboxes, while independent manager Bun and Collie copies target `/home/vcap/app/manager-runtime/bin`; Collie assets remain shared. The visible runtime is launched with `./sandbox-runtime/start.sh`. The relocator recursively resolves startup `DT_NEEDED` libraries and includes available glibc NSS/DNS resolver modules. This preserves executable identity and performs no internet downloads, but duplicates executable private libraries and binds artifacts to exact CF layouts. It is deliberate deployment friction, not a production packaging strategy; production should use official static or portable runtime artifacts.
 
