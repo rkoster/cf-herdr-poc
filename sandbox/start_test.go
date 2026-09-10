@@ -49,6 +49,13 @@ func TestLauncherContract(t *testing.T) {
 		"export HOME=/home/vcap",
 		"export SHELL=/bin/bash",
 		"export PATH=\"$BIN_DIR:$PATH\"",
+		`SANDBOX_STATE_DIR="${SANDBOX_STATE_DIR:-/home/vcap/app/.sandbox-state}"`,
+		`export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$SANDBOX_STATE_DIR/config}"`,
+		`export XDG_STATE_HOME="${XDG_STATE_HOME:-$SANDBOX_STATE_DIR/state}"`,
+		`export XDG_DATA_HOME="${XDG_DATA_HOME:-$SANDBOX_STATE_DIR/data}"`,
+		`export COLLIE_STATE_DIR="${COLLIE_STATE_DIR:-$XDG_STATE_HOME/collie}"`,
+		`export HERDR_PLUGIN_CONFIG_DIR="${HERDR_PLUGIN_CONFIG_DIR:-$XDG_CONFIG_HOME/collie}"`,
+		`export HERDR_SOCKET_PATH="${HERDR_SOCKET_PATH:-$SANDBOX_STATE_DIR/herdr.sock}"`,
 		"printf 'export SHELL=/bin/bash\\n'",
 	} {
 		if !strings.Contains(script, required) {
