@@ -41,16 +41,12 @@ Add explicit assertions over recorded commands that fail when an argument sequen
 TMPDIR=/tmp go test ./internal/cf ./scripts -run 'TestConfigureEnrollmentAndStartAppUseSeparateExactCommands|TestDirectSandboxPushesStandaloneAppWithExactContract' -count=1
 ```
 
-Expected: FAIL because both workflows still call `cf set-env ... PATH ...`.
+Expected: FAIL because the tests reject any CF environment mutation of `PATH`.
 
 - [ ] **Step 3: Remove only the PATH commands**
 
 Delete the PATH entry from `Provider.ConfigureEnrollment` and delete this line from the
 direct workflow:
-
-```bash
-"$CF_BIN" set-env "$APP_NAME" PATH '/home/vcap/app/sandbox-runtime/bin:$PATH'
-```
 
 Do not remove `HERDR_SOCKET_PATH` or enrollment variables.
 
