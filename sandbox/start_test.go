@@ -63,6 +63,15 @@ func TestLauncherContract(t *testing.T) {
 			t.Errorf("launcher does not contain %q", required)
 		}
 	}
+	configDir := strings.Index(script, `"$HOME/.config/opencode"`)
+	integration := strings.Index(script, `"$BIN_DIR/herdr" integration install opencode`)
+	herdr := strings.Index(script, `"$BIN_DIR/herdr" server &`)
+	if configDir < 0 || integration < 0 || herdr < 0 {
+		t.Fatal("launcher is missing OpenCode integration setup")
+	}
+	if configDir >= integration || integration >= herdr {
+		t.Fatalf("OpenCode integration setup is out of order: config=%d integration=%d herdr=%d", configDir, integration, herdr)
+	}
 	if strings.Contains(script, "SANDBOX_HOME") {
 		t.Fatal("launcher must not support SANDBOX_HOME")
 	}
@@ -281,7 +290,7 @@ func TestLauncherStartsStandaloneWithoutBootstrap(t *testing.T) {
 	root := prepareLauncher(t)
 	logPath := filepath.Join(root, "signals.log")
 	command := exec.Command("bash", filepath.Join(root, "start-bash.sh"))
-	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "PORT=8080")
+	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "EXPECTED_HOME="+filepath.Join(root, "home"), "PORT=8080")
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -292,6 +301,33 @@ func TestLauncherStartsStandaloneWithoutBootstrap(t *testing.T) {
 	}
 	_ = command.Process.Signal(syscall.SIGTERM)
 	_ = command.Wait()
+}
+
+func TestLauncherInstallsOpenCodeIntegrationBeforeStartingChildren(t *testing.T) {
+	if os.Getenv("SANDBOX_LAUNCHER_HELPER") != "" {
+		runLauncherHelper()
+		return
+	}
+
+	root := prepareLauncher(t)
+	logPath := filepath.Join(root, "signals.log")
+	command := exec.Command("bash", filepath.Join(root, "start-bash.sh"))
+	command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "PORT=8080")
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitForLog(t, logPath, "integration installed")
+	waitForLog(t, logPath, "bun started")
+	_ = command.Process.Signal(syscall.SIGTERM)
+	_ = command.Wait()
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(log)
+	if strings.Index(text, "integration installed") >= strings.Index(text, "bun started") {
+		t.Fatalf("integration installation did not precede Bun startup: %s", text)
+	}
 }
 
 func TestLauncherRejectsPartialEnrollmentWithoutStartingChildren(t *testing.T) {
@@ -464,6 +500,23 @@ func environmentWithout(keys ...string) []string {
 
 func runLauncherHelper() {
 	role := os.Getenv("SANDBOX_HELPER_ROLE")
+	if role == "herdr" {
+		separator := -1
+		for index, argument := range os.Args {
+			if argument == "--" {
+				separator = index
+				break
+			}
+		}
+		arguments := os.Args[separator+1:]
+		if separator >= 0 && len(arguments) > 0 && arguments[0] == "integration" {
+			if len(arguments) != 3 || arguments[1] != "install" || arguments[2] != "opencode" || (os.Getenv("EXPECTED_HOME") != "" && os.Getenv("HOME") != os.Getenv("EXPECTED_HOME")) {
+				os.Exit(2)
+			}
+			logLine(os.Getenv("SIGNAL_LOG"), "integration installed")
+			return
+		}
+	}
 	if role == "sandbox-bootstrap" {
 		logLine(os.Getenv("SIGNAL_LOG"), "bootstrap started")
 		for key, want := range map[string]string{"COLLIE_PLUGIN_ROOT": filepath.Join(filepath.Dir(os.Getenv("SIGNAL_LOG")), "collie"), "COLLIE_PORT": "8080", "COLLIE_HOST": "0.0.0.0", "COLLIE_ALLOW_NON_LOOPBACK_BIND": "1", "COLLIE_PACK_TRANSPORT": "cf-identity", "COLLIE_JOIN_TOKEN_FILE": filepath.Join(filepath.Dir(os.Getenv("SIGNAL_LOG")), "token"), "COLLIE_PACK_LEAD_ADDRESS": "https://manager.identity.example", "SANDBOX_MEMBER_ID": "demo"} {

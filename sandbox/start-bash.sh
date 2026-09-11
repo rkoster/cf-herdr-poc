@@ -53,7 +53,8 @@ if [[ "$has_join_token_file" != "$has_pack_lead_address" ]]; then
 	exit 2
 fi
 
-mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$COLLIE_STATE_DIR" "$HERDR_PLUGIN_CONFIG_DIR" "$(dirname -- "$HERDR_SOCKET_PATH")"
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$COLLIE_STATE_DIR" "$HERDR_PLUGIN_CONFIG_DIR" "$(dirname -- "$HERDR_SOCKET_PATH")" "$HOME/.config/opencode"
+"$BIN_DIR/herdr" integration install opencode
 configure_bashrc
 
 herdr_pid=""

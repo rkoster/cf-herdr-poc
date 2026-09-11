@@ -64,6 +64,11 @@ block rather than appending duplicates, and unrelated `.bashrc` content is prese
 The block uses absolute runtime and socket paths and does not depend on prior shell
 state.
 
+Startup also creates `$HOME/.config/opencode` and runs `herdr integration install
+opencode` on every launch, before Herdr, bootstrap, or Collie starts. The installer
+output remains visible and any directory or installer failure stops startup. A
+conflicting regular file is not removed.
+
 ## Components To Change
 
 - `docker/cflinuxfs5-builder/artifacts.env`: pinned OpenCode release metadata.
@@ -105,12 +110,18 @@ Automated checks cover:
 - Runtime validation of the OpenCode asset.
 - Idempotent `.bashrc` managed-block replacement while preserving unrelated content.
 - Exported `PATH` and `HERDR_SOCKET_PATH` values in `start.sh`.
+- OpenCode config directory creation and Herdr integration installation before
+  child processes start.
 - Direct and manager sandbox environment configuration.
 
 The live smoke check verifies that `cf ssh` can run `opencode --version`, resolve and
 invoke `herdr`, and observe the active `HERDR_SOCKET_PATH`. It also verifies that a
 Collie terminal session resolves both commands and that invoking `herdr` attaches to
-the existing Herdr server socket.
+the existing Herdr server socket. It also verifies the integration setup with:
+
+```bash
+cf ssh <sandbox-name> -c 'test -d /home/vcap/.config/opencode && test -f /home/vcap/.config/opencode/tui.jsonc'
+```
 
 ## Non-Goals
 
