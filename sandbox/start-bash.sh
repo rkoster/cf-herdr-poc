@@ -17,6 +17,11 @@ export COLLIE_STATE_DIR="${COLLIE_STATE_DIR:-$XDG_STATE_HOME/collie}"
 export COLLIE_PLUGIN_ROOT="$COLLIE_DIR"
 export HERDR_PLUGIN_CONFIG_DIR="${HERDR_PLUGIN_CONFIG_DIR:-$XDG_CONFIG_HOME/collie}"
 export HERDR_SOCKET_PATH="${HERDR_SOCKET_PATH:-$SANDBOX_STATE_DIR/herdr.sock}"
+export CF_API="${CF_API:-}"
+export CF_USERNAME="${CF_USERNAME:-}"
+export CF_PASSWORD="${CF_PASSWORD:-}"
+export CF_ORG="${CF_ORG:-}"
+export CF_SPACE="${CF_SPACE:-}"
 export COLLIE_MUX="${COLLIE_MUX:-herdr}"
 export COLLIE_PORT="${PORT:?Cloud Foundry PORT is required}"
 export COLLIE_HOST=0.0.0.0
@@ -36,9 +41,20 @@ configure_bashrc() {
 	{
 		printf '\n%s\n' "$block_start"
 		printf 'export PATH=%s:$PATH\n' "$BIN_DIR"
-		printf 'export HERDR_SOCKET_PATH=%q\n' "$HERDR_SOCKET_PATH"
+	printf 'export HERDR_SOCKET_PATH=%q\n' "$HERDR_SOCKET_PATH"
 		printf 'export SHELL=/bin/bash\n'
-		printf '%s\n' "$block_end"
+		printf 'export CF_API=%q\n' "$CF_API"
+		printf 'export CF_USERNAME=%q\n' "$CF_USERNAME"
+		printf 'export CF_PASSWORD=%q\n' "$CF_PASSWORD"
+		printf 'export CF_ORG=%q\n' "$CF_ORG"
+		printf 'export CF_SPACE=%q\n' "$CF_SPACE"
+		printf 'if [[ -z "${CF_HERDR_SANDBOX_INITIALIZED:-}" && -n "$CF_API" && -n "$CF_USERNAME" && -n "$CF_PASSWORD" && -n "$CF_ORG" && -n "$CF_SPACE" ]]; then\n'
+		printf '  if ! %q api "$CF_API" --skip-ssl-validation; then printf "warning: cf api setup failed\\n" >&2; fi\n' "$BIN_DIR/cf"
+		printf '  if ! %q auth "$CF_USERNAME" "$CF_PASSWORD"; then printf "warning: cf auth setup failed\\n" >&2; fi\n' "$BIN_DIR/cf"
+		printf '  if ! %q target -o "$CF_ORG" -s "$CF_SPACE"; then printf "warning: cf target setup failed\\n" >&2; fi\n' "$BIN_DIR/cf"
+		printf '  export CF_HERDR_SANDBOX_INITIALIZED=1\n'
+		printf 'fi\n'
+	printf '%s\n' "$block_end"
 	} >>"$temporary"
 	chmod 600 "$temporary"
 	mv -- "$temporary" "$bashrc"

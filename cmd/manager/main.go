@@ -92,7 +92,7 @@ func run() error {
 	builder := newRuntimeBuilder(cfg, commandRunner)
 	cloud := cf.Provider{Run: commandRunner, Executable: cfg.CFExecutable, Buildpacks: cfg.Buildpacks, WorkRoot: cfg.WorkRoot, Environment: []string{"CF_HOME=" + dirs.cfHome}}
 	probe := identity.New(identity.Config{CertPath: cfg.InstanceCert, KeyPath: cfg.InstanceKey, Timeout: 10 * time.Second, MaxBodyBytes: 64 << 10})
-	reconciler := reconcile.New(reconcile.Config{WorkRoot: cfg.WorkRoot, IdentityDomain: cfg.IdentityDomain, ManagerRouteHost: cfg.ManagerRouteHost, ManagerPackHost: cfg.ManagerPackHost, ManagerAppGUID: cfg.ManagerAppGUID, PollAttempts: 30, PollInterval: time.Second, ScanInterval: cfg.ReconcileInterval}, state, reconcile.BundleRuntime{Builder: builder}, cloud, reconcile.ConcretePackManager{Manager: packManager}, probe, realClock{})
+	reconciler := reconcile.New(reconcile.Config{WorkRoot: cfg.WorkRoot, IdentityDomain: cfg.IdentityDomain, ManagerRouteHost: cfg.ManagerRouteHost, ManagerPackHost: cfg.ManagerPackHost, ManagerAppGUID: cfg.ManagerAppGUID, CFAPI: cfg.CFAPI, CFUsername: cfg.CFUsername, CFPassword: cfg.CFPassword, CFOrg: cfg.CFOrg, CFSpace: cfg.CFSpace, PollAttempts: 30, PollInterval: time.Second, ScanInterval: cfg.ReconcileInterval}, state, reconcile.BundleRuntime{Builder: builder}, cloud, reconcile.ConcretePackManager{Manager: packManager}, probe, realClock{})
 	collieURL, _ := url.Parse("http://" + cfg.CollieAddress)
 	web := managerWeb(cfg.WebDir)
 	var ready atomic.Bool

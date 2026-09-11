@@ -44,7 +44,7 @@ PATH=/home/vcap/app/sandbox-runtime/bin:$PATH
 HERDR_SOCKET_PATH=/home/vcap/app/.sandbox-state/herdr.sock
 ```
 
-The runtime directory is prepended so `opencode`, `herdr`, `bun`, and `collie` resolve
+The runtime directory is prepended so `opencode`, `herdr`, `bun`, `cf`, and `collie` resolve
 by command name. Herdr starts on this exact socket, allowing an interactive `herdr`
 command to attach to the already-running server instead of creating an unrelated
 session.

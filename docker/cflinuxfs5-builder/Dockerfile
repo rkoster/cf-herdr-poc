@@ -76,7 +76,7 @@ RUN set -eux; command -v go; \
     mkdir -p /work/dist/web; cp -R web/dist/. /work/dist/web/; \
      CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o /work/dist/manager ./cmd/manager; \
      test -x /work/dist/manager; \
-        for f in manager-runtime/bin/bun manager-runtime/bin/herdr manager-runtime/bin/cf manager-runtime/bin/collie sandbox/runtime/bin/bun sandbox/runtime/bin/herdr sandbox/runtime/bin/collie sandbox/runtime/bin/opencode sandbox/runtime/bin/sandbox-bootstrap sandbox/runtime/start.sh sandbox/runtime/start-bash.sh; do test -x "/work/dist/$f" || { printf 'error: missing executable artifact: %s\n' "/work/dist/$f" >&2; exit 1; }; done; \
+         for f in manager-runtime/bin/bun manager-runtime/bin/herdr manager-runtime/bin/cf manager-runtime/bin/collie sandbox/runtime/bin/bun sandbox/runtime/bin/herdr sandbox/runtime/bin/collie sandbox/runtime/bin/opencode sandbox/runtime/bin/cf sandbox/runtime/bin/sandbox-bootstrap sandbox/runtime/start.sh sandbox/runtime/start-bash.sh; do test -x "/work/dist/$f" || { printf 'error: missing executable artifact: %s\n' "/work/dist/$f" >&2; exit 1; }; done; \
       rm -rf /work/dist/sandbox/runtime/collie/.git; \
       rm -rf /work/dist/sandbox/runtime/collie/web/node_modules
 

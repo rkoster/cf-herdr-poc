@@ -328,7 +328,7 @@ func TestBuildAssemblesExpectedLayoutWithFixtureTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build.sh failed: %v\n%s", err, output)
 	}
-	for _, executable := range []string{"manager", "manager-runtime/bin/bun", "manager-runtime/bin/herdr", "manager-runtime/bin/cf", "manager-runtime/bin/collie", "sandbox/runtime/bin/bun", "sandbox/runtime/bin/herdr", "sandbox/runtime/bin/collie", "sandbox/runtime/bin/opencode", "sandbox/runtime/bin/sandbox-bootstrap", "sandbox/runtime/start.sh"} {
+	for _, executable := range []string{"manager", "manager-runtime/bin/bun", "manager-runtime/bin/herdr", "manager-runtime/bin/cf", "manager-runtime/bin/collie", "sandbox/runtime/bin/bun", "sandbox/runtime/bin/herdr", "sandbox/runtime/bin/collie", "sandbox/runtime/bin/opencode", "sandbox/runtime/bin/cf", "sandbox/runtime/bin/sandbox-bootstrap", "sandbox/runtime/start.sh"} {
 		info, statErr := os.Stat(filepath.Join(dist, filepath.FromSlash(executable)))
 		if statErr != nil || info.Mode()&0o111 == 0 {
 			t.Errorf("executable %s: info=%v err=%v", executable, info, statErr)
@@ -656,7 +656,7 @@ exec /bin/mv "$@"
 set -eu
 if [ "${FAIL_RUNTIME:-}" = 1 ]; then exit 23; fi
 	mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie/bridge" "$RUNTIME_DIR/collie/cli" "$RUNTIME_DIR/collie/node_modules/fixture" "$RUNTIME_DIR/collie/web/dist"
-for name in bun herdr collie opencode sandbox-bootstrap; do printf '#!/bin/sh\n' > "$RUNTIME_DIR/bin/$name"; chmod +x "$RUNTIME_DIR/bin/$name"; done
+for name in bun herdr collie opencode cf sandbox-bootstrap; do printf '#!/bin/sh\n' > "$RUNTIME_DIR/bin/$name"; chmod +x "$RUNTIME_DIR/bin/$name"; done
 printf '#!/bin/sh\n' > "$RUNTIME_DIR/start.sh"; chmod +x "$RUNTIME_DIR/start.sh"
 printf '#!/bin/sh\n' > "$RUNTIME_DIR/start-bash.sh"; chmod +x "$RUNTIME_DIR/start-bash.sh"
 printf '%s\n' "${SANDBOX_TARGET_INSTALL_DIR:-/home/vcap/app/sandbox-runtime/bin}" > "$RUNTIME_DIR/target-install-dir"

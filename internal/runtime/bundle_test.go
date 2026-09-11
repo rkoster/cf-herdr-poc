@@ -108,6 +108,12 @@ func TestValidateSandboxRuntimeRequiresAllStartupAssets(t *testing.T) {
 	if err := ValidateSandboxRuntime(runtimeDir); err == nil || !strings.Contains(err.Error(), "sandbox-bootstrap") {
 		t.Fatalf("ValidateSandboxRuntime() error = %v, want missing sandbox-bootstrap asset", err)
 	}
+	if err := os.Remove(filepath.Join(runtimeDir, "bin", "cf")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSandboxRuntime(runtimeDir); err == nil || !strings.Contains(err.Error(), "cf") {
+		t.Fatalf("ValidateSandboxRuntime() error = %v, want missing cf asset", err)
+	}
 }
 
 func TestInstallEnrollmentCopiesPrivateTokenIntoPreparedRuntime(t *testing.T) {
@@ -414,7 +420,7 @@ func writeFile(t *testing.T, path string, mode os.FileMode, contents string) {
 
 func writeSandboxRuntime(t *testing.T, root string) {
 	t.Helper()
-	for _, name := range []string{"start.sh", "start-bash.sh", "bin/bun", "bin/herdr", "bin/collie", "bin/opencode", "bin/sandbox-bootstrap"} {
+	for _, name := range []string{"start.sh", "start-bash.sh", "bin/bun", "bin/herdr", "bin/collie", "bin/opencode", "bin/cf", "bin/sandbox-bootstrap"} {
 		writeFile(t, filepath.Join(root, name), 0o755, "#!/bin/sh\n")
 	}
 }

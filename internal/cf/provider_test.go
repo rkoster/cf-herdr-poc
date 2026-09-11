@@ -180,7 +180,7 @@ func TestStageRefusesReplacementForExpectedApp(t *testing.T) {
 func TestConfigureEnrollmentAndStartAppUseSeparateExactCommands(t *testing.T) {
 	run := &recordingRunner{}
 	provider := Provider{Run: run}
-	configure, err := provider.ConfigureEnrollment(context.Background(), "demo", "/home/vcap/app/sandbox-runtime/join-token", "https://manager.identity.example", "demo.apps.identity")
+	configure, err := provider.ConfigureEnrollment(context.Background(), "demo", EnrollmentConfig{TokenAppPath: "/home/vcap/app/sandbox-runtime/join-token", LeadAddress: "https://manager.identity.example", SelfAddress: "demo.apps.identity", CFAPI: "https://api.example", CFUsername: "manager", CFPassword: "deploy-password", CFOrg: "poc", CFSpace: "demo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestConfigureEnrollmentAndStartAppUseSeparateExactCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []command{{name: "cf", args: []string{"set-env", "demo", "HERDR_SOCKET_PATH", "/home/vcap/app/.sandbox-state/herdr.sock"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_JOIN_TOKEN_FILE", "/home/vcap/app/sandbox-runtime/join-token"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_LEAD_ADDRESS", "https://manager.identity.example"}}, {name: "cf", args: []string{"set-env", "demo", "SANDBOX_MEMBER_ID", "demo"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_SELF_ADDRESS", "demo.apps.identity"}}, {name: "cf", args: []string{"start", "demo"}}}
+	want := []command{{name: "cf", args: []string{"set-env", "demo", "HERDR_SOCKET_PATH", "/home/vcap/app/.sandbox-state/herdr.sock"}}, {name: "cf", args: []string{"set-env", "demo", "CF_API", "https://api.example"}}, {name: "cf", args: []string{"set-env", "demo", "CF_USERNAME", "manager"}}, {name: "cf", args: []string{"set-env", "demo", "CF_PASSWORD", "deploy-password"}}, {name: "cf", args: []string{"set-env", "demo", "CF_ORG", "poc"}}, {name: "cf", args: []string{"set-env", "demo", "CF_SPACE", "demo"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_JOIN_TOKEN_FILE", "/home/vcap/app/sandbox-runtime/join-token"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_LEAD_ADDRESS", "https://manager.identity.example"}}, {name: "cf", args: []string{"set-env", "demo", "SANDBOX_MEMBER_ID", "demo"}}, {name: "cf", args: []string{"set-env", "demo", "COLLIE_PACK_SELF_ADDRESS", "demo.apps.identity"}}, {name: "cf", args: []string{"start", "demo"}}}
 	if !reflect.DeepEqual(run.commands, want) {
 		t.Fatalf("commands = %#v, want %#v", run.commands, want)
 	}

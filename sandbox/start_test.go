@@ -57,6 +57,11 @@ func TestLauncherContract(t *testing.T) {
 		`export COLLIE_STATE_DIR="${COLLIE_STATE_DIR:-$XDG_STATE_HOME/collie}"`,
 		`export HERDR_PLUGIN_CONFIG_DIR="${HERDR_PLUGIN_CONFIG_DIR:-$XDG_CONFIG_HOME/collie}"`,
 		`export HERDR_SOCKET_PATH="${HERDR_SOCKET_PATH:-$SANDBOX_STATE_DIR/herdr.sock}"`,
+		`export CF_API="${CF_API:-}"`,
+		`export CF_USERNAME="${CF_USERNAME:-}"`,
+		`export CF_PASSWORD="${CF_PASSWORD:-}"`,
+		`export CF_ORG="${CF_ORG:-}"`,
+		`export CF_SPACE="${CF_SPACE:-}"`,
 		"printf 'export SHELL=/bin/bash\\n'",
 	} {
 		if !strings.Contains(script, required) {
@@ -71,6 +76,14 @@ func TestLauncherContract(t *testing.T) {
 	}
 	if configDir >= integration || integration >= herdr {
 		t.Fatalf("OpenCode integration setup is out of order: config=%d integration=%d herdr=%d", configDir, integration, herdr)
+	}
+	for _, command := range []string{`printf '  if ! %q api`, `printf '  if ! %q auth`, `printf '  if ! %q target`} {
+		if !strings.Contains(script, command) {
+			t.Errorf("launcher does not contain %q", command)
+		}
+	}
+	if strings.Contains(script, "set -x") || strings.Contains(script, "echo $CF_PASSWORD") {
+		t.Fatal("launcher may expose CF password")
 	}
 	if strings.Contains(script, "SANDBOX_HOME") {
 		t.Fatal("launcher must not support SANDBOX_HOME")

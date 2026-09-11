@@ -32,6 +32,7 @@ func TestCFLinuxFS5BuilderContract(t *testing.T) {
 		"/work/dist/manager",
 		"sandbox/runtime/bin/herdr",
 		"sandbox/runtime/bin/opencode",
+		"sandbox/runtime/bin/cf",
 		"sandbox/runtime/start.sh",
 		"sandbox/runtime/start-bash.sh",
 		"manager-runtime/bin/cf",

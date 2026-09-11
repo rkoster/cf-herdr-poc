@@ -67,7 +67,7 @@ type CloudFoundry interface {
 	Stage(context.Context, PushRequest) (model.Operation, error)
 	EnsureAppAbsent(context.Context, string) (model.Operation, error)
 	AppGUID(context.Context, string) (string, model.Operation, error)
-	ConfigureEnrollment(context.Context, string, string, string, string) (model.Operation, error)
+	ConfigureEnrollment(context.Context, string, EnrollmentConfig) (model.Operation, error)
 	StartApp(context.Context, string) (model.Operation, error)
 	InspectApp(context.Context, string) (App, error)
 	SecureRoute(context.Context, RouteRequest) (model.Operation, error)
@@ -75,6 +75,17 @@ type CloudFoundry interface {
 	RemoveRoutePolicy(context.Context, RoutePolicyRequest) (model.Operation, error)
 	RemoveRoute(context.Context, RouteRequest) (model.Operation, error)
 	DeleteApp(context.Context, string, string) (model.Operation, error)
+}
+
+type EnrollmentConfig struct {
+	TokenAppPath string
+	LeadAddress  string
+	SelfAddress  string
+	CFAPI        string
+	CFUsername   string
+	CFPassword   string
+	CFOrg        string
+	CFSpace      string
 }
 
 type Provider struct {
@@ -187,14 +198,19 @@ func (p Provider) EnsureAppAbsent(ctx context.Context, name string) (model.Opera
 	return operation, &Error{Operation: "app-absence", Kind: "already_exists"}
 }
 
-func (p Provider) ConfigureEnrollment(ctx context.Context, name, tokenAppPath, leadAddress, selfAddress string) (model.Operation, error) {
+func (p Provider) ConfigureEnrollment(ctx context.Context, name string, enrollment EnrollmentConfig) (model.Operation, error) {
 	if err := validateName("app", name); err != nil {
 		return model.Operation{}, err
 	}
-	if tokenAppPath != "/home/vcap/app/sandbox-runtime/join-token" || !validHTTPSAddress(leadAddress) || !validHost(selfAddress) {
+	if enrollment.TokenAppPath != "/home/vcap/app/sandbox-runtime/join-token" || !validHTTPSAddress(enrollment.LeadAddress) || !validHost(enrollment.SelfAddress) {
 		return model.Operation{}, fmt.Errorf("invalid enrollment configuration")
 	}
-	return p.executeMany(ctx, "configure-enrollment", [][]string{{"set-env", name, "HERDR_SOCKET_PATH", "/home/vcap/app/.sandbox-state/herdr.sock"}, {"set-env", name, "COLLIE_JOIN_TOKEN_FILE", tokenAppPath}, {"set-env", name, "COLLIE_PACK_LEAD_ADDRESS", leadAddress}, {"set-env", name, "SANDBOX_MEMBER_ID", name}, {"set-env", name, "COLLIE_PACK_SELF_ADDRESS", selfAddress}})
+	for key, value := range map[string]string{"CF_API": enrollment.CFAPI, "CF_USERNAME": enrollment.CFUsername, "CF_PASSWORD": enrollment.CFPassword, "CF_ORG": enrollment.CFOrg, "CF_SPACE": enrollment.CFSpace} {
+		if strings.TrimSpace(value) == "" {
+			return model.Operation{}, fmt.Errorf("%s is required for enrollment", key)
+		}
+	}
+	return p.executeMany(ctx, "configure-enrollment", [][]string{{"set-env", name, "HERDR_SOCKET_PATH", "/home/vcap/app/.sandbox-state/herdr.sock"}, {"set-env", name, "CF_API", enrollment.CFAPI}, {"set-env", name, "CF_USERNAME", enrollment.CFUsername}, {"set-env", name, "CF_PASSWORD", enrollment.CFPassword}, {"set-env", name, "CF_ORG", enrollment.CFOrg}, {"set-env", name, "CF_SPACE", enrollment.CFSpace}, {"set-env", name, "COLLIE_JOIN_TOKEN_FILE", enrollment.TokenAppPath}, {"set-env", name, "COLLIE_PACK_LEAD_ADDRESS", enrollment.LeadAddress}, {"set-env", name, "SANDBOX_MEMBER_ID", name}, {"set-env", name, "COLLIE_PACK_SELF_ADDRESS", enrollment.SelfAddress}})
 }
 
 func (p Provider) StartApp(ctx context.Context, name string) (model.Operation, error) {

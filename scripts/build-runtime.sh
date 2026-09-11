@@ -160,18 +160,24 @@ rm -rf "$RUNTIME_DIR"
 mkdir -p "$RUNTIME_DIR/bin" "$RUNTIME_DIR/collie"
 CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -o "$RUNTIME_DIR/bin/sandbox-bootstrap" ./cmd/sandbox-bootstrap
 test -x "$RUNTIME_DIR/bin/sandbox-bootstrap"
-if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" == 1 ]]; then
-	relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun" "$TARGET_INSTALL_DIR"
-	relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr" "$TARGET_INSTALL_DIR"
-	install -m 0755 "$opencode_bin" "$RUNTIME_DIR/bin/opencode"
-	relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie" "$TARGET_INSTALL_DIR"
+	if [[ "${ALLOW_NIX_RUNTIME_RELOCATION:-}" == 1 ]]; then
+		relocate_runtime "$bun_bin" "$RUNTIME_DIR/bin/bun" "$TARGET_INSTALL_DIR"
+		relocate_runtime "$herdr_bin" "$RUNTIME_DIR/bin/herdr" "$TARGET_INSTALL_DIR"
+		install -m 0755 "$opencode_bin" "$RUNTIME_DIR/bin/opencode"
+		relocate_cf_wrapper "$cf_bin" "$RUNTIME_DIR/bin/cf" "$TARGET_INSTALL_DIR"
+		relocate_runtime "$collie_bin" "$RUNTIME_DIR/bin/collie" "$TARGET_INSTALL_DIR"
 	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$RUNTIME_DIR/bin/bun" --version >/dev/null
 	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$RUNTIME_DIR/bin/herdr" --version >/dev/null
-	TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$RUNTIME_DIR/bin/collie" --version >/dev/null
-else
+		TARGET_ARCH="$GOARCH" bash "$ROOT/scripts/smoke-relocated-runtime.sh" "$RUNTIME_DIR/bin/collie" --version >/dev/null
+		if ! "$RUNTIME_DIR/bin/cf" version >/dev/null 2>&1; then
+			printf 'error: relocated sandbox CF CLI smoke test failed: %s\n' "$RUNTIME_DIR/bin/cf" >&2
+			exit 1
+		fi
+	else
 	install -m 0755 "$bun_bin" "$RUNTIME_DIR/bin/bun"
 	install -m 0755 "$herdr_bin" "$RUNTIME_DIR/bin/herdr"
-	install -m 0755 "$opencode_bin" "$RUNTIME_DIR/bin/opencode"
+		install -m 0755 "$opencode_bin" "$RUNTIME_DIR/bin/opencode"
+		install -m 0755 "$cf_bin" "$RUNTIME_DIR/bin/cf"
 	install -m 0755 "$collie_bin" "$RUNTIME_DIR/bin/collie"
 fi
 

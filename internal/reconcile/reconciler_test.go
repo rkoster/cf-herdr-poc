@@ -225,7 +225,8 @@ func (f *fakeCF) AddRoutePolicy(_ context.Context, request cf.RoutePolicyRequest
 	*f.calls = append(*f.calls, "secure-manager-route")
 	return operation("secure-manager-route", true), nil
 }
-func (f *fakeCF) ConfigureEnrollment(_ context.Context, _, _, leadURL, _ string) (model.Operation, error) {
+func (f *fakeCF) ConfigureEnrollment(_ context.Context, _ string, enrollment cf.EnrollmentConfig) (model.Operation, error) {
+	leadURL := enrollment.LeadAddress
 	f.leadURL = leadURL
 	*f.calls = append(*f.calls, "configure-enrollment")
 	return operation("configure-enrollment", true), nil

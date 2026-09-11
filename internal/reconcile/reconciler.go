@@ -40,7 +40,7 @@ type CFProvider interface {
 	Stage(context.Context, cf.PushRequest) (model.Operation, error)
 	EnsureAppAbsent(context.Context, string) (model.Operation, error)
 	AppGUID(context.Context, string) (string, model.Operation, error)
-	ConfigureEnrollment(context.Context, string, string, string, string) (model.Operation, error)
+	ConfigureEnrollment(context.Context, string, cf.EnrollmentConfig) (model.Operation, error)
 	StartApp(context.Context, string) (model.Operation, error)
 	InspectApp(context.Context, string) (cf.App, error)
 	SecureRoute(context.Context, cf.RouteRequest) (model.Operation, error)
@@ -78,6 +78,11 @@ type Config struct {
 	ManagerRouteHost string
 	ManagerPackHost  string
 	ManagerAppGUID   string
+	CFAPI            string
+	CFUsername       string
+	CFPassword       string
+	CFOrg            string
+	CFSpace          string
 	PollAttempts     int
 	PollInterval     time.Duration
 	ScanInterval     time.Duration
@@ -648,7 +653,7 @@ func (r *Reconciler) effectStage(ctx context.Context, s model.Sandbox, path stri
 }
 func (r *Reconciler) effectConfigureEnrollment(ctx context.Context, name string) (model.Operation, error) {
 	r.effect("configure-enrollment")
-	return r.cf.ConfigureEnrollment(ctx, name, "/home/vcap/app/sandbox-runtime/join-token", "https://"+r.config.ManagerPackHost, name+"."+r.config.IdentityDomain)
+	return r.cf.ConfigureEnrollment(ctx, name, cf.EnrollmentConfig{TokenAppPath: "/home/vcap/app/sandbox-runtime/join-token", LeadAddress: "https://" + r.config.ManagerPackHost, SelfAddress: name + "." + r.config.IdentityDomain, CFAPI: r.config.CFAPI, CFUsername: r.config.CFUsername, CFPassword: r.config.CFPassword, CFOrg: r.config.CFOrg, CFSpace: r.config.CFSpace})
 }
 func (r *Reconciler) effectStartApp(ctx context.Context, name string) (model.Operation, error) {
 	r.effect("start-app")

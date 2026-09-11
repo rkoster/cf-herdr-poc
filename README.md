@@ -47,7 +47,12 @@ Bun 1.3.13 and Cloud Foundry CLI v8.19.0 artifacts are verified against official
 
 The build compiles the manager and sandbox bootstrap with `CGO_ENABLED=0`, builds both frontends, invokes `scripts/build-runtime.sh`, validates every required artifact, and transactionally replaces `dist/`. It stages first, renames the old tree to a backup, installs the new tree, and restores the backup on failure or interruption. Directory replacement is not fully atomic: there is a small rename window in which `dist/` is absent. `COLLIE_RUNTIME_BIN` may override the Collie CLI produced by the nested build, but must satisfy the same portable executable checks.
 
-The sandbox runtime includes pinned OpenCode v1.18.30 at `sandbox/runtime/bin/opencode`.
+The sandbox runtime includes pinned OpenCode v1.18.30 at `sandbox/runtime/bin/opencode` and
+the verified Cloud Foundry CLI at `sandbox/runtime/bin/cf`. Manager-created sandboxes
+receive the manager's `CF_API`, `CF_USERNAME`, `CF_PASSWORD`, `CF_ORG`, and `CF_SPACE`
+during enrollment. Interactive shells initialize `cf api`, `cf auth`, and `cf target`
+from the managed `.bashrc` block; direct sandboxes do not receive manager credentials
+by default.
 Sandbox apps do not receive a Cloud Foundry `PATH` override. The launcher prepends
 `/home/vcap/app/sandbox-runtime/bin` for its own process and maintains the same runtime contract for
 interactive shells: `HOME=/home/vcap` and `SHELL=/bin/bash`.
