@@ -210,7 +210,7 @@ func (p Provider) ConfigureEnrollment(ctx context.Context, name string, enrollme
 			return model.Operation{}, fmt.Errorf("%s is required for enrollment", key)
 		}
 	}
-	return p.executeMany(ctx, "configure-enrollment", [][]string{{"set-env", name, "HERDR_SOCKET_PATH", "/home/vcap/app/.sandbox-state/herdr.sock"}, {"set-env", name, "CF_API", enrollment.CFAPI}, {"set-env", name, "CF_USERNAME", enrollment.CFUsername}, {"set-env", name, "CF_PASSWORD", enrollment.CFPassword}, {"set-env", name, "CF_ORG", enrollment.CFOrg}, {"set-env", name, "CF_SPACE", enrollment.CFSpace}, {"set-env", name, "COLLIE_JOIN_TOKEN_FILE", enrollment.TokenAppPath}, {"set-env", name, "COLLIE_PACK_LEAD_ADDRESS", enrollment.LeadAddress}, {"set-env", name, "SANDBOX_MEMBER_ID", name}, {"set-env", name, "COLLIE_PACK_SELF_ADDRESS", enrollment.SelfAddress}})
+	return p.executeMany(ctx, "configure-enrollment", [][]string{{"set-env", name, "HERDR_SOCKET_PATH", "/home/vcap/.sandbox-state/herdr.sock"}, {"set-env", name, "CF_API", enrollment.CFAPI}, {"set-env", name, "CF_USERNAME", enrollment.CFUsername}, {"set-env", name, "CF_PASSWORD", enrollment.CFPassword}, {"set-env", name, "CF_ORG", enrollment.CFOrg}, {"set-env", name, "CF_SPACE", enrollment.CFSpace}, {"set-env", name, "COLLIE_JOIN_TOKEN_FILE", enrollment.TokenAppPath}, {"set-env", name, "COLLIE_PACK_LEAD_ADDRESS", enrollment.LeadAddress}, {"set-env", name, "SANDBOX_MEMBER_ID", name}, {"set-env", name, "COLLIE_PACK_SELF_ADDRESS", enrollment.SelfAddress}})
 }
 
 func (p Provider) StartApp(ctx context.Context, name string) (model.Operation, error) {

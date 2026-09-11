@@ -50,7 +50,7 @@ func TestLauncherContract(t *testing.T) {
 		"export SHELL=/bin/bash",
 		"export PATH=\"$BIN_DIR:$PATH\"",
 		`local bashrc="$HOME/.bashrc"`,
-		`SANDBOX_STATE_DIR="${SANDBOX_STATE_DIR:-/home/vcap/app/.sandbox-state}"`,
+		`SANDBOX_STATE_DIR="${SANDBOX_STATE_DIR:-/home/vcap/.sandbox-state}"`,
 		`export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"`,
 		`export XDG_STATE_HOME="${XDG_STATE_HOME:-$SANDBOX_STATE_DIR/state}"`,
 		`export XDG_DATA_HOME="${XDG_DATA_HOME:-$SANDBOX_STATE_DIR/data}"`,
@@ -190,6 +190,46 @@ func TestLauncherMaintainsIdempotentBashrcRuntimeBlock(t *testing.T) {
 	}
 	if strings.Count(text, "export SHELL=/bin/bash") != 1 {
 		t.Fatalf("bashrc = %q, want one managed shell setting", text)
+	}
+}
+
+func TestLauncherMaintainsManagedCFIgnore(t *testing.T) {
+	if os.Getenv("SANDBOX_LAUNCHER_HELPER") != "" {
+		runLauncherHelper()
+		return
+	}
+
+	root := prepareLauncher(t)
+	appRoot := filepath.Join(root, "app")
+	if err := os.MkdirAll(appRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	launcherPath := filepath.Join(root, "start-bash.sh")
+	launcher, err := os.ReadFile(launcherPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher = []byte(strings.Replace(string(launcher), "/home/vcap/app", appRoot, 1))
+	if err := os.WriteFile(launcherPath, launcher, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(root, "signals.log")
+	for range 2 {
+		command := exec.Command("bash", filepath.Join(root, "start-bash.sh"))
+		command.Env = append(os.Environ(), "SANDBOX_LAUNCHER_HELPER=1", "SANDBOX_STATE_DIR="+filepath.Join(root, "state"), "SANDBOX_APP_ROOT="+appRoot, "HERDR_SOCKET_PATH="+shortLauncherSocket(t), "SIGNAL_LOG="+logPath, "PORT=8080")
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		waitForLog(t, logPath, "bun started")
+		_ = command.Process.Signal(syscall.SIGTERM)
+		_ = command.Wait()
+	}
+	contents, err := os.ReadFile(filepath.Join(appRoot, ".cfignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "sandbox-runtime/\n.sandbox-state/\njoin-token\n" {
+		t.Fatalf(".cfignore = %q", contents)
 	}
 }
 
@@ -445,6 +485,11 @@ func prepareLauncher(t *testing.T) string {
 		t.Fatal(err)
 	}
 	launcher := readLauncher(t)
+	appRoot := filepath.Join(root, "app")
+	if err := os.MkdirAll(appRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	launcher = strings.Replace(launcher, "${SANDBOX_APP_ROOT:-/home/vcap/app}", appRoot, 1)
 	launcher = strings.Replace(launcher, "export HOME=/home/vcap", "export HOME="+home, 1)
 	if err := os.WriteFile(filepath.Join(root, "start-bash.sh"), []byte(launcher), 0o755); err != nil {
 		t.Fatal(err)

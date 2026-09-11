@@ -25,7 +25,7 @@ Change expected CF command sequences so CF provisioning does not mutate `PATH`.
 Keep the exact socket command:
 
 ```text
-set-env <app> HERDR_SOCKET_PATH /home/vcap/app/.sandbox-state/herdr.sock
+set-env <app> HERDR_SOCKET_PATH /home/vcap/.sandbox-state/herdr.sock
 ```
 
 Add explicit assertions over recorded commands that fail when an argument sequence sets
@@ -78,7 +78,7 @@ require exactly one managed block containing:
 
 ```bash
 export PATH=/home/vcap/app/sandbox-runtime/bin:$PATH
-export HERDR_SOCKET_PATH=/home/vcap/app/.sandbox-state/herdr.sock
+export HERDR_SOCKET_PATH=/home/vcap/.sandbox-state/herdr.sock
 export SHELL=/bin/bash
 ```
 

@@ -6,7 +6,7 @@ BIN_DIR="$SCRIPT_DIR/bin"
 COLLIE_DIR="$SCRIPT_DIR/collie"
 export COLLIE_EXECUTABLE="$BIN_DIR/collie"
 
-SANDBOX_STATE_DIR="${SANDBOX_STATE_DIR:-/home/vcap/app/.sandbox-state}"
+SANDBOX_STATE_DIR="${SANDBOX_STATE_DIR:-/home/vcap/.sandbox-state}"
 export HOME=/home/vcap
 export SHELL=/bin/bash
 export PATH="$BIN_DIR:$PATH"
@@ -60,6 +60,15 @@ configure_bashrc() {
 	mv -- "$temporary" "$bashrc"
 }
 
+configure_cfignore() {
+	local cfignore="${SANDBOX_APP_ROOT:-/home/vcap/app}/.cfignore"
+	local temporary
+	temporary="$(mktemp "${cfignore}.XXXXXX")"
+	printf '%s\n' 'sandbox-runtime/' '.sandbox-state/' 'join-token' >"$temporary"
+	chmod 600 "$temporary"
+	mv -- "$temporary" "$cfignore"
+}
+
 has_join_token_file=false
 has_pack_lead_address=false
 [[ -n "${COLLIE_JOIN_TOKEN_FILE:-}" ]] && has_join_token_file=true
@@ -72,6 +81,7 @@ fi
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$COLLIE_STATE_DIR" "$HERDR_PLUGIN_CONFIG_DIR" "$(dirname -- "$HERDR_SOCKET_PATH")" "$HOME/.config/opencode"
 "$BIN_DIR/herdr" integration install opencode
 configure_bashrc
+configure_cfignore
 
 herdr_pid=""
 bootstrap_pid=""

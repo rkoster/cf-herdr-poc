@@ -57,8 +57,10 @@ Sandbox apps do not receive a Cloud Foundry `PATH` override. The launcher prepen
 `/home/vcap/app/sandbox-runtime/bin` for its own process and maintains the same runtime contract for
 interactive shells: `HOME=/home/vcap` and `SHELL=/bin/bash`.
 
-The launcher maintains one managed block in `/home/vcap/.bashrc` containing the runtime `PATH`,
-`SHELL=/bin/bash`, and `HERDR_SOCKET_PATH=/home/vcap/app/.sandbox-state/herdr.sock`. Interactive
+The launcher keeps runtime state under `/home/vcap/.sandbox-state` and creates `/home/vcap/app/.cfignore`
+with `sandbox-runtime/`, `.sandbox-state/`, and `join-token` before starting child processes. The launcher
+maintains one managed block in `/home/vcap/.bashrc` containing the runtime `PATH`, `SHELL=/bin/bash`,
+and `HERDR_SOCKET_PATH=/home/vcap/.sandbox-state/herdr.sock`. Interactive
 `cf ssh` shells source this `.bashrc`, exposing `opencode` and `herdr`, and Collie terminal
 sessions use the same runtime contract; `herdr` attaches to the server started by the sandbox
 launcher. Non-interactive `cf ssh -c` commands do not source `/home/vcap/.bashrc`, so verify

@@ -41,7 +41,7 @@ Herdr or Collie:
 
 ```text
 PATH=/home/vcap/app/sandbox-runtime/bin:$PATH
-HERDR_SOCKET_PATH=/home/vcap/app/.sandbox-state/herdr.sock
+HERDR_SOCKET_PATH=/home/vcap/.sandbox-state/herdr.sock
 ```
 
 The runtime directory is prepended so `opencode`, `herdr`, `bun`, `cf`, and `collie` resolve
@@ -49,7 +49,8 @@ by command name. Herdr starts on this exact socket, allowing an interactive `her
 command to attach to the already-running server instead of creating an unrelated
 session.
 
-The same values are configured as Cloud Foundry app environment variables for sandbox
+The launcher keeps runtime state under `/home/vcap/.sandbox-state` and creates `/home/vcap/app/.cfignore`
+with `sandbox-runtime/`, `.sandbox-state/`, and `join-token` before child processes start. The same values are configured as Cloud Foundry app environment variables for sandbox
 apps. This makes the contract available to `cf ssh` shells as well as to processes
 inherited by Collie terminal sessions. The startup script remains authoritative for
 defaults so the runtime is also correct when launched without the expected app

@@ -25,7 +25,7 @@ func TestDirectSandboxPushesStandaloneAppWithExactContract(t *testing.T) {
 	if hasDirectSandboxPathChange(events) {
 		t.Fatalf("events = %#v, direct workflow must not set CF PATH", events)
 	}
-	if !containsEvent(events, "cf\tset-env\tdirect-sandbox\tHERDR_SOCKET_PATH\t/home/vcap/app/.sandbox-state/herdr.sock") {
+	if !containsEvent(events, "cf\tset-env\tdirect-sandbox\tHERDR_SOCKET_PATH\t/home/vcap/.sandbox-state/herdr.sock") {
 		t.Fatalf("events = %#v, want shared runtime environment", events)
 	}
 	if containsPrefix(events, "cf\tcreate-route") || containsPrefix(events, "cf\tmap-route") {

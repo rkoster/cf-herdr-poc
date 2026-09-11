@@ -77,7 +77,7 @@ created=1
 (cd "$WORK_DIR" && "$CF_BIN" push "$APP_NAME" --no-route --no-start -b "$BUILDPACK" -p app -c ./sandbox-runtime/start.sh)
 "$CF_BIN" set-env "$APP_NAME" COLLIE_PACK_TRANSPORT cf-identity >/dev/null 2>&1
 "$CF_BIN" set-env "$APP_NAME" COLLIE_HOST 0.0.0.0 >/dev/null 2>&1
-"$CF_BIN" set-env "$APP_NAME" HERDR_SOCKET_PATH /home/vcap/app/.sandbox-state/herdr.sock >/dev/null 2>&1
+"$CF_BIN" set-env "$APP_NAME" HERDR_SOCKET_PATH /home/vcap/.sandbox-state/herdr.sock >/dev/null 2>&1
 "$CF_BIN" set-env "$APP_NAME" SANDBOX_CWD "$SANDBOX_CWD" >/dev/null 2>&1
 if [[ -n "${COLLIE_JOIN_TOKEN_FILE:-}" ]]; then
   "$CF_BIN" set-env "$APP_NAME" COLLIE_PACK_LEAD_ADDRESS "${COLLIE_PACK_LEAD_ADDRESS:?COLLIE_PACK_LEAD_ADDRESS is required with a join token}" >/dev/null 2>&1

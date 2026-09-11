@@ -20,7 +20,7 @@ HOME=/home/vcap
 SHELL=/bin/bash
 ```
 
-Runtime state remains separate under `/home/vcap/app/.sandbox-state`.
+Runtime state remains separate under `/home/vcap/.sandbox-state`. The launcher creates `/home/vcap/app/.cfignore` with `sandbox-runtime/`, `.sandbox-state/`, and `join-token` so agent `cf push` packages exclude sandbox-owned files.
 
 ## Launcher Environment
 
@@ -29,7 +29,7 @@ or Collie:
 
 ```text
 PATH=/home/vcap/app/sandbox-runtime/bin:<inherited PATH>
-HERDR_SOCKET_PATH=/home/vcap/app/.sandbox-state/herdr.sock
+HERDR_SOCKET_PATH=/home/vcap/.sandbox-state/herdr.sock
 SHELL=/bin/bash
 HOME=/home/vcap
 ```
@@ -92,5 +92,5 @@ that an interactive shell sources it and resolves both commands by name.
 ## Non-Goals
 
 - Changing Cloud Foundry's default SSH daemon configuration.
-- Persisting sandbox state outside `/home/vcap/app/.sandbox-state`.
+- Persisting sandbox state outside `/home/vcap/.sandbox-state`.
 - Setting PATH through Cloud Foundry environment variables.

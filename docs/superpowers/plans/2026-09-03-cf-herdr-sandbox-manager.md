@@ -174,7 +174,7 @@ It must also assert that the join token is read from a file path in `COLLIE_JOIN
 2. Copy the Collie checkout needed by its bridge, the `bun` binary, the `herdr` binary, and `sandbox/start.sh` into `sandbox/runtime/`.
 3. Fail with a clear message if either binary is absent.
 
-`sandbox/start.sh` must set writable `HOME`, XDG config/state paths under `/home/vcap/app/.sandbox-state`, start `herdr server`, wait for its socket, run one-time Pack join when no trust store exists, and finally `exec` peer Collie. Write child logs to stdout/stderr.
+`sandbox/start.sh` must set writable `HOME`, XDG config/state paths under `/home/vcap/.sandbox-state`, create the managed `/home/vcap/app/.cfignore`, start `herdr server`, wait for its socket, run one-time Pack join when no trust store exists, and finally `exec` peer Collie. Write child logs to stdout/stderr.
 
 - [ ] **Step 6: Verify the bundle locally**
 

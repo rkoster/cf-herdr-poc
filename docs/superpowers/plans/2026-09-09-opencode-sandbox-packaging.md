@@ -211,7 +211,7 @@ for:
 
 ```text
 PATH=/home/vcap/app/sandbox-runtime/bin:$PATH
-HERDR_SOCKET_PATH=/home/vcap/app/.sandbox-state/herdr.sock
+HERDR_SOCKET_PATH=/home/vcap/.sandbox-state/herdr.sock
 ```
 
 Add an executable integration test using the existing launcher fixture that supplies a
@@ -270,7 +270,7 @@ Extend the direct sandbox fake-CF event assertions to require, after push and be
 start:
 
 ```text
-cf set-env direct-sandbox HERDR_SOCKET_PATH /home/vcap/app/.sandbox-state/herdr.sock
+cf set-env direct-sandbox HERDR_SOCKET_PATH /home/vcap/.sandbox-state/herdr.sock
 ```
 
 Require that neither workflow emits a CF `PATH` setting. Add the socket command to the
