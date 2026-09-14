@@ -56,7 +56,8 @@ func TestArchitectureDiagramCoversApprovedStory(t *testing.T) {
 	for _, required := range []string{
 		`data-stage="1"`, `data-stage="2"`, `data-stage="3"`,
 		`Choose the work`, `Start an agent`, `Steer from anywhere`, `Ship through CF`,
-		`id="clients-layer"`, `CLIENTS`, `Developer Browser`, `Terminal`, `cf ssh`,
+		`id="clients-layer"`, `CLIENTS`, `Developer Browser`, `Developer Terminal`, `cf ssh`,
+		`x="120" y="145" width="300"`, `x="1205" y="145" width="300"`,
 		`client-node`,
 		`id="ingress-layer"`, `INGRESS`, `Gorouter`, `SSH Proxy`,
 		`id="apps-layer"`, `APPLICATIONS + CONTROL PLANE`,
@@ -74,6 +75,30 @@ func TestArchitectureDiagramCoversApprovedStory(t *testing.T) {
 		`class="component-copy"`, `class="app-title"`,
 		`data-label-position="bottom"`,
 		`data-content-position="upper"`,
+		`class="app-container gray-style"`, `class="component sandbox-style"`,
+		`.sandbox-style rect`,
+		`id="manager-api-core"`,
+		`class="process purple-style"`,
+		`.component.yellow-style rect`, `.process.purple-style rect`,
+		`class="node sandbox-style"`,
+		`class="herdr-runtime node sandbox-style"`,
+		`id="pack-route"`, `class="wide-route"`, `marker-end="url(#wide-arrow)"`,
+		`id="browser-route"`, `class="wide-route"`,
+		`d="M420 181H642.5V445"`,
+		`id="manager-collie-route"`, `class="wide-route"`,
+		`d="M598.75 445V417.5H491.25V445"`,
+		`id="sandbox-collie-herdr-route"`, `class="wide-route"`,
+		`d="M947.5 445V417.5H1068.125V445"`,
+		`id="terminal-herdr-route"`, `class="wide-route"`,
+		`d="M1126.25 445V181H1205"`,
+		`id="manager-cf-api-route"`, `class="wide-route"`,
+		`d="M447.5 445V302.5H210V390"`,
+		`id="connections-layer"`,
+		`stroke="#7b9db5"`,
+		`d="M905 445V302.5H686.25V445"`,
+		`markerWidth="28"`, `markerHeight="28"`, `markerUnits="userSpaceOnUse"`,
+		`<circle cx="14" cy="14" r="14"`,
+		`class="route-endpoint" cx="905" cy="445" r="14"`,
 		`x="70" y="365" width="1460" height="485"`,
 		`id="gorouter-cell"`, `id="ssh-proxy-cell"`,
 		`x="120" y="265" width="870"`, `x="1010" y="265" width="495"`,
@@ -94,13 +119,14 @@ func TestArchitectureDiagramCoversApprovedStory(t *testing.T) {
 		`DEVELOPER EDGE`,
 		`id="diego-layer"`,
 		`sandbox-bootstrap`,
+		`.herdr-runtime>rect`,
 		`Schedules and runs application containers`,
 		`Lifecycle state`,
 		`CF CLI adapter`,
 		`Lead Collie · loopback`,
 		`class="flow`,
 		`class="port`,
-		`<marker `,
+		`id="arrow-browser"`, `id="arrow-control"`, `id="arrow-poc"`, `id="arrow-socket"`,
 	} {
 		if strings.Contains(html, forbidden) {
 			t.Errorf("diagram contains obsolete topology %q", forbidden)
@@ -119,5 +145,18 @@ func TestArchitectureDiagramExposesAccessibleControls(t *testing.T) {
 		if !strings.Contains(html, required) {
 			t.Errorf("diagram missing accessibility contract %q", required)
 		}
+	}
+}
+
+func TestArchitectureDiagramLayersConnectionsAboveAppsAndBelowIngress(t *testing.T) {
+	html := readArchitectureDiagram(t)
+	apps := strings.Index(html, `id="apps-layer"`)
+	connections := strings.Index(html, `id="connections-layer"`)
+	ingress := strings.Index(html, `id="ingress-layer"`)
+	if apps < 0 || connections < 0 || ingress < 0 {
+		t.Fatal("diagram is missing apps, connections, or ingress layer")
+	}
+	if !(apps < connections && connections < ingress) {
+		t.Fatalf("SVG paint order = apps:%d connections:%d ingress:%d, want apps < connections < ingress", apps, connections, ingress)
 	}
 }

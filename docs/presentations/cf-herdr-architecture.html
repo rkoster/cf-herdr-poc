@@ -40,14 +40,20 @@
     .layer-copy { fill:var(--muted); font-size:14px; }
     .system-title { fill:#dcebfa; font-size:18px; font-weight:800; }
     .app-container>rect { fill:#111f2b; stroke:var(--poc); stroke-width:3; }
+    .app-container.gray-style>rect { fill:#17232d; stroke:#718493; stroke-width:3; }
+    .component.yellow-style rect { fill:#2b2a21; stroke:#ffc857; stroke-width:2.5; }
+    .process.purple-style rect { fill:#251f31; stroke:#806b98; stroke-width:1.5; }
     .component rect { fill:#172b3b; stroke:#4c687c; stroke-width:1.5; }
+    .sandbox-style rect { fill:#15283a; stroke:var(--poc); stroke-width:3; }
     .component-title { fill:#f4f0e8; font-size:17px; font-weight:750; text-anchor:middle; }
     .component-copy { fill:#9fb0be; font-size:13px; text-anchor:middle; }
-    .herdr-runtime>rect { fill:#172335; stroke:#d8b7ff; stroke-width:3; }
     .herdr-title { fill:#f3e8ff; font-size:22px; font-weight:850; letter-spacing:.04em; }
     .process-link { fill:none; stroke:#806b98; stroke-width:2; }
     .process rect { fill:#251f31; stroke:#806b98; stroke-width:1.5; }
     .process text { fill:#eadfff; font-size:12px; font-weight:700; }
+    .wide-route { fill:none; stroke:#7b9db5; stroke-width:14; stroke-linejoin:round; stroke-linecap:butt; }
+    .route-endpoint { fill:#7b9db5; }
+    .cf-system-component { fill:#102638; fill-opacity:.82; }
     .hotspot circle { fill:#351e25; stroke:var(--question); stroke-width:3; }
     .hotspot>text { fill:#fff; font-size:14px; font-weight:850; }
     .table-row { stroke:#294253; stroke-width:1; }
@@ -91,6 +97,7 @@
       <title id="diagram-title">CF Herdr developer journey and architecture</title>
       <desc id="diagram-description">Four developer workflow steps progressively reveal the Cloud Foundry implementation and seven open platform design questions.</desc>
       <defs>
+        <marker id="wide-arrow" markerWidth="28" markerHeight="28" refX="14" refY="14" markerUnits="userSpaceOnUse" orient="auto"><circle cx="14" cy="14" r="14" fill="#7b9db5"/></marker>
         <filter id="soft-shadow"><feDropShadow dx="0" dy="8" stdDeviation="12" flood-opacity=".25"/></filter>
       </defs>
 
@@ -113,33 +120,26 @@
           <text class="row-label" text-anchor="middle" transform="translate(94 598) rotate(-90)">APPLICATIONS + CONTROL PLANE</text>
         </g>
         <g id="clients-layer">
-          <g class="node client-node" tabindex="0" role="button" aria-label="Developer Browser" data-title="Developer Browser" data-short="Observe, prompt, and review agents through one web front door." data-detail="The developer reaches the manager route and lead Collie; the browser never connects directly to a sandbox."><rect x="210" y="145" width="300" height="72" rx="14"/><text class="node-title" x="240" y="180">Developer Browser</text><text class="node-copy" x="240" y="204">Observe · prompt · review</text></g>
-          <g class="node client-node" tabindex="0" role="button" aria-label="Terminal using cf ssh" data-title="Terminal" data-short="Use cf ssh and Herdr directly inside the sandbox." data-detail="Current developer path: cf ssh yields a terminal connection through SSH Proxy to Herdr in the sandbox. Control-plane details are intentionally omitted."><rect x="1090" y="145" width="300" height="72" rx="14"/><text class="node-title" x="1120" y="180">Terminal</text><text class="node-copy" x="1120" y="204">cf ssh · Herdr</text></g>
-        </g>
-
-        <g id="ingress-layer">
-          <rect id="gorouter-cell" class="cf-system-component" x="120" y="265" width="870" height="75" rx="14"/>
-          <rect id="ssh-proxy-cell" class="cf-system-component" x="1010" y="265" width="495" height="75" rx="14"/>
-          <text class="system-title" x="555" y="309" text-anchor="middle">Gorouter</text>
-          <text class="system-title" x="1257.5" y="309" text-anchor="middle">SSH Proxy</text>
+          <g class="node client-node" tabindex="0" role="button" aria-label="Developer Browser" data-title="Developer Browser" data-short="Observe, prompt, and review agents through one web front door." data-detail="The developer reaches the manager route and lead Collie; the browser never connects directly to a sandbox."><rect x="120" y="145" width="300" height="72" rx="14"/><text class="node-title" x="150" y="180">Developer Browser</text><text class="node-copy" x="150" y="204">Observe · prompt · review</text></g>
+          <g class="node client-node" tabindex="0" role="button" aria-label="Developer Terminal using cf ssh" data-title="Developer Terminal" data-short="Use cf ssh and Herdr directly inside the sandbox." data-detail="Current developer path: cf ssh yields a terminal connection through SSH Proxy to Herdr in the sandbox. Control-plane details are intentionally omitted."><rect x="1205" y="145" width="300" height="72" rx="14"/><text class="node-title" x="1235" y="180">Developer Terminal</text><text class="node-copy" x="1235" y="204">cf ssh · Herdr</text></g>
         </g>
 
         <g id="apps-layer">
-          <g id="manager-app" class="app-container node poc-node" tabindex="0" role="button" aria-label="Manager app" data-title="Manager app" data-short="Serves the UI and reconciles sandbox lifecycle." data-detail="Working POC: the manager coordinates sandbox lifecycle and proxies the lead Collie.">
+          <g id="manager-app" class="app-container gray-style node poc-node" tabindex="0" role="button" aria-label="Manager app" data-title="Manager app" data-short="Serves the UI and reconciles sandbox lifecycle." data-detail="Working POC: the manager coordinates sandbox lifecycle and proxies the lead Collie.">
             <rect x="330" y="390" width="430" height="350" rx="20"/><text class="app-title" data-label-position="bottom" x="545" y="722" text-anchor="middle">APP · CF HERDR MANAGER</text>
-            <g class="component" data-content-position="upper"><rect x="360" y="445" width="175" height="235" rx="14"/><text class="component-title" x="447.5" y="555">Manager API</text><text class="component-copy" x="447.5" y="580">+ reconciler</text></g>
-            <g class="component" data-content-position="upper"><rect x="555" y="445" width="175" height="235" rx="14"/><text class="component-title" x="642.5" y="568">Lead Collie</text></g>
+            <g id="manager-api-core" class="component sandbox-style" data-content-position="upper"><rect x="360" y="445" width="175" height="235" rx="14"/><text class="component-title" x="447.5" y="555">Manager API</text><text class="component-copy" x="447.5" y="580">+ reconciler</text></g>
+            <g class="component sandbox-style" data-content-position="upper"><rect x="555" y="445" width="175" height="235" rx="14"/><text class="component-title" x="642.5" y="568">Lead Collie</text></g>
           </g>
 
-          <g id="sandbox-app" class="app-container">
+          <g id="sandbox-app" class="app-container gray-style">
             <rect x="790" y="390" width="715" height="350" rx="20"/><text class="app-title" data-label-position="bottom" x="1147.5" y="722" text-anchor="middle">APP · AGENT SANDBOX</text>
-            <g class="node poc-node" tabindex="0" role="button" aria-label="Sandbox Collie" data-title="Sandbox Collie" data-short="Joins the lead Pack and bridges browser actions to Herdr." data-detail="Working POC: sandbox Collie sits beside Herdr, receives policy-gated Pack traffic, and communicates with Herdr over the local socket."><rect x="820" y="445" width="170" height="235" rx="14"/><text class="component-title" x="905" y="545">Sandbox Collie</text><text class="component-copy" x="905" y="572">Pack peer</text><text class="component-copy" x="905" y="595">No public UI</text></g>
-            <g id="herdr-runtime" class="herdr-runtime node" tabindex="0" role="button" aria-label="Herdr process tree" data-title="Herdr process tree" data-short="Herdr owns and supervises the sandbox's interactive processes." data-detail="Herdr is the center of the sandbox: it owns terminal panes and runs OpenCode agents and shells, including shells that can use the packaged CF CLI.">
+            <g class="node sandbox-style" tabindex="0" role="button" aria-label="Sandbox Collie" data-title="Sandbox Collie" data-short="Joins the lead Pack and bridges browser actions to Herdr." data-detail="Working POC: sandbox Collie sits beside Herdr, receives policy-gated Pack traffic, and communicates with Herdr over the local socket."><rect x="820" y="445" width="170" height="235" rx="14"/><text class="component-title" x="905" y="545">Sandbox Collie</text><text class="component-copy" x="905" y="572">Pack peer</text><text class="component-copy" x="905" y="595">No public UI</text></g>
+            <g id="herdr-runtime" class="herdr-runtime node sandbox-style" tabindex="0" role="button" aria-label="Herdr process tree" data-title="Herdr process tree" data-short="Herdr owns and supervises the sandbox's interactive processes." data-detail="Herdr is the center of the sandbox: it owns terminal panes and runs OpenCode agents and shells, including shells that can use the packaged CF CLI.">
               <rect x="1010" y="445" width="465" height="235" rx="14"/><text class="herdr-title" x="1242.5" y="482" text-anchor="middle">HERDR</text><text class="component-copy" x="1242.5" y="506">terminal multiplexer · process owner</text>
               <path class="process-link" d="M1242.5 520V538M1099 538H1386M1099 538V550M1242.5 538V550M1386 538V550"/>
-              <g class="process"><rect x="1035" y="550" width="128" height="95" rx="10"/><text class="component-title" x="1099" y="590">OpenCode</text><text class="component-copy" x="1099" y="615">agent</text></g>
-              <g class="process"><rect x="1178" y="550" width="129" height="95" rx="10"/><text class="component-title" x="1242.5" y="590">Shell</text><text class="component-copy" x="1242.5" y="615">session</text></g>
-              <g class="process"><rect x="1322" y="550" width="128" height="95" rx="10"/><text class="component-title" x="1386" y="590">Shell</text><text class="component-copy" x="1386" y="615">+ CF CLI</text></g>
+              <g class="process purple-style"><rect x="1035" y="550" width="128" height="95" rx="10"/><text class="component-title" x="1099" y="590">OpenCode</text><text class="component-copy" x="1099" y="615">agent</text></g>
+              <g class="process purple-style"><rect x="1178" y="550" width="129" height="95" rx="10"/><text class="component-title" x="1242.5" y="590">Shell</text><text class="component-copy" x="1242.5" y="615">session</text></g>
+              <g class="process purple-style"><rect x="1322" y="550" width="128" height="95" rx="10"/><text class="component-title" x="1386" y="590">Shell</text><text class="component-copy" x="1386" y="615">+ CF CLI</text></g>
             </g>
           </g>
         </g>
@@ -150,6 +150,33 @@
 
         <g id="diego-region">
           <rect class="cf-system-component diego-region" x="330" y="770" width="1175" height="55" rx="14"/><text class="system-title" x="917.5" y="805" text-anchor="middle">DIEGO</text>
+        </g>
+
+        <g id="connections-layer">
+          <path id="pack-route" class="wide-route" marker-end="url(#wide-arrow)" stroke="#7b9db5" d="M905 445V302.5H686.25V445"/>
+          <circle class="route-endpoint" cx="905" cy="445" r="14"/>
+          <path id="browser-route" class="wide-route" d="M420 181H642.5V445"/>
+          <circle class="route-endpoint" cx="420" cy="181" r="14"/>
+          <circle class="route-endpoint" cx="642.5" cy="445" r="14"/>
+          <path id="manager-collie-route" class="wide-route" d="M598.75 445V417.5H491.25V445"/>
+          <circle class="route-endpoint" cx="598.75" cy="445" r="14"/>
+          <circle class="route-endpoint" cx="491.25" cy="445" r="14"/>
+          <path id="sandbox-collie-herdr-route" class="wide-route" d="M947.5 445V417.5H1068.125V445"/>
+          <circle class="route-endpoint" cx="947.5" cy="445" r="14"/>
+          <circle class="route-endpoint" cx="1068.125" cy="445" r="14"/>
+          <path id="terminal-herdr-route" class="wide-route" d="M1126.25 445V181H1205"/>
+          <circle class="route-endpoint" cx="1126.25" cy="445" r="14"/>
+          <circle class="route-endpoint" cx="1205" cy="181" r="14"/>
+          <path id="manager-cf-api-route" class="wide-route" d="M447.5 445V302.5H210V390"/>
+          <circle class="route-endpoint" cx="447.5" cy="445" r="14"/>
+          <circle class="route-endpoint" cx="210" cy="390" r="14"/>
+        </g>
+
+        <g id="ingress-layer">
+          <rect id="gorouter-cell" class="cf-system-component" x="120" y="265" width="870" height="75" rx="14"/>
+          <rect id="ssh-proxy-cell" class="cf-system-component" x="1010" y="265" width="495" height="75" rx="14"/>
+          <text class="system-title" x="555" y="309" text-anchor="middle">Gorouter</text>
+          <text class="system-title" x="1257.5" y="309" text-anchor="middle">SSH Proxy</text>
         </g>
 
       </g>
