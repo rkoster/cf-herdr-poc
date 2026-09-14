@@ -11,6 +11,7 @@
 /vars.yml
 /.secrets
 /.playwright-cli/
+/.superpowers/
 /collie-activity-*/
 /nix-*/
 /tmp.*/

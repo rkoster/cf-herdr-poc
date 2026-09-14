@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A day with agents on Cloud Foundry</title>
+  <meta name="description" content="The CF Herdr developer journey, current architecture, and north-star design questions.">
+  <style>
+    :root { color-scheme: dark; --bg:#071019; --panel:#101d29; --ink:#f4f0e8; --muted:#9fb0be; --cf:#3f9cff; --poc:#ffc857; --question:#ff766f; --line:#456174; }
+    * { box-sizing:border-box; }
+    html,body { margin:0; min-height:100%; background:var(--bg); color:var(--ink); font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    body { display:grid; place-items:center; overflow:hidden; }
+    main { position:relative; width:min(100vw,1600px); aspect-ratio: 16 / 9; padding:26px 46px 18px; background:radial-gradient(circle at 76% 12%,#123654 0,transparent 32%),linear-gradient(145deg,#0a1621,#071019 62%); }
+    header { position:absolute; z-index:4; left:70px; right:70px; top:25px; display:grid; grid-template-columns:1fr auto; gap:28px; }
+    h1 { margin:4px 0; font-size:clamp(28px,3.1vw,54px); line-height:1; letter-spacing:-.045em; }
+    .eyebrow,.section-label { color:#79bdff; font-weight:800; letter-spacing:.14em; }
+    .eyebrow { margin:0; font-size:12px; text-transform:uppercase; }
+    .dek { margin:8px 0 0; color:var(--muted); }
+    .legend { display:flex; gap:18px; align-items:flex-start; padding-top:10px; font-size:12px; color:var(--muted); }
+    .legend span::before { content:""; display:inline-block; width:10px; height:10px; margin-right:7px; border-radius:2px; background:var(--cf); }
+    .legend-poc::before { background:var(--poc)!important; }
+    .legend-question::before { background:var(--question)!important; border-radius:50%!important; }
+    #architecture { width:100%; height:100%; overflow:visible; }
+    .journey-line { fill:none; stroke:var(--line); stroke-width:4; }
+    .journey-step circle { fill:#10283b; stroke:#79bdff; stroke-width:4; }
+    .journey-step>text:first-of-type { fill:white; font-size:31px; font-weight:850; }
+    .node-title { fill:white; font-size:20px; font-weight:750; }
+    .node-copy { fill:var(--muted); font-size:15px; }
+    .section-label { fill:#79bdff; font-size:12px; }
+    .boundary { fill:rgba(16,29,41,.76); stroke:#2b4659; stroke-width:2; }
+    .node rect { fill:#15283a; stroke-width:3; filter:url(#soft-shadow); }
+    .cf-node rect { stroke:var(--cf); }
+    .poc-node rect { stroke:var(--poc); }
+    .client-node rect { fill:#18384a; stroke:#54d6ff; }
+    .question-node rect { fill:#2a1b21; stroke:var(--question); stroke-width:2; stroke-dasharray:6 5; }
+    .question-node text { fill:#ffd6d3; font-size:13px; font-weight:700; }
+    .layer { fill:#0d1a25; stroke:#35566d; stroke-width:2; }
+    .cf-system-component { fill:#102638; stroke:var(--cf); stroke-width:2.5; }
+    .layer-title,.app-label,.app-title { fill:#79bdff; font-size:12px; font-weight:850; letter-spacing:.13em; }
+    .layer-copy { fill:var(--muted); font-size:14px; }
+    .system-title { fill:#dcebfa; font-size:18px; font-weight:800; }
+    .app-container>rect { fill:#111f2b; stroke:var(--poc); stroke-width:3; }
+    .component rect { fill:#172b3b; stroke:#4c687c; stroke-width:1.5; }
+    .component-title { fill:#f4f0e8; font-size:17px; font-weight:750; text-anchor:middle; }
+    .component-copy { fill:#9fb0be; font-size:13px; text-anchor:middle; }
+    .herdr-runtime>rect { fill:#172335; stroke:#d8b7ff; stroke-width:3; }
+    .herdr-title { fill:#f3e8ff; font-size:22px; font-weight:850; letter-spacing:.04em; }
+    .process-link { fill:none; stroke:#806b98; stroke-width:2; }
+    .process rect { fill:#251f31; stroke:#806b98; stroke-width:1.5; }
+    .process text { fill:#eadfff; font-size:12px; font-weight:700; }
+    .hotspot circle { fill:#351e25; stroke:var(--question); stroke-width:3; }
+    .hotspot>text { fill:#fff; font-size:14px; font-weight:850; }
+    .table-row { stroke:#294253; stroke-width:1; }
+    .row-a { fill:#0b1721; }
+    .row-b { fill:#0e1d28; }
+    .row-label { fill:#7896aa; font-size:11px; font-weight:850; letter-spacing:.13em; }
+    .js [data-stage] { opacity:1; transition:opacity .45s ease,transform .45s ease; transform-origin:center; }
+    body[data-active-stage="1"] [data-stage="2"],body[data-active-stage="1"] [data-stage="3"],body[data-active-stage="2"] [data-stage="1"],body[data-active-stage="2"] [data-stage="3"],body[data-active-stage="3"] [data-stage="1"] { opacity:0; pointer-events:none; transform:translateY(14px); }
+    .stage-controls { position:absolute; right:42px; bottom:12px; z-index:8; display:flex; gap:8px; }
+    button { border:1px solid #3d5a70; border-radius:999px; padding:8px 13px; background:#102131; color:var(--ink); font:700 12px/1 inherit; cursor:pointer; }
+    button[aria-pressed="true"] { color:#071019; background:#e7f4ff; border-color:#e7f4ff; }
+    .node:focus { outline:none; }
+    .node:focus>rect,.node:hover>rect { stroke-width:5; }
+    #diagram-tooltip { position:fixed; z-index:20; width:280px; padding:10px 12px; border:1px solid #547087; border-radius:9px; background:#071019; color:white; font-size:13px; pointer-events:none; }
+    #speaker-notes { position:absolute; z-index:15; right:48px; top:135px; width:360px; padding:20px 22px; border:1px solid #49657a; border-radius:14px; background:#0b1722f2; }
+    #speaker-notes button { float:right; padding:4px 9px; }
+    #speaker-notes h2 { margin:5px 0 8px; font-size:24px; }
+    .note-kind { color:var(--poc); font-size:11px; font-weight:850; letter-spacing:.14em; }
+    .static-note { position:absolute; left:70px; bottom:10px; color:var(--muted); font-size:12px; }
+    @media (max-width: 900px) { body { display:block; overflow:auto; } main { width:100%; min-width:760px; min-height:428px; } .legend { display:none; } }
+    @media (prefers-reduced-motion: reduce) { *,*::before,*::after { scroll-behavior:auto!important; transition:none!important; animation:none!important; } }
+    @media print { @page { size:landscape; margin:0; } body { print-color-adjust:exact; -webkit-print-color-adjust:exact; } main { width:100vw; height:100vh; } [data-stage] { opacity:1!important; transform:none!important; } .stage-controls,#diagram-tooltip,#speaker-notes { display:none!important; } }
+  </style>
+</head>
+<body data-active-stage="1">
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Cloud Foundry Summit · Architecture conversation</p>
+        <h1>A day with agents on Cloud Foundry</h1>
+        <p class="dek">A developer workflow we can run today, and the platform questions it exposes.</p>
+      </div>
+      <div class="legend" aria-label="Diagram legend">
+        <span class="legend-cf">Cloud Foundry capability</span>
+        <span class="legend-poc">Working CF Herdr POC</span>
+        <span class="legend-question">North-star design seam</span>
+      </div>
+    </header>
+
+    <svg id="architecture" viewBox="0 0 1600 900" role="img" aria-labelledby="diagram-title diagram-description">
+      <title id="diagram-title">CF Herdr developer journey and architecture</title>
+      <desc id="diagram-description">Four developer workflow steps progressively reveal the Cloud Foundry implementation and seven open platform design questions.</desc>
+      <defs>
+        <filter id="soft-shadow"><feDropShadow dx="0" dy="8" stdDeviation="12" flood-opacity=".25"/></filter>
+      </defs>
+
+      <g id="stage-1" data-stage="1">
+        <text class="section-label" x="80" y="150">DEVELOPER JOURNEY</text>
+        <path class="journey-line" d="M240 255H1360"/>
+        <g class="journey-step" transform="translate(220 255)"><circle r="52"/><text text-anchor="middle" y="9">1</text><text class="node-title" text-anchor="middle" y="92">Choose the work</text><text class="node-copy" text-anchor="middle" y="120">App + repository</text></g>
+        <g class="journey-step" transform="translate(600 255)"><circle r="52"/><text text-anchor="middle" y="9">2</text><text class="node-title" text-anchor="middle" y="92">Start an agent</text><text class="node-copy" text-anchor="middle" y="120">Isolated workspace</text></g>
+        <g class="journey-step" transform="translate(980 255)"><circle r="52"/><text text-anchor="middle" y="9">3</text><text class="node-title" text-anchor="middle" y="92">Steer from anywhere</text><text class="node-copy" text-anchor="middle" y="120">Observe · prompt · review</text></g>
+        <g class="journey-step" transform="translate(1360 255)"><circle r="52"/><text text-anchor="middle" y="9">4</text><text class="node-title" text-anchor="middle" y="92">Ship through CF</text><text class="node-copy" text-anchor="middle" y="120">Test + cf push</text></g>
+      </g>
+
+      <g id="stage-2" data-stage="2" data-layout="expanded-apps platform-table" data-grid="normalized">
+        <g aria-hidden="true">
+          <rect class="table-row row-a" x="70" y="125" width="1460" height="115" rx="14"/>
+          <rect class="table-row row-b" x="70" y="250" width="1460" height="105" rx="14"/>
+          <rect class="table-row row-a" x="70" y="365" width="1460" height="485" rx="14"/>
+          <text class="row-label" text-anchor="middle" transform="translate(94 182) rotate(-90)">CLIENTS</text>
+          <text class="row-label" text-anchor="middle" transform="translate(94 302) rotate(-90)">INGRESS</text>
+          <text class="row-label" text-anchor="middle" transform="translate(94 598) rotate(-90)">APPLICATIONS + CONTROL PLANE</text>
+        </g>
+        <g id="clients-layer">
+          <g class="node client-node" tabindex="0" role="button" aria-label="Developer Browser" data-title="Developer Browser" data-short="Observe, prompt, and review agents through one web front door." data-detail="The developer reaches the manager route and lead Collie; the browser never connects directly to a sandbox."><rect x="210" y="145" width="300" height="72" rx="14"/><text class="node-title" x="240" y="180">Developer Browser</text><text class="node-copy" x="240" y="204">Observe · prompt · review</text></g>
+          <g class="node client-node" tabindex="0" role="button" aria-label="Terminal using cf ssh" data-title="Terminal" data-short="Use cf ssh and Herdr directly inside the sandbox." data-detail="Current developer path: cf ssh yields a terminal connection through SSH Proxy to Herdr in the sandbox. Control-plane details are intentionally omitted."><rect x="1090" y="145" width="300" height="72" rx="14"/><text class="node-title" x="1120" y="180">Terminal</text><text class="node-copy" x="1120" y="204">cf ssh · Herdr</text></g>
+        </g>
+
+        <g id="ingress-layer">
+          <rect id="gorouter-cell" class="cf-system-component" x="120" y="265" width="870" height="75" rx="14"/>
+          <rect id="ssh-proxy-cell" class="cf-system-component" x="1010" y="265" width="495" height="75" rx="14"/>
+          <text class="system-title" x="555" y="309" text-anchor="middle">Gorouter</text>
+          <text class="system-title" x="1257.5" y="309" text-anchor="middle">SSH Proxy</text>
+        </g>
+
+        <g id="apps-layer">
+          <g id="manager-app" class="app-container node poc-node" tabindex="0" role="button" aria-label="Manager app" data-title="Manager app" data-short="Serves the UI and reconciles sandbox lifecycle." data-detail="Working POC: the manager coordinates sandbox lifecycle and proxies the lead Collie.">
+            <rect x="330" y="390" width="430" height="350" rx="20"/><text class="app-title" data-label-position="bottom" x="545" y="722" text-anchor="middle">APP · CF HERDR MANAGER</text>
+            <g class="component" data-content-position="upper"><rect x="360" y="445" width="175" height="235" rx="14"/><text class="component-title" x="447.5" y="555">Manager API</text><text class="component-copy" x="447.5" y="580">+ reconciler</text></g>
+            <g class="component" data-content-position="upper"><rect x="555" y="445" width="175" height="235" rx="14"/><text class="component-title" x="642.5" y="568">Lead Collie</text></g>
+          </g>
+
+          <g id="sandbox-app" class="app-container">
+            <rect x="790" y="390" width="715" height="350" rx="20"/><text class="app-title" data-label-position="bottom" x="1147.5" y="722" text-anchor="middle">APP · AGENT SANDBOX</text>
+            <g class="node poc-node" tabindex="0" role="button" aria-label="Sandbox Collie" data-title="Sandbox Collie" data-short="Joins the lead Pack and bridges browser actions to Herdr." data-detail="Working POC: sandbox Collie sits beside Herdr, receives policy-gated Pack traffic, and communicates with Herdr over the local socket."><rect x="820" y="445" width="170" height="235" rx="14"/><text class="component-title" x="905" y="545">Sandbox Collie</text><text class="component-copy" x="905" y="572">Pack peer</text><text class="component-copy" x="905" y="595">No public UI</text></g>
+            <g id="herdr-runtime" class="herdr-runtime node" tabindex="0" role="button" aria-label="Herdr process tree" data-title="Herdr process tree" data-short="Herdr owns and supervises the sandbox's interactive processes." data-detail="Herdr is the center of the sandbox: it owns terminal panes and runs OpenCode agents and shells, including shells that can use the packaged CF CLI.">
+              <rect x="1010" y="445" width="465" height="235" rx="14"/><text class="herdr-title" x="1242.5" y="482" text-anchor="middle">HERDR</text><text class="component-copy" x="1242.5" y="506">terminal multiplexer · process owner</text>
+              <path class="process-link" d="M1242.5 520V538M1099 538H1386M1099 538V550M1242.5 538V550M1386 538V550"/>
+              <g class="process"><rect x="1035" y="550" width="128" height="95" rx="10"/><text class="component-title" x="1099" y="590">OpenCode</text><text class="component-copy" x="1099" y="615">agent</text></g>
+              <g class="process"><rect x="1178" y="550" width="129" height="95" rx="10"/><text class="component-title" x="1242.5" y="590">Shell</text><text class="component-copy" x="1242.5" y="615">session</text></g>
+              <g class="process"><rect x="1322" y="550" width="128" height="95" rx="10"/><text class="component-title" x="1386" y="590">Shell</text><text class="component-copy" x="1386" y="615">+ CF CLI</text></g>
+            </g>
+          </g>
+        </g>
+
+        <g id="cf-api" class="node cf-node" tabindex="0" role="button" aria-label="CF API" data-title="CF API" data-short="Receives sandbox lifecycle operations from the manager." data-detail="Current CF control plane: the manager uses CF CLI-backed API operations to create, stage, start, inspect, and delete sandbox apps.">
+          <rect class="cf-system-component cf-api-region" x="120" y="390" width="180" height="435" rx="14"/><text class="system-title" x="210" y="555" text-anchor="middle">CF API</text><text class="component-copy" x="210" y="585">Lifecycle control</text><text class="component-copy" x="210" y="610">Outside Diego</text>
+        </g>
+
+        <g id="diego-region">
+          <rect class="cf-system-component diego-region" x="330" y="770" width="1175" height="55" rx="14"/><text class="system-title" x="917.5" y="805" text-anchor="middle">DIEGO</text>
+        </g>
+
+      </g>
+
+      <g id="stage-3" data-stage="3">
+        <text class="section-label" x="120" y="875">CLICK A NUMBER TO OPEN A FIRST-PRINCIPLES QUESTION</text>
+        <g class="node hotspot question-node" tabindex="0" role="button" aria-label="Workspace primitive" data-title="Workspace primitive" data-short="Should an agent workspace be modeled as an app?" data-detail="POC choice: a sandbox is a short-lived app. Design question: does that lifecycle and ownership model fit agent work?" transform="translate(1490 620)"><circle r="16"/><text text-anchor="middle" y="5">1</text></g>
+        <g class="node hotspot question-node" tabindex="0" role="button" aria-label="Identity and authorization" data-title="Identity &amp; authorization" data-short="Who may act on which resources?" data-detail="POC choice: manager credentials plus instance identity. Design question: what delegated, scoped identity should an agent receive?" transform="translate(1070 565)"><circle r="16"/><text text-anchor="middle" y="5">2</text></g>
+        <g class="node hotspot question-node" tabindex="0" role="button" aria-label="Isolation and tenancy" data-title="Isolation &amp; tenancy" data-short="What boundary fits untrusted agent execution?" data-detail="POC choice: one CF application per sandbox. Design question: what isolation, tenancy, and policy guarantees are required?" transform="translate(1488 735)"><circle r="16"/><text text-anchor="middle" y="5">3</text></g>
+        <g class="node hotspot question-node" tabindex="0" role="button" aria-label="State and lifecycle" data-title="State &amp; lifecycle" data-short="What survives restarts, restaging, and pushes?" data-detail="POC choice: runtime state is separated from app push contents. Design question: which state belongs to workspace, app, or external service?" transform="translate(1305 725)"><circle r="16"/><text text-anchor="middle" y="5">4</text></g>
+        <g class="node hotspot question-node" tabindex="0" role="button" aria-label="Connectivity" data-title="Connectivity" data-short="Which routes and protocols should control require?" data-detail="POC choice: a public manager route and policy-gated identity routes. Design question: should CF expose a native private control channel?" transform="translate(1510 485)"><circle r="16"/><text text-anchor="middle" y="5">5</text></g>
+        <g class="node hotspot question-node" tabindex="0" role="button" aria-label="Observability and audit" data-title="Observability &amp; audit" data-short="How can people inspect agent actions?" data-detail="POC choice: lifecycle operations and sanitized failures are retained. Design question: which actions need platform-native events and audit records?" transform="translate(590 620)"><circle r="16"/><text text-anchor="middle" y="5">6</text></g>
+        <g class="node hotspot question-node" tabindex="0" role="button" aria-label="Resource governance" data-title="Resource governance" data-short="How should quota, duration, and cleanup work?" data-detail="POC choice: app quotas and reconciled deletion. Design question: what agent-specific budgets and expiration guarantees belong in CF?" transform="translate(1510 797)"><circle r="16"/><text text-anchor="middle" y="5">7</text></g>
+      </g>
+    </svg>
+
+    <nav class="stage-controls" aria-label="Architecture presentation stages">
+      <button type="button" data-stage-button="1">1 · Developer journey</button>
+      <button type="button" data-stage-button="2">2 · Under the hood</button>
+      <button type="button" data-stage-button="3">3 · Design questions</button>
+      <button type="button" id="reset-presentation">Reset</button>
+    </nav>
+    <aside id="speaker-notes" aria-live="polite" hidden><button type="button" aria-label="Close speaker notes">×</button><p class="note-kind"></p><h2></h2><p class="note-copy"></p></aside>
+    <div id="diagram-tooltip" role="tooltip" hidden></div>
+    <noscript><p class="static-note">Static view: developer journey, current implementation, and open Cloud Foundry design questions are shown together.</p></noscript>
+  </main>
+  <script>
+    (() => {
+      document.documentElement.classList.remove("no-js");
+      document.documentElement.classList.add("js");
+      const body = document.body;
+      const stages = [...document.querySelectorAll("[data-stage]")];
+      const buttons = [...document.querySelectorAll("[data-stage-button]")];
+      const nodes = [...document.querySelectorAll(".node[data-title]")];
+      const tooltip = document.querySelector("#diagram-tooltip");
+      const notes = document.querySelector("#speaker-notes");
+      const closeNotes = notes.querySelector("button");
+      let activeStage = 1;
+      let pinnedNode = null;
+
+      const setStage = (stage) => {
+        activeStage = Math.max(1, Math.min(3, Number(stage)));
+        body.dataset.activeStage = String(activeStage);
+        stages.forEach((layer) => {
+          const visible = Number(layer.dataset.stage) <= activeStage;
+          layer.setAttribute("aria-hidden", String(!visible));
+        });
+        buttons.forEach((button) => {
+          const selected = Number(button.dataset.stageButton) === activeStage;
+          button.setAttribute("aria-pressed", String(selected));
+        });
+      };
+
+      const positionTooltip = (node) => {
+        const bounds = node.getBoundingClientRect();
+        const left = Math.max(12, Math.min(window.innerWidth - 292, bounds.left + bounds.width / 2 - 140));
+        const top = Math.max(12, Math.min(window.innerHeight - 90, bounds.bottom + 12));
+        tooltip.style.left = `${left}px`;
+        tooltip.style.top = `${top}px`;
+      };
+
+      const showTooltip = (node) => {
+        tooltip.textContent = node.dataset.short;
+        tooltip.hidden = false;
+        positionTooltip(node);
+      };
+
+      const hideTooltip = () => {
+        if (!pinnedNode) tooltip.hidden = true;
+      };
+
+      const pinNotes = (node) => {
+        pinnedNode = node;
+        notes.querySelector(".note-kind").textContent = node.classList.contains("question-node")
+          ? "NORTH-STAR QUESTION"
+          : node.classList.contains("poc-node") ? "WORKING POC" : "CLOUD FOUNDRY CAPABILITY";
+        notes.querySelector("h2").textContent = node.dataset.title;
+        notes.querySelector(".note-copy").textContent = node.dataset.detail;
+        notes.hidden = false;
+        showTooltip(node);
+      };
+
+      nodes.forEach((node) => {
+        node.addEventListener("pointerenter", () => showTooltip(node));
+        node.addEventListener("pointerleave", hideTooltip);
+        node.addEventListener("focusin", () => showTooltip(node));
+        node.addEventListener("focusout", hideTooltip);
+        node.addEventListener("click", () => pinNotes(node));
+        node.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            pinNotes(node);
+          }
+        });
+      });
+
+      buttons.forEach((button) => button.addEventListener("click", () => setStage(button.dataset.stageButton)));
+      document.querySelector("#reset-presentation").addEventListener("click", () => {
+        pinnedNode = null;
+        notes.hidden = true;
+        tooltip.hidden = true;
+        setStage(1);
+      });
+      closeNotes.addEventListener("click", () => {
+        pinnedNode = null;
+        notes.hidden = true;
+        tooltip.hidden = true;
+      });
+      document.addEventListener("keydown", (event) => {
+        if (["1", "2", "3"].includes(event.key)) setStage(event.key);
+        else if (event.key === "ArrowLeft") setStage(activeStage - 1);
+        else if (event.key === "ArrowRight" || event.key === " ") {
+          event.preventDefault();
+          setStage(activeStage + 1);
+        }
+      });
+      setStage(1);
+    })();
+  </script>
+</body>
+</html>
